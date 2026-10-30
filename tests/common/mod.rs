@@ -117,6 +117,8 @@ pub fn ctx(dir: &Path, config: &str) -> Ctx {
         hermes: dir.join("hermes"),
         exe: "/opt/herdsman/bin/herdsman".into(),
         now: 1_000_000,
+        home: dir.join("home"),
+        hints: vec![],
     }
 }
 

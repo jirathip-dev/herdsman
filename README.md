@@ -62,8 +62,9 @@ came up it closes the pane and logs nothing. `herdsman adopt` repairs a lane by 
 | `~/.config/herdsman/dsh/<profile>.patch.yml` | DSH patch layer for `harness = "dsh"` lanes ([docs/dsh.md](docs/dsh.md)) |
 | `roles/`, `hooks/` | role prompts and hook settings, compiled into the binary |
 
-Renamed from `fleet` (#27): the first run moves `~/.config/fleet` and `~/.local/state/fleet` to
-the paths above when the new dir doesn't exist yet. Lanes export `HERDSMAN_LANE`; `FLEET_LANE`
+Renamed from `fleet` (#27): only `herdsman migrate` moves `~/.config/fleet` and `~/.local/state/fleet`
+to the paths above (both or neither; `HERDSMAN_HOME` overrides `$HOME` for it). Until then other
+commands read the old dirs in place with a one-line stderr hint; `hook` stays silent. Lanes export `HERDSMAN_LANE`; `FLEET_LANE`
 still arms the hook for one release, and `HERDSMAN_LANE` wins when both are set.
 
 Hard cap: ≤ 5,000 lines of Rust under `src/` (tests live in `tests/`); CI enforces it.

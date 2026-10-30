@@ -29,25 +29,40 @@ pub struct Ctx {
     pub hermes: PathBuf,
     pub exe: String,
     pub now: u64,
+    /// Tree `herdsman migrate` works on: `HERDSMAN_HOME`, else `$HOME`.
+    pub home: PathBuf,
+    /// Pre-rename fallbacks in use this run; data commands print them on stderr.
+    pub hints: Vec<String>,
 }
 
 impl Ctx {
     pub fn from_env() -> Ctx {
         let env = |k: &str, d: PathBuf| std::env::var_os(k).map(PathBuf::from).unwrap_or(d);
-        for (k, d) in [("FLEET_CONFIG", ".config"), ("FLEET_STATE", ".local/state")] {
-            if std::env::var_os(k).is_none() {
-                if let Err(e) = migrate(&home().join(d)) {
-                    eprintln!("herdsman: moving ~/{d}/fleet to ~/{d}/herdsman failed: {e}");
-                }
+        let root = std::env::var_os("HERDSMAN_HOME").map_or_else(home, PathBuf::from);
+        let mut hints = vec![];
+        // Read the pre-rename dir, never move it, while the new one is missing.
+        let mut path = |k: &str, what: &str, d: &str, file: &str| {
+            if let Some(p) = std::env::var_os(k) {
+                return PathBuf::from(p);
             }
-        }
+            let (old, new) = (root.join(d).join("fleet"), root.join(d).join("herdsman"));
+            if old.is_dir() && !new.exists() {
+                hints.push(format!("herdsman: found pre-rename {what} at {}; run 'herdsman migrate' to move it", old.display()));
+                return old.join(file);
+            }
+            new.join(file)
+        };
+        let config = path("FLEET_CONFIG", "config", ".config", "fleet.toml");
+        let state = path("FLEET_STATE", "state", ".local/state", "events.jsonl");
         Ctx {
-            config: env("FLEET_CONFIG", home().join(".config/herdsman/fleet.toml")),
-            state: env("FLEET_STATE", home().join(".local/state/herdsman/events.jsonl")),
+            config,
+            state,
             worktrees: env("FLEET_WORKTREES", home().join(".herdr/worktrees")),
             hermes: env("FLEET_HERMES_PROFILES", home().join(".hermes/profiles")),
             exe: std::env::current_exe().map_or("herdsman".into(), |p| p.to_string_lossy().into()),
             now: now(),
+            home: root,
+            hints,
         }
     }
     pub fn claude_dir(&self) -> PathBuf {
@@ -55,13 +70,32 @@ impl Ctx {
     }
 }
 
-/// One-time move of the pre-rename `<parent>/fleet` dir to `<parent>/herdsman`,
-/// when the old one exists and the new one doesn't.
-pub fn migrate(parent: &std::path::Path) -> std::io::Result<()> {
-    let (old, new) = (parent.join("fleet"), parent.join("herdsman"));
-    if old.is_dir() && !new.exists() {
-        std::fs::rename(&old, &new)?;
-        eprintln!("herdsman: moved {} -> {}", old.display(), new.display());
+/// `herdsman migrate`: move `<home>/{.config,.local/state}/fleet` to `.../herdsman` where the
+/// old dir exists and the new one doesn't. A failed second move puts the first one back.
+pub fn migrate(home: &std::path::Path, out: &mut dyn Write) -> Result<()> {
+    let mut moved: Vec<(PathBuf, PathBuf)> = vec![];
+    for d in [".config", ".local/state"] {
+        let (old, new) = (home.join(d).join("fleet"), home.join(d).join("herdsman"));
+        if new.exists() {
+            writeln!(out, "nothing to move: {} already exists", new.display())?;
+            continue;
+        }
+        if !old.is_dir() {
+            writeln!(out, "nothing to move: no {}", old.display())?;
+            continue;
+        }
+        if let Err(e) = std::fs::rename(&old, &new) {
+            let mut msg = format!("moving {} -> {} failed: {e}", old.display(), new.display());
+            for (o, n) in moved.iter().rev() {
+                msg += &match std::fs::rename(n, o) {
+                    Ok(()) => format!("; rolled back {} -> {}", n.display(), o.display()),
+                    Err(e) => format!("; ROLLBACK FAILED {} -> {}: {e}", n.display(), o.display()),
+                };
+            }
+            bail!(msg);
+        }
+        writeln!(out, "moved {} -> {}", old.display(), new.display())?;
+        moved.push((old, new));
     }
     Ok(())
 }
@@ -229,6 +263,8 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ProfilesCmd,
     },
+    /// Move pre-rename ~/.config/fleet and ~/.local/state/fleet to their herdsman paths (HERDSMAN_HOME selects the tree); all or nothing
+    Migrate,
     /// Help; --agent prints the usage doc agents get
     Help {
         /// Print the agent usage doc
@@ -349,6 +385,11 @@ pub fn main_with(args: Vec<String>, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Wri
             return if e.use_stderr() { 2 } else { 0 };
         }
     };
+    if !matches!(cli.cmd, Cmd::Hook { .. } | Cmd::Migrate | Cmd::Help { .. }) {
+        for h in &ctx.hints {
+            eprintln!("{h}");
+        }
+    }
     match dispatch(cli.cmd, ctx, r, out, stdin) {
         Ok(code) => code,
         Err(e) => match e.downcast_ref::<gate::Refusal>() {
@@ -366,6 +407,7 @@ pub fn main_with(args: Vec<String>, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Wri
 
 fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mut dyn Read) -> Result<i32> {
     match cmd {
+        Cmd::Migrate => migrate(&ctx.home, out)?,
         Cmd::Help { agent: true } => write!(out, "{}", usage_doc())?,
         Cmd::Help { agent: false } => write!(out, "{}", Cli::command().render_long_help())?,
         Cmd::Hook { role, git_pre_push: true } => return pre_push(ctx, out, stdin, role.as_deref() == Some("rev")),
