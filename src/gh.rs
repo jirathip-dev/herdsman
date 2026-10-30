@@ -66,6 +66,11 @@ pub fn pr(ctx: &Ctx, r: &dyn Runner, f: &Fleet, (fleet, issue): (&str, u64), bra
     Ok(pr)
 }
 
+/// The last cached PR read, however old; never calls `gh` (Null when none).
+pub fn cached_pr(ctx: &Ctx, fleet: &str, issue: u64) -> Value {
+    load(&cache_path(ctx, "pr", fleet, issue)).map_or(Value::Null, |c| c["pr"].clone())
+}
+
 /// Numbers of the fleet's closed issues: one `gh issue list` per fleet, fresh for 60 s.
 pub fn closed(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, now: u64) -> Result<Vec<u64>> {
     let p = cache_path(ctx, "closed", fleet, 0);

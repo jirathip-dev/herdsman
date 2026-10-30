@@ -26,8 +26,16 @@ herdsman brief sendmeter 12                  # the issue spec cached at spawn
 herdsman pr sendmeter 12 [--json]            # one cached gh pr view per 60 s
 herdsman wait sendmeter 12 --until ci-green  # 0 reached · 1 failed/closed · 124 timeout
 herdsman board                               # ≤ 60-col board for Telegram
-herdsman serve --addr 127.0.0.1:7777         # read-only HTML view (GET only)
+herdsman pause sendmeter                     # `next` offers nothing, impl/rev spawns refuse PAUSED (resume)
+herdsman serve --addr 100.x.y.z:7777         # phone page / PWA (--read-only: GET only)
 ```
+
+`herdsman serve` is one phone page (Home Screen app, works offline with a `stale` badge) with
+Queue · Lanes · Host · Events tabs. Its only writes are ▲/▼ (`queue mv`), Pause/Resume and a
+role's model/effort (`set`, choices from `models = [...]`), each through the CLI's own code
+path, logged with `"via":"web"`. A POST must name the bind address (or a `[serve].allowed_hosts`
+name, e.g. the `tailscale serve` `*.ts.net` host) in `Host`/`Origin`, and is refused `STALE`
+when fleet.toml changed since the page was rendered.
 
 GitHub stays clean: issues are the spec, PRs the code. Lanes never comment (the Claude
 and Hermes hook denies `gh issue|pr comment` and `gh api` comment writes); routing, queue, lane and

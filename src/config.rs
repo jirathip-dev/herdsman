@@ -19,6 +19,18 @@ pub struct Config {
     /// MCP server names no lane is given (`*` wildcards, case-insensitive).
     #[serde(default = "mcp_deny")]
     pub mcp_deny: Vec<String>,
+    /// The models `herdsman serve` offers per role (its model dropdown).
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub serve: Serve,
+}
+
+/// `[serve]`: extra `Host` names (e.g. the `*.ts.net` name of `tailscale serve`) a POST may come from.
+#[derive(Debug, Default, Deserialize)]
+pub struct Serve {
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
 }
 
 /// `[accounts]`: account name -> env var holding its token, plus the settings below.
@@ -65,6 +77,9 @@ pub struct Fleet {
     pub notify: Vec<Notify>,
     #[serde(default)]
     pub notify_global: bool,
+    /// `herdsman pause`: `next` offers nothing and impl/rev spawns refuse PAUSED.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -252,7 +267,11 @@ pub fn home() -> PathBuf {
 /// Set `key = "val"` in `[fleet.<fleet>.role.<role>]`, touching only the value
 /// bytes (or inserting one line when the key is absent). Returns the new text.
 pub fn set_value(text: &str, fleet: &str, role: &str, key: &str, val: &str) -> Result<String> {
-    let header = format!("[fleet.{fleet}.role.{role}]");
+    set_in(text, &format!("[fleet.{fleet}.role.{role}]"), key, &format!("\"{val}\""))
+}
+
+/// Set `key = <lit>` (a TOML literal) in the table `header`, as `set_value` does.
+pub fn set_in(text: &str, header: &str, key: &str, lit: &str) -> Result<String> {
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let start = lines
         .iter()
@@ -270,20 +289,26 @@ pub fn set_value(text: &str, fleet: &str, role: &str, key: &str, val: &str) -> R
     match hit {
         Some(i) => {
             let l = lines[i];
-            let eq = l.find('=').unwrap();
-            let open = l[eq..].find('"').map(|o| eq + o + 1);
-            let close = open.and_then(|o| l[o..].find('"').map(|c| o + c));
-            let (Some(o), Some(c)) = (open, close) else {
+            let eq = l.find('=').unwrap() + 1;
+            let v = eq + l[eq..].len() - l[eq..].trim_start().len();
+            let end = if l[v..].starts_with('"') {
+                l[v + 1..].find('"').map(|c| v + c + 2)
+            } else if lit.starts_with('"') {
+                None
+            } else {
+                Some(v + l[v..].find(|c: char| c.is_whitespace() || c == '#').unwrap_or(l.len() - v))
+            };
+            let Some(end) = end else {
                 bail!("{header} {key}: value must be a \"string\"");
             };
-            out[i] = format!("{}{}{}", &l[..o], val, &l[c..]);
+            out[i] = format!("{}{lit}{}", &l[..v], &l[end..]);
         }
         None => {
             let last = (start..end).rev().find(|&i| !lines[i].trim().is_empty()).unwrap();
             if !out[last].ends_with('\n') {
                 out[last].push('\n');
             }
-            out.insert(last + 1, format!("{key} = \"{val}\"\n"));
+            out.insert(last + 1, format!("{key} = {lit}\n"));
         }
     }
     Ok(out.concat())

@@ -336,6 +336,9 @@ pub fn spawn(
     o: &Opts,
 ) -> Result<bool> {
     let f = cfg.fleet(fleet)?;
+    if f.paused && matches!(role, "impl" | "rev") {
+        return Err(refuse("PAUSED", format!("{fleet} is paused; `herdsman resume {fleet}` first")).into());
+    }
     let mut p = plan(ctx, cfg, fleet, issue, role)?;
     let mut pj = plan_json(ctx, f, &p);
     if o.dry_run {
