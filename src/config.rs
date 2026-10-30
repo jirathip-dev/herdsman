@@ -14,6 +14,37 @@ pub struct Config {
     pub limits: Limits,
     #[serde(default)]
     pub notify: Vec<Notify>,
+    #[serde(default)]
+    pub accounts: Accounts,
+    /// MCP server names no lane is given (`*` wildcards, case-insensitive).
+    #[serde(default = "mcp_deny")]
+    pub mcp_deny: Vec<String>,
+}
+
+/// `[accounts]`: account name -> env var holding its token, plus the settings below.
+#[derive(Debug, Deserialize)]
+pub struct Accounts {
+    /// Env file (`VAR=value` lines) the tokens are read from.
+    pub accounts_env: Option<String>,
+    /// Usage-limit banner, `|`-separated substrings (default `access::CAP_PATTERN`).
+    pub cap_pattern: Option<String>,
+    #[serde(default = "cap_reset_minutes")]
+    pub cap_reset_minutes: u64,
+    #[serde(flatten)]
+    pub names: BTreeMap<String, String>,
+}
+
+impl Default for Accounts {
+    fn default() -> Self {
+        Accounts { accounts_env: None, cap_pattern: None, cap_reset_minutes: cap_reset_minutes(), names: BTreeMap::new() }
+    }
+}
+
+fn cap_reset_minutes() -> u64 {
+    300
+}
+fn mcp_deny() -> Vec<String> {
+    vec!["*prod*".into()]
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,9 +74,23 @@ pub struct Role {
     pub model: Option<String>,
     /// Reasoning effort, mapped per harness (`harness::effort_ok`); `[limits].effort` when unset.
     pub effort: Option<String>,
+    /// Claude lanes: the account (`[accounts]` name) to run on, or an ordered fallback list.
+    pub account: Option<String>,
+    #[serde(default)]
+    pub accounts: Vec<String>,
+    /// MCP servers (by `.mcp.json` name) the lane gets; none by default.
+    #[serde(default)]
+    pub mcp: Vec<String>,
 }
 
 impl Role {
+    pub fn account_list(&self) -> Vec<String> {
+        if self.accounts.is_empty() {
+            self.account.iter().cloned().collect()
+        } else {
+            self.accounts.clone()
+        }
+    }
     pub fn profile_or(&self, role: &str) -> String {
         self.profile.clone().unwrap_or_else(|| format!("fleet-{role}"))
     }
@@ -133,6 +178,9 @@ impl Config {
                 }
                 if !crate::harness::NAMES.contains(&r.harness.as_str()) {
                     bail!("fleet.{name}.role.{role}: harness must be one of {:?}", crate::harness::NAMES);
+                }
+                if let Some(a) = r.account_list().iter().find(|a| !c.accounts.names.contains_key(*a)) {
+                    bail!("fleet.{name}.role.{role}: account '{a}' is not in [accounts]");
                 }
                 if let Some(e) = r.effort_or(&c.limits) {
                     let ok = crate::harness::efforts(&r.harness);

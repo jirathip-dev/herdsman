@@ -44,6 +44,7 @@ pub const CODES: &[(&str, &str)] = &[
     ("SERIAL_BUSY", "spawn: a `--serial` impl waits while another serial issue has a live impl/fix lane or sits at review/ready"),
     ("SERIAL_UNMARKED", "merge: the PR touches the fleet's serial_paths but the issue was not queued `--serial`"),
     ("CAP", "spawn: the fleet's optional max_impl / max_rev lane cap is reached (unset = no cap)"),
+    ("MCP_FORBIDDEN", "spawn/profiles sync: a role's `mcp` names a server matching `mcp_deny` (default `*prod*`)"),
 ];
 
 fn is_main(b: &str) -> bool {

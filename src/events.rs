@@ -177,7 +177,7 @@ pub struct IssueState {
 }
 
 /// Events `herdsman check` and notifiers write about an issue; they are not activity.
-pub const PASSIVE: [&str; 4] = ["stall", "lane-dead", "ready-unmerged", "notify-failed"];
+pub const PASSIVE: [&str; 5] = ["stall", "lane-dead", "ready-unmerged", "notify-failed", "account-capped"];
 
 /// Current per-issue state: queued → impl → review(n) → fix(n) → ready → merged,
 /// plus blocked / needs-human.

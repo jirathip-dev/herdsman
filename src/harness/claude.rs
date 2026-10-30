@@ -30,6 +30,12 @@ impl Harness for Claude {
         Ok(())
     }
 
+    /// The lane's MCP file: only the role's servers.
+    fn prepare(&self, _ctx: &Ctx, _r: &dyn Runner, p: &Plan) -> Result<()> {
+        std::fs::write(&p.mcp_file, serde_json::to_string_pretty(&serde_json::json!({"mcpServers": p.mcp}))?)?;
+        Ok(())
+    }
+
     fn start_cmd(&self, ctx: &Ctx, p: &Plan, pane: &str) -> Vec<String> {
         let dir = profile_dir(ctx, &p.profile);
         let mut a = vec![
@@ -45,6 +51,8 @@ impl Harness for Claude {
         if let Some(e) = p.effort.as_deref().filter(|e| *e != "none") {
             a.extend(["--effort".into(), e.into()]);
         }
+        // `--mcp-config` is variadic: `--strict-mcp-config` ends it before the kick.
+        a.extend(["--mcp-config".into(), p.mcp_file.to_string_lossy().into(), "--strict-mcp-config".into()]);
         a.push(p.kick.clone());
         agent_start(p, "claude", pane, a)
     }

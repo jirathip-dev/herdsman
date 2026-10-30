@@ -1,4 +1,5 @@
 //! fleet: agents act only through this CLI; it owns state and refuses rule breaks.
+pub mod access;
 pub mod check;
 pub mod config;
 pub mod events;
@@ -253,6 +254,11 @@ enum Cmd {
     },
     /// Alert once per state on stall, lane-dead and ready-unmerged issues; idempotent, safe from cron
     Check,
+    /// Each `[accounts]` account: ok / capped until hh:mm, and the lanes on it (names only, never tokens)
+    Accounts {
+        #[command(subcommand)]
+        cmd: Option<AccountsCmd>,
+    },
     /// Read-only: is GitHub branch protection on for main, staging and the integration branch of each fleet repo? Exit 1 unless all are
     Protection,
     /// Remove worktree + pane of merged or closed-issue lanes (never live, dirty or unpushed ones); dry run unless --yes
@@ -335,6 +341,12 @@ enum QueueCmd {
 }
 
 #[derive(Subcommand)]
+enum AccountsCmd {
+    /// Let spawns use a capped account again
+    Reset { name: String },
+}
+
+#[derive(Subcommand)]
 enum ProfilesCmd {
     /// Write ~/.config/herdsman/claude/<profile>/ (settings.json + hooks, role.md, fleet.md) and Hermes profiles' `hooks:` + hook approval
     Sync {
@@ -354,7 +366,8 @@ pub fn usage_doc() -> String {
         "# herdsman — usage for agents\n\nAct only through `herdsman`. It owns state (event log) and refuses anything that\n\
          breaks a rule. A refusal is final: report it, never work around it.\n\n## Commands\n",
     );
-    let subs = cmd.get_subcommands().filter(|c| !c.is_hide_set());
+    // `accounts` is the operator's; the section below documents it.
+    let subs = cmd.get_subcommands().filter(|c| !c.is_hide_set() && c.get_name() != "accounts");
     let subs: Vec<_> = subs.flat_map(|c| if c.has_subcommands() { c.get_subcommands().collect() } else { vec![c] }).collect();
     for sub in subs {
         let mut sub = sub.clone();
@@ -374,15 +387,17 @@ pub fn usage_doc() -> String {
           `herdsman next`: 0 found · 1 empty · 2 top item blocked. `herdsman wait`: 0 reached · 1 failed/closed · 124 timeout.\n\n\
           ## GitHub\n\nThe issue is the spec: read it with `herdsman brief`; PR/CI with `herdsman pr` / `herdsman wait` (cached), never\n\
           `gh issue view` / `gh pr checks` loops. Never comment on issues or PRs; `herdsman merge` writes the one closing comment.\n\n\
-          ## Hard blocks (Claude and Hermes hook)\n\n`gh pr merge`, `gh issue|pr comment`, `gh pr review`, `gh api` comment writes, `git push` to\n\
-          main/master/staging/integration, edits to fleet, fleet-operations and Hermes profile config. Reviewers are\n\
-          read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`. `herdsman spawn … design` is\n\
-          conductor-only: denied from every lane, orch included; design lanes never take part in verdict or merge.\n\n\
-          ## Events\n\n`herdsman check` emits `stall`, `lane-dead`, `ready-unmerged` once per state; `herdsman merge` emits\n\
-          `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain\n\
-          line, or the raw event JSON with `format = \"json\"`. A fleet's own `[[fleet.<name>.notify]]` (same fields,\n\
-          e.g. `cmd = \"hermes send -q -t telegram:<chat_id>:<thread_id>\"`) replaces the global `[[notify]]` for its events;\n\
-          `notify_global = true` in `[fleet.<name>]` sends to both. Events without a fleet go to the global ones.\n";
+          ## Tool guard, accounts, MCP\n\n\
+          Lanes skip permission prompts; the Claude/Hermes hook blocks `gh pr merge`, `gh issue|pr comment`, `gh pr review`,\n\
+          `gh api` comment writes, `git push` to main/master/staging/integration, edits to fleet, fleet-operations and Hermes\n\
+          profile config. Reviewers are read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`. \
+          `herdsman spawn … design` is conductor-only: denied from every lane, orch included; never in verdict or merge.\n\
+          Accounts (`herdsman accounts`): a Claude role's `account`/`accounts` exports the first uncapped one as `CLAUDE_CODE_OAUTH_TOKEN`;\n\
+          an `account-capped` one waits `cap_reset_minutes` or `herdsman accounts reset <name>`. MCP: only the role's `mcp` (default none).\n\n\
+          ## Events\n\n`herdsman check` emits `stall`, `lane-dead`, `ready-unmerged`, `account-capped` (limit banner) once per state; `herdsman merge` emits\n\
+          `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain line, or raw \
+          event JSON with `format = \"json\"`. A fleet's own `[[fleet.<name>.notify]]` (same fields)\n\
+          replaces the global `[[notify]]` for its events; `notify_global = true` in `[fleet.<name>]` sends to both.\n";
     s
 }
 
@@ -486,6 +501,8 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     spawn::adopt(ctx, &cfg, r, out, (&fleet, issue, role), &pane)?
                 }
                 Cmd::Check => check::check(ctx, &cfg, r, out)?,
+                Cmd::Accounts { cmd: None } => access::list(ctx, &cfg, r, out)?,
+                Cmd::Accounts { cmd: Some(AccountsCmd::Reset { name }) } => access::reset(ctx, &cfg, out, &name)?,
                 Cmd::Protection => return protection::protection(&cfg, r, out),
                 Cmd::Clean { fleet, yes } => check::clean(ctx, &cfg, r, out, fleet.as_deref(), None, yes)?,
                 Cmd::Verdict { fleet, issue, verdict, sha, file } => {

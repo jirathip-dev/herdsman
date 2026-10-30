@@ -14,6 +14,8 @@ harness = "claude"
 profile = "fleet-impl"
 model = "opus"
 effort = "xhigh"                 # none|low|medium|high|xhigh: Claude --effort, Hermes --reasoning
+accounts = ["A", "B", "C"]   # Claude token: first uncapped one (or `account = "A"`)
+mcp = ["supabase-dev"]        # only these servers from the repo's .mcp.json; default none
 
 [fleet.sendmeter.role.rev]
 harness = "hermes"
@@ -65,6 +67,14 @@ profile = "fleet-rev"
 harness = "hermes"
 profile = "fleet-design"
 
+[accounts]
+accounts_env = "~/.config/claude-accounts/tokens.env"   # VAR=token lines; never copied anywhere
+A = "CLAUDE_CODE_OAUTH_TOKEN_A"
+B = "CLAUDE_CODE_OAUTH_TOKEN_B"
+C = "CLAUDE_CODE_OAUTH_TOKEN_C"
+# cap_reset_minutes = 300
+# cap_pattern = "usage limit reached|hit your limit"   # `|`-separated, case-insensitive
+
 [limits]
 review_rounds = 3
 stall_minutes = 30   # herdsman check: stall / ready-unmerged threshold
@@ -74,5 +84,5 @@ effort = "high"      # default for roles without `effort`; dsh accepts only "non
 
 [[notify]]
 cmd = "hermes send -q -t telegram:<chat_id>"   # one plain line on stdin
-on = ["stall", "lane-dead", "ready-unmerged", "blocked", "merged", "needs-human", "evidence-missing"]
+on = ["stall", "lane-dead", "ready-unmerged", "blocked", "merged", "needs-human", "evidence-missing", "account-capped"]
 # format = "json"   # send the raw event JSON instead
