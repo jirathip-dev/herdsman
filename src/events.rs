@@ -87,7 +87,7 @@ pub fn read(path: &Path) -> Result<Vec<Event>> {
 /// Append, then run notifiers. Notifier failures never fail the caller.
 pub fn emit(state: &Path, cfg: &Config, ev: Event) -> Result<()> {
     append(state, &ev)?;
-    for n in cfg.notify.iter().filter(|n| n.on.contains(&ev.kind)) {
+    for n in cfg.notifiers(&ev.fleet).into_iter().filter(|n| n.on.contains(&ev.kind)) {
         let payload = if n.format.as_deref() == Some("json") { serde_json::to_string(&ev)? } else { plain(&ev) + "\n" };
         if let Err(e) = run_notifier(&n.cmd, &payload) {
             eprintln!("herdsman: notifier `{}` failed: {e:#}", n.cmd);

@@ -390,13 +390,14 @@ pub fn usage_doc() -> String {
           ## Tool guard, accounts, MCP\n\n\
           Lanes skip permission prompts; the Claude/Hermes hook blocks `gh pr merge`, `gh issue|pr comment`, `gh pr review`,\n\
           `gh api` comment writes, `git push` to main/master/staging/integration, edits to fleet, fleet-operations and Hermes\n\
-          profile config. Reviewers are read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`.\n\
+          profile config. Reviewers are read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`. \
           `herdsman spawn … design` is conductor-only: denied from every lane, orch included; never in verdict or merge.\n\
           Accounts (`herdsman accounts`): a Claude role's `account`/`accounts` exports the first uncapped one as `CLAUDE_CODE_OAUTH_TOKEN`;\n\
           an `account-capped` one waits `cap_reset_minutes` or `herdsman accounts reset <name>`. MCP: only the role's `mcp` (default none).\n\n\
           ## Events\n\n`herdsman check` emits `stall`, `lane-dead`, `ready-unmerged`, `account-capped` (limit banner) once per state; `herdsman merge` emits\n\
           `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain line, or raw \
-          event JSON with `format = \"json\"`.\n";
+          event JSON with `format = \"json\"`. A fleet's own `[[fleet.<name>.notify]]` (same fields)\n\
+          replaces the global `[[notify]]` for its events; `notify_global = true` in `[fleet.<name>]` sends to both.\n";
     s
 }
 
