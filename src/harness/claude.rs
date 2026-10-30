@@ -42,6 +42,9 @@ impl Harness for Claude {
         if let Some(m) = &p.model {
             a.extend(["--model".into(), m.clone()]);
         }
+        if let Some(e) = p.effort.as_deref().filter(|e| *e != "none") {
+            a.extend(["--effort".into(), e.into()]);
+        }
         a.push(p.kick.clone());
         agent_start(p, "claude", pane, a)
     }

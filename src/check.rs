@@ -75,7 +75,7 @@ pub fn teardown(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fl
     let mut seen = std::collections::BTreeSet::new();
     for e in events.iter().rev().filter(|e| e.kind == "spawn" && e.fleet == fleet && e.issue == Some(issue)) {
         let (Some(wt), Some(pane)) = (e.str("worktree"), e.str("pane")) else { continue };
-        if !seen.insert(wt) || !Path::new(wt).exists() {
+        if e.str("role") == Some("design") || !seen.insert(wt) || !Path::new(wt).exists() {
             continue;
         }
         match dirty(r, Path::new(wt)) {

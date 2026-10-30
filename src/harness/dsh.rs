@@ -182,7 +182,7 @@ mod tests {
         let wt = PathBuf::from("/Users/日本語/wt");
         let s = String::new;
         let p = Plan {
-            agent: "a".into(), role: "rev".into(), harness: "dsh".into(), profile: s(), model: None,
+            agent: "a".into(), role: "rev".into(), harness: "dsh".into(), profile: s(), model: None, effort: None,
             branch: s(), base: s(), worktree: wt.clone(), brief: wt.join(".brief.md"),
             kick: "Read /Users/日本語/wt/.brief.md and execute it fully.".into(), lane: s(),
         };

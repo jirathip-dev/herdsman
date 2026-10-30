@@ -127,8 +127,61 @@ fn help_agent_doc_is_short_and_complete() {
         "herdsman spawn", "herdsman merge", "herdsman verdict", "herdsman set", "herdsman status", "herdsman profiles sync",
         "herdsman check", "herdsman clean", "herdsman adopt", "--force", "--supersede", "--yes",
         "MAIN_TARGET", "HOST_BUSY", "LANE_LIVE", "WORKTREE_DIRTY", "review(n)",
+        "--serial", "SERIAL_BUSY", "SERIAL_UNMARKED", "CAP", "design", "conductor-only",
     ] {
         assert!(out.contains(w), "missing {w}");
     }
     assert!(!out.contains("herdsman hook"));
+}
+
+/// #2 AC1: a role's effort (or the `[limits]` default) is mapped per harness in the launch argv.
+#[test]
+fn effort_maps_to_each_harness_flag() {
+    let d = tmpdir("effort-claude");
+    let cfg = CONFIG
+        .replace("harness  =  \"hermes\"    # toggled in tests", "harness = \"claude\"\neffort = \"high\"")
+        .replace("review_rounds = 3", "review_rounds = 3\neffort = \"xhigh\"");
+    let c = ctx(&d, &cfg);
+    let p = plan(&c, &Fake::default(), "impl");
+    let start = words(&p["commands"][3]);
+    let at = start.iter().position(|w| w == "--effort").expect("--effort");
+    assert_eq!(start[at + 1], "high");
+    assert_eq!(p["effort"], "high");
+    // rev sets none: the [limits] default applies, as Hermes `--reasoning`.
+    let start = words(&plan(&c, &Fake::default(), "rev")["commands"][3]);
+    assert_eq!(start[start.len() - 2..], ["--reasoning", "xhigh"].map(String::from));
+
+    // Claude `none` omits the flag; Hermes passes it through.
+    let d = tmpdir("effort-none");
+    let c = ctx(&d, &cfg.replace("effort = \"high\"", "effort = \"none\"").replace("effort = \"xhigh\"", "effort = \"none\""));
+    assert!(!words(&plan(&c, &Fake::default(), "impl")["commands"][3]).contains(&"--effort".to_string()));
+    let start = words(&plan(&c, &Fake::default(), "rev")["commands"][3]);
+    assert_eq!(start[start.len() - 2..], ["--reasoning", "none"].map(String::from));
+
+    // No effort anywhere: no flag at all.
+    let d = tmpdir("effort-unset");
+    let c = ctx(&d, CONFIG);
+    let start = words(&plan(&c, &Fake::default(), "rev")["commands"][3]);
+    assert!(!start.contains(&"--reasoning".to_string()), "{start:?}");
+}
+
+/// #2 AC1: an unknown level, or one the role's harness lacks, is refused at config load.
+#[test]
+fn invalid_effort_is_refused_at_config_load() {
+    for (cfg, want) in [
+        (CONFIG.replace("profile = \"fleet-rev\"", "profile = \"fleet-rev\"\neffort = \"max\""), "fleet.sendmeter.role.rev: effort \"max\" must be one of"),
+        (CONFIG.replace("review_rounds = 3", "review_rounds = 3\neffort = \"ultra\""), "limits.effort: \"ultra\" must be one of"),
+        (
+            CONFIG.replace("harness = \"hermes\"\nprofile = \"fleet-rev\"", "harness = \"dsh\"\nprofile = \"fleet-rev\"\neffort = \"high\""),
+            "fleet.sendmeter.role.rev: harness dsh does not support effort \"high\"",
+        ),
+    ] {
+        let d = tmpdir("effort-bad");
+        let c = ctx(&d, &cfg);
+        let err = herdsman::config::Config::load(&c.config).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains(want), "{msg}");
+        let (code, _) = run(&c, &Fake::default(), &["spawn", "sendmeter", "12", "rev", "--dry-run"]);
+        assert_eq!(code, 1);
+    }
 }

@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 pub struct Item {
     pub issue: u64,
     pub blocked_by: Option<u64>,
+    /// `queue add --serial`: touches the fleet's `serial_paths`.
+    pub serial: bool,
 }
 
 /// A queue change, as logged: `op` is add | mv | rm | block.
@@ -42,9 +44,13 @@ pub fn apply(q: &mut Vec<Item>, d: &Value) -> Result<()> {
                 ensure!(!issues.contains(&a), "#{a} cannot be placed relative to itself");
                 pos(q, a)?;
             }
-            let mut moved: Vec<Item> = issues.iter().map(|&n| Item { issue: n, blocked_by: None }).collect();
+            let serial = d["serial"].as_bool() == Some(true);
+            let mut moved: Vec<Item> = issues.iter().map(|&n| Item { issue: n, blocked_by: None, serial }).collect();
             for m in &mut moved {
-                m.blocked_by = q.iter().find(|i| i.issue == m.issue).and_then(|i| i.blocked_by);
+                if let Some(old) = q.iter().find(|i| i.issue == m.issue) {
+                    m.blocked_by = old.blocked_by;
+                    m.serial |= old.serial;
+                }
             }
             q.retain(|i| !issues.contains(&i.issue));
             let at = match (d["top"].as_bool(), d["before"].as_u64(), d["after"].as_u64()) {
@@ -88,6 +94,11 @@ fn state<'a>(st: &'a States, fleet: &str, n: u64) -> &'a str {
     st.get(&(fleet.to_string(), n)).map_or("queued", |s| s.state.as_str())
 }
 
+/// The fleet's issues marked `--serial`, merged ones included.
+pub fn serial(events: &[Event], fleet: &str) -> Vec<u64> {
+    replay(events, fleet).into_iter().filter(|i| i.serial).map(|i| i.issue).collect()
+}
+
 /// The queue as shown: merged issues drop out; a blocker counts until it is merged.
 pub fn view(events: &[Event], st: &States, fleet: &str) -> Vec<Item> {
     replay(events, fleet)
@@ -106,7 +117,7 @@ pub fn next(events: &[Event], fleet: &str) -> (i32, String) {
         return (0, i.issue.to_string());
     }
     match free.first() {
-        Some(Item { issue, blocked_by: Some(b) }) => (2, format!("#{issue} is blocked by #{b}")),
+        Some(Item { issue, blocked_by: Some(b), .. }) => (2, format!("#{issue} is blocked by #{b}")),
         _ => (1, format!("{fleet}: queue empty")),
     }
 }
@@ -116,7 +127,7 @@ pub fn ls_json(events: &[Event], fleet: &str) -> Value {
     let rows: Vec<Value> = view(events, &st, fleet)
         .iter()
         .enumerate()
-        .map(|(k, i)| json!({"pos": k + 1, "issue": i.issue, "state": state(&st, fleet, i.issue), "blocked_by": i.blocked_by}))
+        .map(|(k, i)| json!({"pos": k + 1, "issue": i.issue, "state": state(&st, fleet, i.issue), "blocked_by": i.blocked_by, "serial": i.serial}))
         .collect();
     Value::Array(rows)
 }
@@ -131,16 +142,17 @@ pub fn board(events: &[Event], fleet: &str, now: u64) -> String {
     let mine: Vec<&IssueState> = st.values().filter(|s| s.fleet == fleet).collect();
     let active = mine.iter().filter(|s| s.active_lane().is_some()).count();
     let mut lines = vec![format!("{fleet}: {} queued, {active} active", q.len()), format!(
-        "{:>2} {:<6} {:<11} {:<20} {:<4} LAST",
-        "Q", "ISSUE", "STATE", "LANE", "AGE"
+        "{:>2} {:<6} {:<11} {:<20} {:<5} {:<4} LAST",
+        "Q", "ISSUE", "STATE", "LANE", "EFF", "AGE"
     )];
     let row = |pos: String, n: u64, last: Option<String>| {
         let s = st.get(&(fleet.to_string(), n));
         let lane: String = s.and_then(|s| s.lane.as_deref()).unwrap_or("-").chars().take(20).collect();
+        let eff = s.and_then(|s| s.effort.as_deref()).unwrap_or("-");
         let (ts, ev) = s.map_or((0, ""), |s| (s.last_ts, s.last_event.as_str()));
         let a = if ts == 0 { "-".into() } else { age(now.saturating_sub(ts)) };
         let last = last.unwrap_or_else(|| if ev.is_empty() { "-".into() } else { ev.into() });
-        format!("{pos:>2} #{n:<5} {:<11} {lane:<20} {a:<4} {last}", state(&st, fleet, n))
+        format!("{pos:>2} #{n:<5} {:<11} {lane:<20} {eff:<5} {a:<4} {last}", state(&st, fleet, n))
     };
     for (k, i) in q.iter().enumerate() {
         lines.push(row((k + 1).to_string(), i.issue, i.blocked_by.map(|b| format!("on #{b}"))));
