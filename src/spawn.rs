@@ -1,5 +1,6 @@
 //! `herdsman spawn` (worktree + herdr pane + harness launch + verified kick) and
 //! `herdsman profiles sync` (each harness's per-role profile files; see `harness`).
+use crate::access;
 use crate::config::{Config, Fleet};
 use crate::events::{emit, fold, read, Event};
 use crate::gate::refuse;
@@ -38,6 +39,7 @@ pub fn profiles_sync(ctx: &Ctx, cfg: &Config, usage: &str, out: &mut dyn Write) 
             for h in harness::NAMES {
                 harness::get(h).sync(ctx, role, &profile, usage, out)?;
             }
+            harness::set_mcp(ctx, &profile, &access::mcp_servers(cfg, f, r)?)?;
         }
     }
     Ok(())
@@ -78,12 +80,20 @@ pub struct Plan {
     pub kick: String,
     /// `HERDSMAN_LANE` value (`<fleet>:<issue>:<role>`); arms `herdsman hook` in the lane.
     pub lane: String,
+    /// Claude lanes: the account name and the shell assignment exporting its token.
+    pub account: Option<(String, String)>,
+    /// The only MCP servers the lane gets, and the lane-local file Claude reads them from.
+    pub mcp: serde_json::Map<String, Value>,
+    pub mcp_file: PathBuf,
 }
 
 impl Plan {
     /// Exports `HERDSMAN_LANE` in the pane's shell, so the harness and its hooks inherit it.
+    /// Claude lanes with an account also export `CLAUDE_CODE_OAUTH_TOKEN` there.
     pub fn lane_cmd(&self, pane: &str) -> Vec<String> {
-        argv(&["pane", "run", pane, "export", &format!("HERDSMAN_LANE='{}'", self.lane)])
+        let mut c = argv(&["pane", "run", pane, "export", &format!("HERDSMAN_LANE='{}'", self.lane)]);
+        c.extend(self.account.iter().map(|a| a.1.clone()));
+        c
     }
 
     pub fn start_cmd(&self, ctx: &Ctx, pane: &str) -> Vec<String> {
@@ -123,6 +133,14 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
     };
     let kick = format!("Read {} and execute it fully.", brief.display());
     let lane = format!("{fleet}:{}:{role}", issue.map_or("-".into(), |n| n.to_string()));
+    let account = match r.harness.as_str() {
+        "claude" => access::pick(cfg, &read(&ctx.state)?, r, ctx.now)?,
+        _ => None,
+    };
+    let mcp_file = match issue {
+        None => brief.with_file_name(format!("orch-{fleet}.mcp.json")),
+        Some(_) => worktree.join(".mcp.lane.json"),
+    };
     Ok(Plan {
         agent,
         role: role.into(),
@@ -135,6 +153,9 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
         brief,
         kick,
         lane,
+        account,
+        mcp: access::mcp_servers(cfg, f, r)?,
+        mcp_file,
     })
 }
 
@@ -196,7 +217,7 @@ fn plan_json(ctx: &Ctx, f: &Fleet, p: &Plan) -> Value {
     cmds.extend(p.kick_cmds("<pane>").into_iter().map(herdr));
     json!({
         "agent": p.agent, "role": p.role, "harness": p.harness, "profile": p.profile,
-        "model": p.model, "branch": p.branch, "base": p.base,
+        "model": p.model, "branch": p.branch, "base": p.base, "account": p.account.as_ref().map(|a| &a.0),
         "worktree": p.worktree, "brief": p.brief, "kick": p.kick, "commands": cmds,
     })
 }
@@ -215,7 +236,7 @@ fn free_pane(r: &dyn Runner, ws: &str, wt: &Path) -> Result<String> {
 }
 
 /// Untracked files fleet itself writes into a worktree.
-pub const OWN_FILES: [&str; 3] = [".brief.md", "verdict.md", ".role-prompt.md"];
+pub const OWN_FILES: [&str; 4] = [".brief.md", "verdict.md", ".role-prompt.md", ".mcp.lane.json"];
 
 /// Why a worktree must not be reused or removed: uncommitted changes (fleet's own
 /// `OWN_FILES` aside) or commits that are on no remote.
@@ -374,7 +395,7 @@ fn harness_in(r: &dyn Runner, pane: &str) -> Option<Value> {
 /// The `spawn` event's data for a lane of plan `p` running in `pane`.
 fn lane_data(p: &Plan, pane: &str, ws: &str) -> Value {
     json!({"role": p.role, "harness": p.harness, "profile": p.profile, "model": p.model, "agent": p.agent,
-        "pane": pane, "workspace": ws, "worktree": p.worktree, "branch": p.branch})
+        "pane": pane, "workspace": ws, "worktree": p.worktree, "branch": p.branch, "account": p.account.as_ref().map(|a| &a.0)})
 }
 
 /// `herdsman adopt`: record a lane already running in `pane` (a spawn that never got

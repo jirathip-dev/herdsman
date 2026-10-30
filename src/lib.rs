@@ -1,4 +1,5 @@
 //! fleet: agents act only through this CLI; it owns state and refuses rule breaks.
+pub mod access;
 pub mod check;
 pub mod config;
 pub mod events;
@@ -252,6 +253,11 @@ enum Cmd {
     },
     /// Alert once per state on stall, lane-dead and ready-unmerged issues; idempotent, safe from cron
     Check,
+    /// Each `[accounts]` account: ok / capped until hh:mm, and the lanes on it (names only, never tokens)
+    Accounts {
+        #[command(subcommand)]
+        cmd: Option<AccountsCmd>,
+    },
     /// Read-only: is GitHub branch protection on for main, staging and the integration branch of each fleet repo? Exit 1 unless all are
     Protection,
     /// Remove worktree + pane of merged lanes (never live, dirty or unpushed ones); dry run unless --yes
@@ -331,6 +337,12 @@ enum QueueCmd {
 }
 
 #[derive(Subcommand)]
+enum AccountsCmd {
+    /// Let spawns use a capped account again
+    Reset { name: String },
+}
+
+#[derive(Subcommand)]
 enum ProfilesCmd {
     /// Write ~/.config/herdsman/claude/<profile>/ (settings.json + hooks, role.md, fleet.md) and Hermes profiles' `hooks:` + hook approval
     Sync {
@@ -370,9 +382,13 @@ pub fn usage_doc() -> String {
           `herdsman next`: 0 found · 1 empty · 2 top item blocked. `herdsman wait`: 0 reached · 1 failed/closed · 124 timeout.\n\n\
           ## GitHub\n\nThe issue is the spec: read it with `herdsman brief`; PR/CI with `herdsman pr` / `herdsman wait` (cached), never\n\
           `gh issue view` / `gh pr checks` loops. Never comment on issues or PRs; `herdsman merge` writes the one closing comment.\n\n\
-          ## Hard blocks (Claude and Hermes hook)\n\n`gh pr merge`, `gh issue|pr comment`, `gh pr review`, `gh api` comment writes, `git push` to\n\
+          ## Tool guard, accounts, MCP (lanes skip permission prompts; the Claude/Hermes hook is the guard)\n\n\
+          Hard blocks: `gh pr merge`, `gh issue|pr comment`, `gh pr review`, `gh api` comment writes, `git push` to\n\
           main/master/staging/integration, edits to fleet, fleet-operations and Hermes profile config. Reviewers are\n\
-          read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`.\n\n\
+          read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`.\n\
+          Accounts: a Claude role's `account`/`accounts` picks the first uncapped `[accounts]` name as `CLAUDE_CODE_OAUTH_TOKEN`;\n\
+          `herdsman check` emits `account-capped <name>` on the limit banner; spawns skip it for `cap_reset_minutes` or until\n\
+          `herdsman accounts reset <name>`; `herdsman accounts` lists them. MCP: a lane gets only its role's `mcp` (default none).\n\n\
           ## Events\n\n`herdsman check` emits `stall`, `lane-dead`, `ready-unmerged` once per state; `herdsman merge` emits\n\
           `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain\n\
           line, or the raw event JSON with `format = \"json\"`.\n";
@@ -476,6 +492,8 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     spawn::adopt(ctx, &cfg, r, out, (&fleet, issue, role), &pane)?
                 }
                 Cmd::Check => check::check(ctx, &cfg, r, out)?,
+                Cmd::Accounts { cmd: None } => access::list(ctx, &cfg, r, out)?,
+                Cmd::Accounts { cmd: Some(AccountsCmd::Reset { name }) } => access::reset(ctx, &cfg, out, &name)?,
                 Cmd::Protection => return protection::protection(&cfg, r, out),
                 Cmd::Clean { fleet, yes } => check::clean(ctx, &cfg, r, out, fleet.as_deref(), None, yes)?,
                 Cmd::Verdict { fleet, issue, verdict, sha, file } => {

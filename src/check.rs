@@ -1,5 +1,6 @@
 //! `herdsman check` (stall / lane-dead / ready-unmerged alerts, each once per state)
 //! and `herdsman clean` (reclaim worktrees and panes of merged lanes).
+use crate::access;
 use crate::config::Config;
 use crate::events::{age, emit, fold, plain, read, Event, IssueState};
 use crate::gate::gate;
@@ -33,6 +34,7 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
     for s in fold(&events).values().filter(|s| s.state != "merged") {
         let idle = ctx.now.saturating_sub(s.last_ts);
         let mut hits = vec![];
+        let mut capped = None;
         if let (Some(agents), Some((role, lane))) = (&agents, s.active_lane()) {
             // Agents that report their own state (dsh-TUI) can lose the name: match the lane's pane.
             let spawned = events.iter().rev().find(|e| e.kind == "spawn" && e.str("agent") == Some(lane));
@@ -43,6 +45,16 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
             let key = format!("{}:{lane}", s.last_ts);
             if status.is_none() {
                 hits.push(("lane-dead", key.clone(), format!("{role} lane {lane} is gone ({})", s.state)));
+            }
+            // A Claude lane on a named account that shows the usage-limit banner caps that account.
+            let account = spawned.and_then(|e| e.str("account"));
+            if let (Some(name), Some(p), true) = (account, pane, status.is_some()) {
+                let screen = ok(r, "herdr", &["pane", "read", p, "--source", "visible"]).unwrap_or_default();
+                if access::capped_screen(cfg, &screen) {
+                    let why = format!("{name}: {role} lane {lane} hit the usage limit; spawns skip {name} for now");
+                    hits.push(("account-capped", format!("{lane}:{name}"), why));
+                    capped = Some(name);
+                }
             }
             if idle > stall && status != Some("working") {
                 let st = status.unwrap_or("gone");
@@ -60,7 +72,11 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
             if events.iter().filter(same).any(|e| e.str("key") == Some(&key)) {
                 continue;
             }
-            let ev = Event::new(ctx.now, &s.fleet, Some(s.issue), kind, json!({"key": key, "reason": reason}));
+            let mut d = json!({"key": key, "reason": reason});
+            if kind == "account-capped" {
+                d["account"] = json!(capped);
+            }
+            let ev = Event::new(ctx.now, &s.fleet, Some(s.issue), kind, d);
             writeln!(out, "{}", plain(&ev))?;
             emit(&ctx.state, cfg, ev)?;
         }

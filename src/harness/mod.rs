@@ -12,7 +12,7 @@ use anyhow::Result;
 use std::io::Write;
 
 pub use dsh::{install_pre_push, DSH_TUI_VERSION};
-pub use hermes::set_hooks;
+pub use hermes::{set_hooks, set_mcp};
 
 pub const NAMES: [&str; 3] = ["claude", "hermes", "dsh"];
 

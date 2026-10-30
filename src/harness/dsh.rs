@@ -185,6 +185,7 @@ mod tests {
             agent: "a".into(), role: "rev".into(), harness: "dsh".into(), profile: s(), model: None,
             branch: s(), base: s(), worktree: wt.clone(), brief: wt.join(".brief.md"),
             kick: "Read /Users/日本語/wt/.brief.md and execute it fully.".into(), lane: s(),
+            account: None, mcp: Default::default(), mcp_file: wt.join(".mcp.lane.json"),
         };
         assert!(!p.kick.is_char_boundary(20));
         let r = Fake(Default::default());

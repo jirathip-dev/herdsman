@@ -41,6 +41,7 @@ pub const CODES: &[(&str, &str)] = &[
     ("LANE_LIVE", "spawn: a herdr agent is live in the worktree, or the log has an unfinished lane for it; --supersede"),
     ("WORKTREE_DIRTY", "spawn: the worktree has unpushed or uncommitted work from no known lane; --supersede"),
     ("MERGED", "spawn/adopt: the issue is merged; a merged issue never reopens"),
+    ("MCP_FORBIDDEN", "spawn/profiles sync: a role's `mcp` names a server matching `mcp_deny` (default `*prod*`)"),
 ];
 
 fn is_main(b: &str) -> bool {

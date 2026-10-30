@@ -82,13 +82,34 @@ fn approve_hook(path: &Path, cmd: &str) -> Result<()> {
     crate::config::write_atomic(path, &serde_json::to_string_pretty(&data)?)
 }
 
+/// Write only the role's MCP servers under the fleet profile's `mcp_servers:`
+/// (removed when there are none). Profiles that do not exist are left alone.
+pub fn set_mcp(ctx: &Ctx, profile: &str, servers: &serde_json::Map<String, Value>) -> Result<()> {
+    let yaml = ctx.hermes.join(profile).join("config.yaml");
+    let Ok(text) = std::fs::read_to_string(&yaml) else { return Ok(()) };
+    // JSON is YAML flow syntax: one line per server.
+    let block: String = servers.iter().map(|(k, v)| format!("  {}: {v}\n", serde_json::to_string(k).unwrap())).collect();
+    let block = if block.is_empty() { block } else { format!("mcp_servers:\n{block}") };
+    let new = set_block(&text, "mcp_servers:", &block);
+    if new != text {
+        std::fs::write(&yaml, new)?;
+    }
+    Ok(())
+}
+
 /// Replace the top-level `hooks:` block of a Hermes config.yaml with `block`, in
 /// place (appended when absent); every other line is kept byte for byte.
 pub fn set_hooks(text: &str, block: &str) -> String {
+    set_block(text, "hooks:", block)
+}
+
+/// Replace the top-level block starting with `key` by `block` (appended when absent;
+/// an empty `block` removes it).
+fn set_block(text: &str, key: &str, block: &str) -> String {
     let (mut out, mut skip, mut done) = (String::new(), false, false);
     for line in text.split_inclusive('\n') {
         if !line.trim().is_empty() && !line.starts_with([' ', '\t']) {
-            skip = line.starts_with("hooks:");
+            skip = line.starts_with(key);
             if skip && !done {
                 out.push_str(block);
                 done = true;
@@ -98,7 +119,7 @@ pub fn set_hooks(text: &str, block: &str) -> String {
             out.push_str(line);
         }
     }
-    if !done {
+    if !done && !block.is_empty() {
         if !out.is_empty() && !out.ends_with('\n') {
             out.push('\n');
         }
