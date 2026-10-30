@@ -85,6 +85,11 @@ fn real_claude_spawn_writes_brief_and_logs_event() {
     assert_eq!(code, 0, "{out} {:?}", r.calls.borrow());
     // #24: the lane's shell exports HERDSMAN_LANE before the harness starts, arming `herdsman hook`.
     assert!(r.index("herdr pane run w9:p1 export").unwrap() < r.index("herdr agent start").unwrap());
+    // #19: the title comes from the spec fetched at spawn, not a stale or missing cache.
+    let calls = r.calls.borrow();
+    let start = calls.iter().find(|c| c.starts_with("herdr agent start")).unwrap();
+    assert!(start.contains("--name sendmeter · impl #12 · Fix the meter --mcp-config"), "{start}");
+    drop(calls);
     let brief = std::fs::read_to_string(wt.join(".brief.md")).unwrap();
     assert!(brief.contains("# ROLE: IMPLEMENTER") && brief.contains("AC: it works") && brief.contains("Closes #12"));
     let st = &fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 12)];
@@ -184,4 +189,51 @@ fn invalid_effort_is_refused_at_config_load() {
         let (code, _) = run(&c, &Fake::default(), &["spawn", "sendmeter", "12", "rev", "--dry-run"]);
         assert_eq!(code, 1);
     }
+}
+
+/// #19: Claude lanes get `--name "<fleet> · <role> #<issue> · <short title>"`; orch is `<fleet> · orch`.
+#[test]
+fn claude_dry_run_names_every_role() {
+    let d = tmpdir("spawn-name");
+    let cfg = CONFIG.replace("harness = \"hermes\"", "harness = \"claude\"").replace("harness  =  \"hermes\"", "harness = \"claude\"")
+        + "\n[fleet.sendmeter.role.design]\nharness = \"claude\"\nprofile = \"fleet-design\"\n";
+    let c = ctx(&d, &cfg);
+    let cache = c.state.parent().unwrap().join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::write(cache.join("issue-sendmeter-12.json"), r#"{"title":"feat(meter): fix the meter","body":""}"#).unwrap();
+    let name = |args: &[&str]| {
+        let (code, out) = run(&c, &Fake::default(), args);
+        assert_eq!(code, 0, "{out}");
+        let p: Value = serde_json::from_str(&out).unwrap();
+        let start = words(p["commands"].as_array().unwrap().iter().find(|c| c[2] == "start").unwrap());
+        let at = start.iter().position(|w| w == "--name").expect("--name");
+        assert_eq!(start[at + 1], p["title"].as_str().unwrap());
+        start[at + 1].clone()
+    };
+    let dry = |n: &str, role: &str| name(&["spawn", "sendmeter", n, role, "--dry-run", "--json"]);
+    assert_eq!(dry("12", "impl"), "sendmeter · impl #12 · fix the meter");
+    assert_eq!(dry("12", "rev"), "sendmeter · rev #12 r1 · fix the meter");
+    assert_eq!(dry("12", "design"), "sendmeter · design #12 · fix the meter");
+    assert_eq!(dry("-", "orch"), "sendmeter · orch");
+    // No cached spec (a dry run never calls GitHub): the head alone.
+    assert_eq!(dry("13", "impl"), "sendmeter · impl #13");
+}
+
+#[test]
+fn lane_title_strips_prefixes_and_cuts_at_words() {
+    use herdsman::spawn::lane_title;
+    let h = "synergy · impl #2840";
+    assert_eq!(lane_title(h, "M- prefix for Mango numbers"), "synergy · impl #2840 · M- prefix for Mango numbers");
+    assert_eq!(lane_title(h, "P0: feat(api)!: drop v1"), "synergy · impl #2840 · drop v1");
+    assert_eq!(lane_title(h, "spawn: informative titles"), "synergy · impl #2840 · informative titles");
+    assert_eq!(lane_title(h, "Fix 10:30 cron"), "synergy · impl #2840 · Fix 10:30 cron");
+    assert_eq!(lane_title(h, "  "), h);
+    let long = lane_title(h, "spawn: informative lane titles instead of Claude auto-titles from the brief prompt");
+    assert_eq!(long, "synergy · impl #2840 · informative lane titles instead of…");
+    assert!(long.chars().count() <= 60);
+    // Thai: kept whole when it fits; cut by chars (never bytes) when it does not.
+    assert_eq!(lane_title(h, "แก้ไขปุ่มชำระเงิน"), "synergy · impl #2840 · แก้ไขปุ่มชำระเงิน");
+    let thai = lane_title(h, &"ภาษาไทย".repeat(10));
+    assert!(thai.ends_with('…') && thai.chars().count() <= 60, "{thai}");
+    assert!(thai.starts_with("synergy · impl #2840 · ภาษาไทยภาษาไทย"));
 }

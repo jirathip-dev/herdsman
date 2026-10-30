@@ -87,6 +87,9 @@ pub struct Plan {
     /// The only MCP servers the lane gets, and the lane-local file Claude reads them from.
     pub mcp: serde_json::Map<String, Value>,
     pub mcp_file: PathBuf,
+    /// Display title head (`<fleet> · <role> #<issue>`) and the full lane title built from it.
+    pub head: String,
+    pub title: String,
 }
 
 impl Plan {
@@ -98,6 +101,11 @@ impl Plan {
         c
     }
 
+    /// Retitle the lane from the issue title (the spec fetched at spawn).
+    pub fn set_title(&mut self, issue_title: &str) {
+        self.title = lane_title(&self.head, issue_title);
+    }
+
     pub fn start_cmd(&self, ctx: &Ctx, pane: &str) -> Vec<String> {
         harness::get(&self.harness).start_cmd(ctx, self, pane)
     }
@@ -107,14 +115,48 @@ impl Plan {
     }
 }
 
+/// Longest lane title, in chars.
+const TITLE_MAX: usize = 60;
+
+/// `<head> · <short issue title>`, ≤ 60 chars: conventional-commit / `P0:` prefixes
+/// stripped, cut at a word boundary with `…`. Counts chars, so Thai stays intact.
+pub fn lane_title(head: &str, issue_title: &str) -> String {
+    let mut t = issue_title.trim();
+    // `feat(x)!:`, `spawn:`, `P0:` — one ASCII token, an optional scope, then a colon.
+    while let Some((pre, rest)) = t.split_once(':') {
+        let pre = pre.strip_suffix('!').unwrap_or(pre);
+        let tok = pre.split_once('(').map_or(pre, |(a, b)| if b.ends_with(')') { a } else { "" });
+        if tok.is_empty() || !tok.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            break;
+        }
+        t = rest.trim_start();
+    }
+    if t.is_empty() {
+        return head.to_string();
+    }
+    let room = TITLE_MAX.saturating_sub(head.chars().count() + 3);
+    if t.chars().count() <= room {
+        return format!("{head} · {t}");
+    }
+    let cut: String = t.chars().take(room.saturating_sub(1)).collect();
+    let cut = match cut.rfind(char::is_whitespace) {
+        Some(i) if i > 0 => &cut[..i],
+        _ => &cut,
+    };
+    match cut.trim_end() {
+        "" => head.to_string(),
+        c => format!("{head} · {c}…"),
+    }
+}
+
 pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str) -> Result<Plan> {
     let f = cfg.fleet(fleet)?;
     let r = f.role(role)?;
-    let (agent, branch, base, worktree, brief) = match issue {
+    let (agent, branch, base, worktree, brief, head) = match issue {
         None => {
             anyhow::ensure!(role == "orch", "only the orch lane runs without an issue");
             let brief = ctx.state.parent().unwrap_or(&ctx.state).join(format!("orch-{fleet}.md"));
-            (format!("{fleet}-orch"), f.integration.clone(), String::new(), f.local_path(), brief)
+            (format!("{fleet}-orch"), f.integration.clone(), String::new(), f.local_path(), brief, format!("{fleet} · orch"))
         }
         Some(issue) => {
             anyhow::ensure!(role != "orch", "the orch lane takes no issue: `herdsman spawn {fleet} - orch`");
@@ -123,16 +165,18 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
                 return Err(refuse("MERGED", format!("{fleet}#{issue} is merged; a merged issue never reopens")).into());
             }
             let impl_branch = st.as_ref().and_then(|s| s.branch.clone()).unwrap_or_else(|| format!("issue-{issue}"));
-            let (agent, branch, base) = if role == "rev" {
+            let (agent, branch, base, head) = if role == "rev" {
                 let k = st.as_ref().map_or(0, |s| s.rounds) + 1;
-                (format!("{fleet}-rev-{issue}-r{k}"), format!("rev-{issue}-r{k}"), format!("origin/{impl_branch}"))
+                let head = format!("{fleet} · rev #{issue} r{k}");
+                (format!("{fleet}-rev-{issue}-r{k}"), format!("rev-{issue}-r{k}"), format!("origin/{impl_branch}"), head)
             } else if role == "design" {
-                (format!("{fleet}-design-{issue}"), format!("design-{issue}"), format!("origin/{}", f.integration))
+                let head = format!("{fleet} · design #{issue}");
+                (format!("{fleet}-design-{issue}"), format!("design-{issue}"), format!("origin/{}", f.integration), head)
             } else {
-                (format!("{fleet}-{role}-{issue}"), impl_branch, format!("origin/{}", f.integration))
+                (format!("{fleet}-{role}-{issue}"), impl_branch, format!("origin/{}", f.integration), format!("{fleet} · {role} #{issue}"))
             };
             let wt = ctx.worktrees.join(f.repo_name()).join(&branch);
-            (agent, branch, base, wt.clone(), wt.join(".brief.md"))
+            (agent, branch, base, wt.clone(), wt.join(".brief.md"), head)
         }
     };
     let kick = format!("Read {} and execute it fully.", brief.display());
@@ -145,6 +189,8 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
         None => brief.with_file_name(format!("orch-{fleet}.mcp.json")),
         Some(_) => worktree.join(".mcp.lane.json"),
     };
+    let cached = issue.and_then(|n| crate::gh::cached_spec(ctx, fleet, n));
+    let title = lane_title(&head, cached.as_ref().and_then(|v| v["title"].as_str()).unwrap_or(""));
     Ok(Plan {
         agent,
         role: role.into(),
@@ -161,6 +207,8 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
         account,
         mcp: access::mcp_servers(cfg, f, r)?,
         mcp_file,
+        head,
+        title,
     })
 }
 
@@ -230,7 +278,7 @@ fn plan_json(ctx: &Ctx, f: &Fleet, p: &Plan) -> Value {
     json!({
         "agent": p.agent, "role": p.role, "harness": p.harness, "profile": p.profile,
         "model": p.model, "effort": p.effort, "branch": p.branch, "base": p.base, "account": p.account.as_ref().map(|a| &a.0),
-        "worktree": p.worktree, "brief": p.brief, "kick": p.kick, "commands": cmds,
+        "worktree": p.worktree, "brief": p.brief, "kick": p.kick, "title": p.title, "commands": cmds,
     })
 }
 
@@ -291,7 +339,7 @@ pub fn spawn(
     if f.paused && matches!(role, "impl" | "rev") {
         return Err(refuse("PAUSED", format!("{fleet} is paused; `herdsman resume {fleet}` first")).into());
     }
-    let p = plan(ctx, cfg, fleet, issue, role)?;
+    let mut p = plan(ctx, cfg, fleet, issue, role)?;
     let mut pj = plan_json(ctx, f, &p);
     if o.dry_run {
         pj["dry_run"] = json!(true);
@@ -365,6 +413,7 @@ pub fn spawn(
                 json(r, "herdr", &[&a[..], &tail[..]].concat())?
             };
             let (title, body) = (iss["title"].as_str().unwrap_or(""), iss["body"].as_str().unwrap_or(""));
+            p.set_title(title);
             // A fix round's brief carries the findings of the latest verdict if it was FAIL.
             let last = events.iter().rev().find(|e| e.kind == "verdict" && e.fleet == fleet && e.issue == Some(n));
             let fix = last.filter(|e| role == "impl" && e.str("verdict") == Some("FAIL")).and_then(|e| e.str("body"));
@@ -378,6 +427,7 @@ pub fn spawn(
     std::fs::write(&p.brief, brief_text).context("writing the brief")?;
     h.prepare(ctx, r, &p)?;
     let pane = free_pane(r, ws, &p.worktree)?;
+    pj = plan_json(ctx, f, &p);
     let lane = p.lane_cmd(&pane);
     ok(r, "herdr", &lane.iter().map(String::as_str).collect::<Vec<_>>())?;
     let start = r.run("herdr", &p.start_cmd(ctx, &pane))?;
