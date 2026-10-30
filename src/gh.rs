@@ -27,6 +27,11 @@ fn store(p: &Path, v: &Value) -> Result<()> {
     Ok(())
 }
 
+/// The cached spec, if any; never calls GitHub (dry runs).
+pub fn cached_spec(ctx: &Ctx, fleet: &str, issue: u64) -> Option<Value> {
+    load(&cache_path(ctx, "issue", fleet, issue))
+}
+
 /// The issue's `{title, body, updatedAt}`. With `refresh`, one small `updatedAt` read
 /// decides whether the body is fetched again; without it, the cache is trusted.
 pub fn spec(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, issue: u64, refresh: bool) -> Result<Value> {
