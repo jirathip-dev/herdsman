@@ -106,9 +106,10 @@ pub fn forget_pr(ctx: &Ctx, fleet: &str, issue: u64) {
     let _ = std::fs::remove_file(cache_path(ctx, "pr", fleet, issue));
 }
 
-/// One check of a statusCheckRollup: green | pending | failed.
+/// One check of a statusCheckRollup: green | pending | failed | missing.
 pub fn check_state(c: &Value) -> &'static str {
     match c["__typename"].as_str() {
+        _ if c["status"] == "MISSING" => "missing",
         Some("StatusContext") => match c["state"].as_str() {
             Some("SUCCESS") => "green",
             Some("PENDING" | "EXPECTED") => "pending",
@@ -120,19 +121,43 @@ pub fn check_state(c: &Value) -> &'static str {
     }
 }
 
+fn check_name(c: &Value) -> &str {
+    c["name"].as_str().or(c["context"].as_str()).unwrap_or("?")
+}
+
+/// The rollup narrowed to `required` names: the latest run (by `startedAt`) of each,
+/// or a `MISSING` placeholder. Empty `required` = the whole rollup.
+pub fn required(rollup: &Value, required: &[String]) -> Value {
+    if required.is_empty() {
+        return rollup.clone();
+    }
+    let all = rollup.as_array().map(Vec::as_slice).unwrap_or_default();
+    let latest = |n: &String| {
+        let runs = all.iter().filter(|c| check_name(c) == n);
+        runs.max_by_key(|c| c["startedAt"].as_str().unwrap_or_default()).cloned()
+    };
+    required.iter().map(|n| latest(n).unwrap_or_else(|| json!({"name": n, "status": "MISSING"}))).collect()
+}
+
+/// The first check that is not green, as "check `name` is state".
+pub fn not_green(rollup: &Value) -> Option<String> {
+    let c = rollup.as_array()?.iter().find(|c| check_state(c) != "green")?;
+    Some(format!("check `{}` is {}", check_name(c), check_state(c)))
+}
+
 /// The rollup: failed if any check failed, pending while any runs (or none reported yet).
 pub fn ci(rollup: &Value) -> &'static str {
     let st: Vec<_> = rollup.as_array().into_iter().flatten().map(check_state).collect();
     if st.contains(&"failed") {
         "failed"
-    } else if st.is_empty() || st.contains(&"pending") {
+    } else if st.is_empty() || st.iter().any(|s| *s != "green") {
         "pending"
     } else {
         "green"
     }
 }
 
-pub fn summary(pr: &Value, branch: &str) -> String {
+pub fn summary(pr: &Value, branch: &str, req: &[String]) -> String {
     if pr.is_null() {
         return format!("no PR for branch {branch}");
     }
@@ -144,7 +169,7 @@ pub fn summary(pr: &Value, branch: &str) -> String {
         pr["state"].as_str().unwrap_or("?"),
         pr["baseRefName"].as_str().unwrap_or("?"),
         pr["mergeable"].as_str().unwrap_or("?"),
-        ci(&pr["statusCheckRollup"])
+        ci(&required(&pr["statusCheckRollup"], req))
     )
 }
 
@@ -156,11 +181,12 @@ pub enum Until {
 }
 
 /// Exit code once `until` is decided: 0 reached, 1 can no longer be reached.
-fn decided(pr: &Value, until: Until) -> Option<i32> {
+fn decided(pr: &Value, until: Until, req: &[String]) -> Option<i32> {
     if pr.is_null() {
         return None;
     }
-    let ci = ci(&pr["statusCheckRollup"]);
+    let checks = required(&pr["statusCheckRollup"], req);
+    let ci = ci(&checks);
     match until {
         Until::Merged => match pr["state"].as_str() {
             Some("MERGED") => Some(0),
@@ -170,7 +196,7 @@ fn decided(pr: &Value, until: Until) -> Option<i32> {
         Until::CiGreen | Until::CiDone if ci == "green" => Some(0),
         Until::CiGreen if ci == "failed" => Some(1),
         Until::CiDone if ci == "failed" => {
-            let pending = pr["statusCheckRollup"].as_array().into_iter().flatten().any(|c| check_state(c) == "pending");
+            let pending = checks.as_array().into_iter().flatten().any(|c| check_state(c) == "pending");
             (!pending).then_some(1)
         }
         _ => None,
@@ -193,12 +219,12 @@ pub fn wait(
     let (mut t, mut delay) = (0, 30);
     loop {
         let pr = pr(ctx, r, f, lane, branch, ctx.now + t)?;
-        if let Some(code) = decided(&pr, until) {
-            writeln!(out, "{}", summary(&pr, branch))?;
+        if let Some(code) = decided(&pr, until, &f.required_checks) {
+            writeln!(out, "{}", summary(&pr, branch, &f.required_checks))?;
             return Ok(code);
         }
         if t >= timeout {
-            writeln!(out, "timeout after {t}s: {}", summary(&pr, branch))?;
+            writeln!(out, "timeout after {t}s: {}", summary(&pr, branch, &f.required_checks))?;
             return Ok(124);
         }
         let s = delay.min(timeout - t);

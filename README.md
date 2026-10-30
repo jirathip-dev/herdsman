@@ -53,7 +53,8 @@ herdsman serve --addr 127.0.0.1:7777  # phone page at http://127.0.0.1:7777
 ## Rules it enforces
 
 - **Exact-head review.** `merge` needs a PASS verdict and green CI for the PR's current
-  head sha. A new commit makes the old verdict stale.
+  head sha. A new commit makes the old verdict stale. A fleet's `required_checks` narrows
+  "green CI" to those check names, latest run of each.
 - **Round limit.** At most 3 review rounds (`[limits].review_rounds`), then `needs-human`.
 - **Host-load admission.** `spawn` refuses with `HOST_BUSY` under memory pressure, swap-out
   or high load. `--force` overrides and is logged.

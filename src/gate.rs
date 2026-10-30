@@ -1,5 +1,5 @@
 //! `herdsman verdict` and `herdsman merge`: the review → merge gate.
-use crate::config::Config;
+use crate::config::{Config, Fleet};
 use crate::events::{emit, fold, read, Event, IssueState};
 use crate::gh;
 use crate::runner::{json, ok, Runner};
@@ -100,16 +100,15 @@ pub fn verdict(
     Ok(())
 }
 
-fn ci_green(rollup: &Value) -> Result<(), String> {
-    let checks = rollup.as_array().filter(|a| !a.is_empty()).ok_or("no checks reported")?;
-    match checks.iter().find(|c| gh::check_state(c) != "green") {
-        Some(c) => Err(format!("check `{}` is {}", c["name"].as_str().or(c["context"].as_str()).unwrap_or("?"), gh::check_state(c))),
-        None => Ok(()),
-    }
+fn ci_green(rollup: &Value, required: &[String]) -> Result<(), String> {
+    rollup.as_array().filter(|a| !a.is_empty() || !required.is_empty()).ok_or("no checks reported")?;
+    let prefix = if required.is_empty() { "" } else { "required " };
+    gh::not_green(&gh::required(rollup, required)).map_or(Ok(()), |m| Err(format!("{prefix}{m}")))
 }
 
 /// Pure merge gate. Returns the head sha that may be merged.
-pub fn gate(integration: &str, pr: &Value, st: Option<&IssueState>, limit: u32) -> Result<String, Refusal> {
+pub fn gate(f: &Fleet, pr: &Value, st: Option<&IssueState>, limit: u32) -> Result<String, Refusal> {
+    let integration = f.integration.as_str();
     let base = pr["baseRefName"].as_str().unwrap_or_default();
     if is_main(integration) || is_main(base) {
         return Err(refuse("MAIN_TARGET", format!("target `{integration}`/base `{base}`: main is promoted by a human only")));
@@ -132,7 +131,7 @@ pub fn gate(integration: &str, pr: &Value, st: Option<&IssueState>, limit: u32) 
     if rounds > limit {
         return Err(refuse("ROUND_LIMIT", format!("{rounds} review rounds > limit {limit}; needs a human")));
     }
-    ci_green(&pr["statusCheckRollup"]).map_err(|m| refuse("CI_NOT_GREEN", format!("{m} at {head}")))?;
+    ci_green(&pr["statusCheckRollup"], &f.required_checks).map_err(|m| refuse("CI_NOT_GREEN", format!("{m} at {head}")))?;
     Ok(head)
 }
 
@@ -152,7 +151,7 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
     let res = if pr.get("error").is_some() {
         Err(refuse("NO_PR", format!("no open PR for branch {branch} in {}", f.repo)))
     } else {
-        gate(&f.integration, &pr, st.as_ref(), cfg.limits.review_rounds)
+        gate(f, &pr, st.as_ref(), cfg.limits.review_rounds)
     };
     let serial = || crate::queue::serial(&read(&ctx.state).unwrap_or_default(), fleet).contains(&issue);
     let res = match res {
@@ -204,4 +203,56 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
         writeln!(out, "cargo install --path {} --locked --root {} --force", f.local_path().display(), root.display())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ci_green;
+    use serde_json::{json, Value};
+
+    fn run(name: &str, conclusion: &str, started: &str) -> Value {
+        json!({"__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": conclusion, "startedAt": started})
+    }
+    fn req() -> Vec<String> {
+        vec!["quality".into()]
+    }
+
+    #[test]
+    fn required_quality_ignores_narrowed_failure() {
+        let r = json!([run("quality", "SUCCESS", "2026-10-31T10:00:00Z"), run("quality-narrowed", "FAILURE", "2026-10-31T09:00:00Z")]);
+        assert_eq!(ci_green(&r, &req()), Ok(()));
+    }
+
+    #[test]
+    fn required_quality_missing_is_refused() {
+        let r = json!([run("quality-narrowed", "SUCCESS", "2026-10-31T09:00:00Z")]);
+        assert_eq!(ci_green(&r, &req()), Err("required check `quality` is missing".into()));
+        assert_eq!(ci_green(&json!([]), &req()), Err("required check `quality` is missing".into()));
+    }
+
+    #[test]
+    fn newer_success_supersedes_older_failure() {
+        let r = json!([run("quality", "SUCCESS", "2026-10-31T10:00:00Z"), run("quality", "CANCELLED", "2026-10-31T09:00:00Z")]);
+        assert_eq!(ci_green(&r, &req()), Ok(()));
+    }
+
+    #[test]
+    fn newer_failure_is_refused() {
+        let r = json!([run("quality", "SUCCESS", "2026-10-31T09:00:00Z"), run("quality", "FAILURE", "2026-10-31T10:00:00Z")]);
+        assert_eq!(ci_green(&r, &req()), Err("required check `quality` is failed".into()));
+    }
+
+    #[test]
+    fn pending_required_is_refused() {
+        let r = json!([{"__typename": "CheckRun", "name": "quality", "status": "IN_PROGRESS", "startedAt": "2026-10-31T10:00:00Z"}]);
+        assert_eq!(ci_green(&r, &req()), Err("required check `quality` is pending".into()));
+    }
+
+    #[test]
+    fn unset_checks_every_check() {
+        let r = json!([run("quality", "SUCCESS", "2026-10-31T10:00:00Z"), run("quality-narrowed", "FAILURE", "2026-10-31T09:00:00Z")]);
+        assert_eq!(ci_green(&r, &[]), Err("check `quality-narrowed` is failed".into()));
+        assert_eq!(ci_green(&json!([run("quality", "SUCCESS", "")]), &[]), Ok(()));
+        assert_eq!(ci_green(&json!([]), &[]), Err("no checks reported".into()));
+    }
 }

@@ -74,6 +74,25 @@ fn refuses_when_ci_not_green() {
 }
 
 #[test]
+fn required_checks_gate_only_the_latest_named_run() {
+    let cfg = CONFIG.replace("integration = \"staging\"   # never main", "integration = \"staging\"\nrequired_checks = [\"quality\"]");
+    let run = |n: &str, c: &str, t: &str| json!({"__typename": "CheckRun", "name": n, "status": "COMPLETED", "conclusion": c, "startedAt": t});
+    let red = json!([run("quality", "SUCCESS", "T1"), run("quality", "FAILURE", "T2"), run("quality-narrowed", "SUCCESS", "T1")]);
+    let (_d, c) = setup("req-red", &cfg, &[("PASS", HEAD)]);
+    let (exit, out) = run_cli(&c, &pr("staging", red));
+    assert_eq!(exit, 3, "{out}");
+    assert!(out.contains("REFUSED CI_NOT_GREEN: required check `quality` is failed"), "{out}");
+    let green = json!([run("quality", "CANCELLED", "T1"), run("quality", "SUCCESS", "T2"), run("quality-narrowed", "FAILURE", "T2")]);
+    let (_d, c) = setup("req-green", &cfg, &[("PASS", HEAD)]);
+    let (exit, out) = run_cli(&c, &pr("staging", green));
+    assert_eq!(exit, 0, "{out}");
+}
+
+fn run_cli(c: &herdsman::Ctx, r: &Fake) -> (i32, String) {
+    run(c, r, &["merge", "sendmeter", "12"])
+}
+
+#[test]
 fn refuses_when_round_limit_exceeded() {
     let (a, b) = ("3333333333333333333333333333333333333333", "4444444444444444444444444444444444444444");
     let v = [("FAIL", OLD), ("FAIL", a), ("FAIL", b), ("PASS", HEAD)];

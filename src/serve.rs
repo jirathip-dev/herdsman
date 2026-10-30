@@ -302,7 +302,7 @@ impl<'a> Server<'a> {
                 let a = s.filter(|s| s.last_ts > 0).map_or("-".into(), |s| age(now.saturating_sub(s.last_ts)));
                 let lane = s.and_then(|s| s.lane.as_deref()).unwrap_or("-");
                 let logged = s.map_or("queued", |s| s.state.as_str());
-                let mut card = vec![esc(&format!("#{n} {logged} · {lane} · {a}")), pr_line(ctx, Some(&fc.repo), f, n, s)];
+                let mut card = vec![esc(&format!("#{n} {logged} · {lane} · {a}")), pr_line(ctx, Some(fc), f, n, s)];
                 if is_dead {
                     card.push("<span class=r>dead: the log has this lane open, herdr has no such agent</span>".into());
                 }
@@ -396,7 +396,7 @@ impl<'a> Server<'a> {
                 let mut card = vec![
                     esc(&format!("{issue} · {} · round {round} · {} · {} · {a}", l.role, o(&l.model), o(&l.effort))),
                     match (l.issue, &l.fleet) {
-                        (Some(n), Some(f)) => pr_line(ctx, cfg.fleet.get(f).map(|c| c.repo.as_str()), f, n, s),
+                        (Some(n), Some(f)) => pr_line(ctx, cfg.fleet.get(f), f, n, s),
                         _ => String::new(),
                     },
                 ];
@@ -452,18 +452,18 @@ impl<'a> Server<'a> {
 }
 
 /// `PR #11 · CI ✓ · rev PASS r1`, from the cached `herdsman pr` read only (never calls `gh`).
-fn pr_line(ctx: &Ctx, repo: Option<&str>, fleet: &str, issue: u64, s: Option<&IssueState>) -> String {
+fn pr_line(ctx: &Ctx, fc: Option<&crate::config::Fleet>, fleet: &str, issue: u64, s: Option<&IssueState>) -> String {
     let pr = gh::cached_pr(ctx, fleet, issue);
     let mut parts = vec![];
     if pr.is_null() {
         parts.push("no PR read yet".to_string());
     } else {
         let n = pr["number"].as_u64().unwrap_or_default();
-        parts.push(match repo {
-            Some(r) => format!("<a href=\"https://github.com/{}/pull/{n}\">PR #{n}</a>", esc(r)),
+        parts.push(match fc {
+            Some(c) => format!("<a href=\"https://github.com/{}/pull/{n}\">PR #{n}</a>", esc(&c.repo)),
             None => format!("PR #{n}"),
         });
-        let ci = gh::ci(&pr["statusCheckRollup"]);
+        let ci = gh::ci(&gh::required(&pr["statusCheckRollup"], fc.map(|c| c.required_checks.as_slice()).unwrap_or_default()));
         let mark = match ci { "green" => "✓", "failed" => "✗", _ => "…" };
         parts.push(format!("CI <span class={}>{mark}</span>", tone(if ci == "failed" { "FAIL" } else if ci == "green" { "PASS" } else { "" })));
     }
