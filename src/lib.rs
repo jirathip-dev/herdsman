@@ -41,12 +41,12 @@ pub struct Ctx {
 
 impl Ctx {
     pub fn from_env() -> Ctx {
-        let env = |k: &str, d: PathBuf| std::env::var_os(k).map(PathBuf::from).unwrap_or(d);
-        let root = std::env::var_os("HERDSMAN_HOME").map_or_else(home, PathBuf::from);
+        let env = |k: &str, d: PathBuf| var(k).map(PathBuf::from).unwrap_or(d);
+        let root = var("HERDSMAN_HOME").map_or_else(home, PathBuf::from);
         let mut hints = vec![];
         // Read the pre-rename dir, never move it, while the new one is missing.
         let mut path = |k: &str, what: &str, d: &str, file: &str| {
-            if let Some(p) = std::env::var_os(k) {
+            if let Some(p) = var(k) {
                 return PathBuf::from(p);
             }
             let (old, new) = (root.join(d).join("fleet"), root.join(d).join("herdsman"));
@@ -72,6 +72,11 @@ impl Ctx {
     pub fn claude_dir(&self) -> PathBuf {
         self.config.parent().unwrap_or(&self.config).join("claude")
     }
+}
+
+/// A path variable, with set-but-empty treated as unset (an empty path would mean the cwd).
+fn var(k: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(k).filter(|v| !v.is_empty())
 }
 
 /// `herdsman migrate`: move `<home>/{.config,.local/state}/fleet` to `.../herdsman` where the
@@ -446,6 +451,9 @@ pub fn main_with(args: Vec<String>, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Wri
 
 fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mut dyn Read) -> Result<i32> {
     match cmd {
+        Cmd::Migrate if std::env::var_os("HERDSMAN_HOME").is_some_and(|v| v.is_empty()) => {
+            bail!("HERDSMAN_HOME is set but empty; unset it or point it at a home tree")
+        }
         Cmd::Migrate => migrate(&ctx.home, out)?,
         Cmd::Help { agent: true } => write!(out, "{}", usage_doc())?,
         Cmd::Help { agent: false } => write!(out, "{}", Cli::command().render_long_help())?,
