@@ -7,6 +7,7 @@ pub mod gh;
 pub mod harness;
 pub mod hook;
 pub mod host;
+pub mod protection;
 pub mod queue;
 pub mod runner;
 pub mod serve;
@@ -251,6 +252,8 @@ enum Cmd {
     },
     /// Alert once per state on stall, lane-dead and ready-unmerged issues; idempotent, safe from cron
     Check,
+    /// Read-only: is GitHub branch protection on for main, staging and the integration branch of each fleet repo? Exit 1 unless all are
+    Protection,
     /// Remove worktree + pane of merged lanes (never live, dirty or unpushed ones); dry run unless --yes
     Clean {
         fleet: Option<String>,
@@ -473,6 +476,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     spawn::adopt(ctx, &cfg, r, out, (&fleet, issue, role), &pane)?
                 }
                 Cmd::Check => check::check(ctx, &cfg, r, out)?,
+                Cmd::Protection => return protection::protection(&cfg, r, out),
                 Cmd::Clean { fleet, yes } => check::clean(ctx, &cfg, r, out, fleet.as_deref(), None, yes)?,
                 Cmd::Verdict { fleet, issue, verdict, sha, file } => {
                     let pass = matches!(verdict, Verdict::Pass);
