@@ -61,6 +61,21 @@ pub fn pr(ctx: &Ctx, r: &dyn Runner, f: &Fleet, (fleet, issue): (&str, u64), bra
     Ok(pr)
 }
 
+/// Numbers of the fleet's closed issues: one `gh issue list` per fleet, fresh for 60 s.
+pub fn closed(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, now: u64) -> Result<Vec<u64>> {
+    let p = cache_path(ctx, "closed", fleet, 0);
+    if let Some(c) = load(&p) {
+        let ts = c["ts"].as_u64().unwrap_or(0);
+        if now >= ts && now - ts < PR_TTL {
+            return Ok(c["closed"].as_array().into_iter().flatten().filter_map(Value::as_u64).collect());
+        }
+    }
+    let v = json(r, "gh", &["issue", "list", "-R", &f.repo, "--state", "closed", "--limit", "1000", "--json", "number"])?;
+    let closed: Vec<u64> = v.as_array().into_iter().flatten().filter_map(|i| i["number"].as_u64()).collect();
+    store(&p, &json!({"ts": now, "closed": closed}))?;
+    Ok(closed)
+}
+
 /// Drop the cached PR read (after fleet changed the PR itself).
 pub fn forget_pr(ctx: &Ctx, fleet: &str, issue: u64) {
     let _ = std::fs::remove_file(cache_path(ctx, "pr", fleet, issue));

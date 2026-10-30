@@ -1,5 +1,5 @@
 //! `herdsman check` (stall / lane-dead / ready-unmerged alerts, each once per state)
-//! and `herdsman clean` (reclaim worktrees and panes of merged lanes).
+//! and `herdsman clean` (reclaim worktrees and panes of merged or closed lanes).
 use crate::config::Config;
 use crate::events::{age, emit, fold, plain, read, Event, IssueState};
 use crate::gate::gate;
@@ -91,7 +91,7 @@ pub fn teardown(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fl
     clean(ctx, cfg, r, out, Some(fleet), Some(issue), true)
 }
 
-/// Remove worktree + pane of lanes whose issue is merged. Dry run unless `yes`.
+/// Remove worktree + pane of lanes whose issue is merged (or closed on GitHub). Dry run unless `yes`.
 pub fn clean(
     ctx: &Ctx,
     cfg: &Config,
@@ -106,28 +106,37 @@ pub fn clean(
     let agents = host::agents(r).context("cannot list herdr agents; refusing to clean blind")?;
     let mut seen = std::collections::BTreeSet::new();
     let mut failed = 0;
+    let mut closed = std::collections::BTreeMap::new();
     // Newest spawn per worktree wins (it has the current pane).
     for e in events.iter().rev().filter(|e| e.kind == "spawn" && fleet.is_none_or(|f| f == e.fleet)) {
         let (Some(n), Some(wt)) = (e.issue, e.str("worktree")) else { continue };
         if issue.is_some_and(|i| i != n) {
             continue;
         }
-        let merged = states.get(&(e.fleet.clone(), n)).is_some_and(|s| s.state == "merged");
-        if !merged || !seen.insert(wt) || !Path::new(wt).exists() {
+        if !Path::new(wt).exists() || seen.contains(wt) {
             continue;
         }
+        // Merged by `herdsman merge`, or closed on GitHub by any other route.
+        let why = if states.get(&(e.fleet.clone(), n)).is_some_and(|s| s.state == "merged") {
+            "merged"
+        } else if closed_issues(ctx, cfg, r, out, &mut closed, &e.fleet).contains(&n) {
+            "issue closed"
+        } else {
+            continue;
+        };
+        seen.insert(wt);
         let pane = e.str("pane").unwrap_or_default();
-        let skip = if !host::live_in(&agents, e.str("agent").unwrap_or_default(), Path::new(wt)).is_empty() {
+        let keep = if !host::live_in(&agents, e.str("agent").unwrap_or_default(), Path::new(wt)).is_empty() {
             Some("live agent".to_string())
         } else {
             dirty(r, Path::new(wt))
         };
-        if let Some(why) = skip {
-            writeln!(out, "skip {wt}: {why}")?;
+        if let Some(reason) = keep {
+            writeln!(out, "keep {wt}: {reason}")?;
             continue;
         }
         if !yes {
-            writeln!(out, "would remove {wt} (pane {pane}, {}#{n})", e.fleet)?;
+            writeln!(out, "would remove {wt} (pane {pane}, {}#{n} {why})", e.fleet)?;
             continue;
         }
         if let Err(err) = remove(r, cfg, &e.fleet, wt, e.str("workspace").or_else(|| pane.split(':').next()).unwrap_or_default()) {
@@ -138,7 +147,7 @@ pub fn clean(
         if !pane.is_empty() {
             let _ = r.run("herdr", &crate::runner::argv(&["pane", "close", pane]));
         }
-        writeln!(out, "removed {wt} ({}#{n})", e.fleet)?;
+        writeln!(out, "removed {wt} ({}#{n} {why})", e.fleet)?;
         emit(&ctx.state, cfg, Event::new(ctx.now, &e.fleet, Some(n), "clean", json!({"worktree": wt, "pane": pane})))?;
     }
     if !yes {
@@ -148,6 +157,27 @@ pub fn clean(
         anyhow::bail!("{failed} worktree(s) could not be removed; see above");
     }
     Ok(())
+}
+
+/// The fleet's closed issue numbers, read once per fleet per run; a failed read
+/// is reported and counts as none closed.
+fn closed_issues<'a>(
+    ctx: &Ctx,
+    cfg: &Config,
+    r: &dyn Runner,
+    out: &mut dyn Write,
+    memo: &'a mut std::collections::BTreeMap<String, Vec<u64>>,
+    fleet: &str,
+) -> &'a Vec<u64> {
+    if !memo.contains_key(fleet) {
+        let got = cfg.fleet(fleet).and_then(|f| gh::closed(ctx, r, f, fleet, ctx.now));
+        let list = got.unwrap_or_else(|e| {
+            let _ = writeln!(out, "cannot list closed issues of {fleet} ({e:#}); only merged lanes are candidates");
+            vec![]
+        });
+        memo.insert(fleet.to_string(), list);
+    }
+    &memo[fleet]
 }
 
 /// herdr first; else plain `git worktree remove` (never `--force`) after dropping

@@ -187,8 +187,8 @@ fn clean_removes_only_merged_clean_idle_lanes() {
     let (code, dry) = run(&c, &r0, &["clean"]);
     assert_eq!(code, 0, "{dry}");
     assert!(dry.contains(&format!("would remove {a}")) && dry.contains(&format!("would remove {b}")), "{dry}");
-    assert!(dry.contains(&format!("skip {unpushed}: 2 unpushed commit(s)")), "{dry}");
-    assert!(dry.contains(&format!("skip {live}: live agent")), "{dry}");
+    assert!(dry.contains(&format!("keep {unpushed}: 2 unpushed commit(s)")), "{dry}");
+    assert!(dry.contains(&format!("keep {live}: live agent")), "{dry}");
     assert!(!dry.contains(&open), "unmerged lanes are not candidates: {dry}");
     assert!(!r0.called("herdr worktree remove") && !r0.called("herdr pane close"), "dry run changes nothing");
     assert_eq!(kinds(&c, "clean"), 0);
@@ -254,7 +254,7 @@ fn clean_falls_back_to_git_dropping_only_fleets_own_files_and_keeps_going() {
     assert_eq!(code, 0, "{dry}");
     let (ours_s, user_s, locked_s) = (ours.display().to_string(), user.display().to_string(), locked.display().to_string());
     assert!(dry.contains(&format!("would remove {ours_s}")) && dry.contains(&format!("would remove {locked_s}")), "{dry}");
-    assert!(dry.contains(&format!("skip {user_s}: 1 uncommitted change(s)")), "{dry}");
+    assert!(dry.contains(&format!("keep {user_s}: 1 uncommitted change(s)")), "{dry}");
 
     let (code, done) = run(&c, &r(), &["clean", "--yes"]);
     assert_ne!(code, 0, "a failed candidate makes the run fail: {done}");
@@ -263,5 +263,47 @@ fn clean_falls_back_to_git_dropping_only_fleets_own_files_and_keeps_going() {
     assert!(!ours.exists(), "fleet's own files no longer block removal");
     assert!(user.join("notes.txt").exists() && user.join(".brief.md").exists(), "unknown dirt is never touched");
     assert!(locked.exists(), "the failed candidate is left in place");
+    assert_eq!(kinds(&c, "clean"), 1);
+}
+
+#[test]
+fn clean_reclaims_lanes_whose_issue_closed_outside_merge() {
+    let d = tmpdir("clean-closed");
+    let c = ctx(&d, CONFIG);
+    let wt = |n: &str| {
+        let p = c.worktrees.join("sendmeter").join(n);
+        std::fs::create_dir_all(&p).unwrap();
+        p.to_string_lossy().into_owned()
+    };
+    let (done, unpushed, open) = (wt("issue-21"), wt("issue-22"), wt("issue-23"));
+    for (issue, w) in [(21, &done), (22, &unpushed), (23, &open)] {
+        let d = json!({"role": "impl", "agent": format!("impl-{issue}"), "worktree": w, "pane": format!("w{issue}:p1"), "workspace": format!("w{issue}")});
+        ev(&c, 10, issue, "spawn", d);
+    }
+    let r = || {
+        Fake::default()
+            .reply("herdr agent list", NO_AGENTS)
+            .reply("gh issue list -R jirathip-dev/sendmeter --state closed", r#"[{"number": 21}, {"number": 22}, {"number": 99}]"#)
+            .reply(&format!("git -C {unpushed} rev-list"), "1\n")
+            .reply(&format!("git -C {done} rev-list"), "0\n")
+            .reply("git -C", "")
+            .reply("herdr", "{}")
+    };
+    let r0 = r();
+    let (code, dry) = run(&c, &r0, &["clean"]);
+    assert_eq!(code, 0, "{dry}");
+    assert!(dry.contains(&format!("would remove {done} (pane w21:p1, sendmeter#21 issue closed)")), "{dry}");
+    assert!(dry.contains(&format!("keep {unpushed}: 1 unpushed commit(s)")), "{dry}");
+    assert!(!dry.contains(&open), "open issues are not candidates: {dry}");
+    assert_eq!(r0.count("gh "), 1, "one closed-issue read per fleet, not per lane");
+    assert!(!r0.calls.borrow().iter().any(|l| l.starts_with("gh ") && !l.starts_with("gh issue list")), "no GitHub writes");
+
+    let r1 = r();
+    let (code, out) = run(&c, &r1, &["clean", "--yes"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains(&format!("removed {done} (sendmeter#21 issue closed)")), "{out}");
+    assert!(r1.called("herdr worktree remove --workspace w21") && r1.called("herdr pane close w21:p1"));
+    assert!(!r1.called("herdr worktree remove --workspace w22") && !r1.called("herdr worktree remove --workspace w23"));
+    assert_eq!(r1.count("gh "), 0, "the closed-issue read is cached");
     assert_eq!(kinds(&c, "clean"), 1);
 }
