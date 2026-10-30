@@ -1,0 +1,4 @@
+hooks:
+  pre_tool_call:
+    - matcher: "terminal|patch|write_file"
+      command: {{FLEET_HOOK}}

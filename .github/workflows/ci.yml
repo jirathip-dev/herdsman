@@ -1,0 +1,25 @@
+name: ci
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          components: clippy
+      - name: build
+        run: cargo build --release --locked
+      - name: clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: test
+        run: cargo test --locked
+      - name: line cap (≤ 5000 non-test Rust lines under src/)
+        run: |
+          n=$(find src -name '*.rs' -print0 | xargs -0 cat | wc -l)
+          echo "src lines: $n"
+          test "$n" -le 5000

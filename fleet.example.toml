@@ -1,0 +1,45 @@
+# Copy to ~/.config/herdsman/fleet.toml (or point FLEET_CONFIG at it).
+
+[fleet.sendmeter]
+repo = "jirathip-dev/sendmeter"
+local = "~/Projects/sendmeter"
+integration = "staging"          # herdsman merge target; main is never a target
+
+[fleet.sendmeter.role.orch]
+harness = "hermes"
+profile = "fleet-orch"
+
+[fleet.sendmeter.role.impl]
+harness = "claude"
+profile = "fleet-impl"
+model = "opus"
+
+[fleet.sendmeter.role.rev]
+harness = "hermes"
+profile = "fleet-rev"
+
+# This repo, dogfooding.
+[fleet.fleet]
+repo = "jirathip-dev/herdsman"
+local = "~/Projects/fleet"
+integration = "staging"
+
+[fleet.fleet.role.impl]
+harness = "claude"
+profile = "fleet-impl"
+model = "opus"
+
+[fleet.fleet.role.rev]
+harness = "hermes"
+profile = "fleet-rev"
+
+[limits]
+review_rounds = 3
+stall_minutes = 30   # herdsman check: stall / ready-unmerged threshold
+load_per_cpu = 2.5   # herdsman spawn HOST_BUSY thresholds
+swapout_rate = 2000  # pages swapped out per 2 s sample
+
+[[notify]]
+cmd = "hermes send -q -t telegram:<chat_id>"   # one plain line on stdin
+on = ["stall", "lane-dead", "ready-unmerged", "blocked", "merged", "needs-human", "evidence-missing"]
+# format = "json"   # send the raw event JSON instead
