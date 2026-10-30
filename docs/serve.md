@@ -9,3 +9,5 @@ from `models = [...]`), each through the CLI's own code path, logged with `"via"
 A POST must name the bind address (or a `[serve].allowed_hosts` name, e.g. the
 `tailscale serve` `*.ts.net` host) in `Host`/`Origin`, and is refused `STALE` when
 fleet.toml changed since the page was rendered.
+
+The Home Screen icon is Corral's Palomino app icon (jirathip-dev/corral, `ios/tools/herd-art/appicon-masters/treatment-a/palomino-1024.png`, MIT © jirathip-dev).

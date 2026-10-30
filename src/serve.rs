@@ -18,8 +18,9 @@ const CSS: &str = include_str!("../assets/serve.css");
 const JS: &str = include_str!("../assets/serve.js");
 const SW: &str = include_str!("../assets/sw.js");
 const MANIFEST: &str = include_str!("../assets/manifest.webmanifest");
-const ICON: &str = include_str!("../assets/icon.svg");
-const ICON_PNG: &[u8] = include_bytes!("../assets/icon-180.png");
+const ICON_180: &[u8] = include_bytes!("../assets/icon-180.png");
+const ICON_192: &[u8] = include_bytes!("../assets/icon-192.png");
+const ICON_512: &[u8] = include_bytes!("../assets/icon-512.png");
 const HORSES: &str = include_str!("../assets/horses.svg");
 
 type States = BTreeMap<(String, u64), IssueState>;
@@ -179,8 +180,9 @@ impl<'a> Server<'a> {
             },
             ("GET", "/sw.js") => ("200 OK", "text/javascript", text(SW)),
             ("GET", "/manifest.webmanifest") => ("200 OK", "application/manifest+json", text(MANIFEST)),
-            ("GET", "/icon.svg") => ("200 OK", "image/svg+xml", text(ICON)),
-            ("GET", "/icon-180.png") => ("200 OK", "image/png", ICON_PNG.to_vec()),
+            ("GET", "/icon-180.png") => ("200 OK", "image/png", ICON_180.to_vec()),
+            ("GET", "/icon-192.png") => ("200 OK", "image/png", ICON_192.to_vec()),
+            ("GET", "/icon-512.png") => ("200 OK", "image/png", ICON_512.to_vec()),
             ("GET", _) => ("404 Not Found", "text/plain", text("not found\n")),
             ("POST", _) if self.addr.is_none() => ("405 Method Not Allowed", "text/plain", text("read-only: GET only\n")),
             ("POST", "/") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
@@ -256,8 +258,8 @@ impl<'a> Server<'a> {
         Ok(format!(
             "<!doctype html><html lang=en><head><meta charset=utf-8>\
              <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
-             <meta name=theme-color content=\"#0d1117\"><meta name=apple-mobile-web-app-capable content=yes>\
-             <link rel=manifest href=/manifest.webmanifest><link rel=icon href=/icon.svg><link rel=apple-touch-icon href=/icon-180.png>\
+             <meta name=theme-color content=\"#1f2a38\"><meta name=apple-mobile-web-app-capable content=yes>\
+             <link rel=manifest href=/manifest.webmanifest><link rel=icon href=/icon-192.png><link rel=apple-touch-icon href=/icon-180.png>\
              <title>herdsman</title><style>{CSS}</style></head>\
              <body data-ts={} data-mode=glyph{ro}><header><b>herdsman</b><span id=stale hidden></span>\
              <button id=mode type=button aria-label=\"lane display mode\">glyph</button></header>{msg}<main>\
