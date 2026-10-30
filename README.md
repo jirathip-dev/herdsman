@@ -16,6 +16,7 @@ herdsman verdict sendmeter 12 PASS --sha <head> --file <rev worktree>/verdict.md
 herdsman merge sendmeter 12                  # exact-head PASS + green CI + round limit
 herdsman status
 herdsman check                               # stall / lane-dead / ready-unmerged, once per state
+herdsman protection                          # read-only: is branch protection on? exit 1 unless all are
 herdsman clean [--yes]                       # reclaim merged lanes (dry run by default)
 herdsman adopt sendmeter 12 impl --pane w9:p1 # record a lane already running in a pane
 herdsman help --agent                        # the one usage doc agents get

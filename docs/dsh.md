@@ -53,6 +53,24 @@ Server-side protection is the real backstop, and it is not on yet (measured 2026
 | `jirathip-dev/herdsman` | none (HTTP 404 "Branch not protected", no rulesets) |
 | `jirathip-dev/fleet` | unavailable: private repo on the free plan (HTTP 403 "Upgrade to GitHub Pro or make this repository public") |
 
+`herdsman protection` re-runs this measurement: for each fleet repo it reads
+`gh api repos/<repo>/branches/<branch>/protection` for `main`, `staging` and the integration
+branch, prints `✓ protected` (saying whether required status checks and required PR reviews
+are on), `✗ not protected` or `✗ unavailable: <reason> (HTTP <status>)`, skips a branch that
+does not exist, and exits 1 unless every branch is protected. It runs on demand only (never
+from `herdsman check`). **herdsman only verifies; it never enables protection.** That is
+the owner's step. Paste this once per repo and branch, with `<check>` set to the CI check name
+(`rust` for herdsman):
+
+```sh
+gh api -X PUT repos/<owner>/<repo>/branches/<branch>/protection --input - <<'JSON'
+{"required_status_checks": {"strict": true, "contexts": ["<check>"]},
+ "enforce_admins": true,
+ "required_pull_request_reviews": {"required_approving_review_count": 0},
+ "restrictions": null}
+JSON
+```
+
 Until the owner enables protection (PR + CI check required on `staging` and `main`) or
 records risk acceptance, "`herdsman merge` is the only path to staging" is a convention
 for dsh lanes, not an enforced rule, so dsh stays reviewer-only. Tracked in
