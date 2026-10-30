@@ -127,6 +127,7 @@ fn help_agent_doc_is_short_and_complete() {
         "herdsman spawn", "herdsman merge", "herdsman verdict", "herdsman set", "herdsman status", "herdsman profiles sync",
         "herdsman check", "herdsman clean", "herdsman adopt", "--force", "--supersede", "--yes",
         "MAIN_TARGET", "HOST_BUSY", "LANE_LIVE", "WORKTREE_DIRTY", "review(n)",
+        "--serial", "SERIAL_BUSY", "SERIAL_UNMARKED", "CAP", "design", "conductor-only",
     ] {
         assert!(out.contains(w), "missing {w}");
     }

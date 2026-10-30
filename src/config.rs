@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub const ROLES: [&str; 3] = ["orch", "impl", "rev"];
+pub const ROLES: [&str; 4] = ["orch", "impl", "rev", "design"];
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -21,6 +21,12 @@ pub struct Fleet {
     pub repo: String,
     pub local: String,
     pub integration: String,
+    /// Globs only one lane at a time may touch: `--serial` issues (SERIAL_BUSY, SERIAL_UNMARKED).
+    #[serde(default)]
+    pub serial_paths: Vec<String>,
+    /// Optional caps on concurrent impl/fix and review lanes (CAP); unset = no cap.
+    pub max_impl: Option<usize>,
+    pub max_rev: Option<usize>,
     #[serde(default)]
     pub role: BTreeMap<String, Role>,
 }
@@ -126,6 +132,21 @@ impl Fleet {
     }
     pub fn repo_name(&self) -> &str {
         self.repo.rsplit('/').next().unwrap_or(&self.repo)
+    }
+    /// `path` matches a `serial_paths` glob.
+    pub fn serial_path(&self, path: &str) -> bool {
+        self.serial_paths.iter().any(|g| glob(g.as_bytes(), path.as_bytes()))
+    }
+}
+
+/// `**` matches anything, `*` anything but `/`, `?` one char other than `/`.
+pub fn glob(g: &[u8], s: &[u8]) -> bool {
+    match g {
+        [] => s.is_empty(),
+        [b'*', b'*', rest @ ..] => (0..=s.len()).any(|i| glob(rest, &s[i..])),
+        [b'*', rest @ ..] => (0..=s.len()).take_while(|&i| i == 0 || s[i - 1] != b'/').any(|i| glob(rest, &s[i..])),
+        [b'?', rest @ ..] => s.first().is_some_and(|&c| c != b'/') && glob(rest, &s[1..]),
+        [c, rest @ ..] => s.first() == Some(c) && glob(rest, &s[1..]),
     }
 }
 
