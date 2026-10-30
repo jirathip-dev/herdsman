@@ -41,6 +41,12 @@ integration = "staging"
 serial_paths = ["supabase/migrations/**"]   # one `--serial` lane at a time (SERIAL_BUSY / SERIAL_UNMARKED)
 # max_impl = 2   # optional caps (CAP); unset = no cap, the host check protects the Mac
 # max_rev = 2
+# notify_global = true   # also send this fleet's events to the global [[notify]]
+
+# Per-fleet notifiers replace the global [[notify]] for this fleet's events (same fields).
+[[fleet.synergy.notify]]
+cmd = "hermes send -q -t telegram:<chat_id>:<thread_id>"   # e.g. one thread per repo
+on = ["stall", "lane-dead", "ready-unmerged", "blocked", "merged", "needs-human", "evidence-missing"]
 
 [fleet.synergy.role.orch]
 harness = "hermes"
