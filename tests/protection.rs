@@ -4,7 +4,7 @@ use common::*;
 
 const MAIN: &str = "gh api repos/jirathip-dev/sendmeter/branches/main/protection";
 const STAGING: &str = "gh api repos/jirathip-dev/sendmeter/branches/staging/protection";
-const PROTECTED: &str = r#"{"url":"x","required_status_checks":{"strict":true,"contexts":["ci"]},"required_pull_request_reviews":{"required_approving_review_count":1}}"#;
+const PROTECTED: &str = r#"{"url":"x","required_status_checks":{"strict":true,"contexts":["ci"]},"required_pull_request_reviews":{"required_approving_review_count":1},"enforce_admins":{"enabled":true}}"#;
 const NOT_PROTECTED: &str = r#"{"message":"Branch not protected","documentation_url":"https://docs.github.com","status":"404"}"#;
 const NO_BRANCH: &str = r#"{"message":"Branch not found","documentation_url":"https://docs.github.com","status":"404"}"#;
 const FREE_PLAN: &str = r#"{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","documentation_url":"https://docs.github.com","status":"403"}"#;
@@ -37,15 +37,47 @@ fn check(name: &str, r: &Fake) -> (i32, String) {
 fn all_protected_exits_zero() {
     let (code, out) = check("prot-all", &with(ok(PROTECTED), ok(PROTECTED)));
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("jirathip-dev/sendmeter staging: ✓ protected (required status checks: yes, required PR reviews: yes)"), "{out}");
+    assert!(out.contains("jirathip-dev/sendmeter staging: ✓ protected (required status checks, required PR reviews)"), "{out}");
     assert!(out.contains("jirathip-dev/sendmeter main: ✓ protected"), "{out}");
+    assert!(!out.contains('⚠'), "{out}");
 }
 
 #[test]
-fn protected_staging_reports_missing_parts() {
-    let (code, out) = check("prot-staging", &with(ok(PROTECTED), ok(r#"{"url":"x"}"#)));
+fn protection_without_checks_or_reviews_is_incomplete() {
+    let checks_only = r#"{"required_status_checks":{"strict":true,"contexts":["ci"]},"enforce_admins":{"enabled":true}}"#;
+    let (code, out) = check("prot-incomplete", &with(ok(PROTECTED), ok(checks_only)));
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("staging: △ protected but incomplete: missing required PR reviews"), "{out}");
+
+    let (code, out) = check("prot-bare", &with(ok(PROTECTED), ok(r#"{"enforce_admins":{"enabled":true}}"#)));
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("staging: △ protected but incomplete: missing required status checks, required PR reviews"), "{out}");
+}
+
+#[test]
+fn enforce_admins_off_is_a_warning_line() {
+    let no_admins = PROTECTED.replace(r#""enforce_admins":{"enabled":true}"#, r#""enforce_admins":{"enabled":false}"#);
+    let (code, out) = check("prot-admins", &with(ok(PROTECTED), ok(&no_admins)));
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("staging: ✓ protected (required status checks: no, required PR reviews: no)"), "{out}");
+    assert!(out.contains("staging: ✓ protected"), "{out}");
+    assert!(out.contains("staging: ⚠ enforce_admins off: admins can bypass protection"), "{out}");
+    assert!(!out.contains("main: ⚠"), "{out}");
+}
+
+#[test]
+fn bad_credentials_is_unavailable_with_status() {
+    let e = || err(r#"{"message":"Bad credentials","documentation_url":"https://docs.github.com","status":"401"}"#, "gh: Bad credentials (HTTP 401)");
+    let (code, out) = check("prot-401", &with(e(), e()));
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("main: ✗ unavailable: Bad credentials (HTTP 401)"), "{out}");
+}
+
+#[test]
+fn repo_with_no_branch_verified_exits_non_zero() {
+    let e = || err(NO_BRANCH, "gh: Branch not found (HTTP 404)");
+    let (code, out) = check("prot-none", &with(e(), e()));
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("jirathip-dev/sendmeter: ✗ no branch verified"), "{out}");
 }
 
 #[test]

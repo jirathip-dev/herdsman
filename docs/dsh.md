@@ -55,9 +55,12 @@ Server-side protection is the real backstop, and it is not on yet (measured 2026
 
 `herdsman protection` re-runs this measurement: for each fleet repo it reads
 `gh api repos/<repo>/branches/<branch>/protection` for `main`, `staging` and the integration
-branch, prints `✓ protected` (saying whether required status checks and required PR reviews
-are on), `✗ not protected` or `✗ unavailable: <reason> (HTTP <status>)`, skips a branch that
-does not exist, and exits 1 unless every branch is protected. It runs on demand only (never
+branch and prints `✓ protected` only when both required status checks and required PR reviews
+are on. Protection with only one or neither of them is `△ protected but incomplete: missing …`.
+It also prints `✗ not protected` or `✗ unavailable: <reason> (HTTP <status>)`, plus a
+`⚠ enforce_admins off` warning line, which does not fail the run. It skips a branch that does
+not exist, but a repo with no branch verified fails. It exits 1 unless every existing branch is
+fully protected. It runs on demand only (never
 from `herdsman check`). **herdsman only verifies; it never enables protection.** That is
 the owner's step. Paste this once per repo and branch, with `<check>` set to the CI check name
 (`rust` for herdsman):
