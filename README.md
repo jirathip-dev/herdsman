@@ -27,7 +27,7 @@ EOF
 herdsman profiles sync                # per-role Claude Code folders and the lane hook
 herdsman spawn app 12 impl --dry-run  # print the plan; drop --dry-run to launch it
 herdsman status
-herdsman serve --addr 127.0.0.1:7777  # read-only board at http://127.0.0.1:7777
+herdsman serve --addr 127.0.0.1:7777  # phone page at http://127.0.0.1:7777
 ```
 
 ## Commands
@@ -38,7 +38,8 @@ herdsman serve --addr 127.0.0.1:7777  # read-only board at http://127.0.0.1:7777
 | `adopt` | record a lane already running in a pane |
 | `verdict <fleet> <issue> PASS\|FAIL` | record a review verdict pinned to the exact head sha |
 | `merge <fleet> <issue>` | merge into the integration branch if every gate passes |
-| `status` / `board` / `serve` | per-issue state; compact board; read-only HTML page |
+| `status` / `board` / `serve` | per-issue state; compact board; phone page / PWA ([docs](docs/serve.md)) |
+| `pause` / `resume` | hold a fleet: `next` offers nothing, impl/rev spawns refuse `PAUSED` |
 | `queue` / `next` | ordered work queue; the first issue ready to start |
 | `brief` / `pr` / `wait` | cached issue spec; cached PR and CI; wait for CI or merge |
 | `check` | alert once per stall, dead lane or unmerged ready issue (cron-safe) |
@@ -81,7 +82,7 @@ cmd = "hermes send -q -t telegram:<chat_id>"
 on = ["stall", "lane-dead", "merged", "needs-human"]
 ```
 
-More: [architecture](docs/architecture.md), [lanes and hooks](docs/lanes.md), [dsh](docs/dsh.md).
+More: [architecture](docs/architecture.md), [lanes and hooks](docs/lanes.md), [dsh](docs/dsh.md), [phone page](docs/serve.md).
 
 ## License
 
