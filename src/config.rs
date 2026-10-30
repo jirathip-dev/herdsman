@@ -29,6 +29,11 @@ pub struct Fleet {
     pub max_rev: Option<usize>,
     #[serde(default)]
     pub role: BTreeMap<String, Role>,
+    /// Replace the global `[[notify]]` for this fleet's events; `notify_global` sends to both.
+    #[serde(default)]
+    pub notify: Vec<Notify>,
+    #[serde(default)]
+    pub notify_global: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -119,6 +124,9 @@ impl Config {
             bail!("limits.effort: \"{e}\" must be one of {levels:?}");
         }
         for (name, f) in &c.fleet {
+            if f.notify.iter().any(|n| n.cmd.trim().is_empty()) {
+                bail!("fleet.{name}.notify: cmd must not be empty");
+            }
             for (role, r) in &f.role {
                 if !ROLES.contains(&role.as_str()) {
                     bail!("fleet.{name}.role.{role}: role must be one of {ROLES:?}");
@@ -138,6 +146,16 @@ impl Config {
             }
         }
         Ok(c)
+    }
+
+    /// Notifiers for an event of `fleet`: its own when it has any (plus the global ones
+    /// with `notify_global`), otherwise the global ones.
+    pub fn notifiers(&self, fleet: &str) -> Vec<&Notify> {
+        match self.fleet.get(fleet).filter(|f| !f.notify.is_empty()) {
+            Some(f) if f.notify_global => f.notify.iter().chain(&self.notify).collect(),
+            Some(f) => f.notify.iter().collect(),
+            None => self.notify.iter().collect(),
+        }
     }
 
     pub fn fleet(&self, name: &str) -> Result<&Fleet> {

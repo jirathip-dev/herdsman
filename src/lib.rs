@@ -380,7 +380,9 @@ pub fn usage_doc() -> String {
           conductor-only: denied from every lane, orch included; design lanes never take part in verdict or merge.\n\n\
           ## Events\n\n`herdsman check` emits `stall`, `lane-dead`, `ready-unmerged` once per state; `herdsman merge` emits\n\
           `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain\n\
-          line, or the raw event JSON with `format = \"json\"`.\n";
+          line, or the raw event JSON with `format = \"json\"`. A fleet's own `[[fleet.<name>.notify]]` (same fields,\n\
+          e.g. `cmd = \"hermes send -q -t telegram:<chat_id>:<thread_id>\"`) replaces the global `[[notify]]` for its events;\n\
+          `notify_global = true` in `[fleet.<name>]` sends to both. Events without a fleet go to the global ones.\n";
     s
 }
 
