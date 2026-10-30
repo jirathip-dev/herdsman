@@ -209,3 +209,48 @@ fn hook_with_pre_rename_home_prints_only_its_json_decision() {
     assert!(v.to_string().contains("deny"), "{v}");
     assert_eq!(snapshot(&h), before, "hook never migrates");
 }
+
+/// #9: a set-but-empty path variable is unset, never the empty (cwd-relative) path.
+const EMPTY: [(&str, &str); 4] = [("FLEET_CONFIG", ""), ("FLEET_STATE", ""), ("FLEET_WORKTREES", ""), ("FLEET_HERMES_PROFILES", "")];
+
+#[test]
+fn empty_path_vars_resolve_to_the_defaults() {
+    let h = tmpdir("migrate-empty-vars");
+    seed(&h, "herdsman");
+    for home in ["", h.to_str().unwrap()] {
+        let envs: Vec<_> = EMPTY.iter().copied().chain([("HERDSMAN_HOME", home)]).collect();
+        let (code, out, err) = run_in(&h, &["status"], &envs, "");
+        assert_eq!((code, err.as_str()), (0, ""), "HERDSMAN_HOME={home:?}");
+        assert!(out.contains("12") && out.contains("merged"), "real history, not an empty board: {out}");
+    }
+    // Empty HERDSMAN_HOME falls back to $HOME, pre-rename hint included.
+    let old = tmpdir("migrate-empty-vars-old");
+    seed(&old, "fleet");
+    let envs: Vec<_> = EMPTY.iter().copied().chain([("HERDSMAN_HOME", "")]).collect();
+    let (code, out, err) = run_in(&old, &["status"], &envs, "");
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("merged") && err.contains("found pre-rename config"), "{out} / {err}");
+}
+
+#[test]
+fn migrate_refuses_an_empty_herdsman_home_and_leaves_the_cwd_alone() {
+    let (h, cwd) = (tmpdir("migrate-empty-home"), tmpdir("migrate-empty-cwd"));
+    seed(&h, "fleet");
+    seed(&cwd, "fleet");
+    let (bh, bc) = (snapshot(&h), snapshot(&cwd));
+    let o = Command::new(env!("CARGO_BIN_EXE_herdsman"))
+        .arg("migrate")
+        .current_dir(&cwd)
+        .env("HOME", &h)
+        .env("HERDSMAN_HOME", "")
+        .envs(EMPTY)
+        .env_remove("HERDSMAN_LANE")
+        .env_remove("FLEET_LANE")
+        .output()
+        .unwrap();
+    let err = String::from_utf8(o.stderr).unwrap();
+    assert_ne!(o.status.code(), Some(0), "{err}");
+    assert!(err.contains("HERDSMAN_HOME is set but empty"), "{err}");
+    assert!(o.stdout.is_empty(), "nothing moved or reported");
+    assert_eq!((snapshot(&h), snapshot(&cwd)), (bh, bc), "neither $HOME nor ./.config touched");
+}
