@@ -33,6 +33,31 @@ model = "opus"
 harness = "hermes"
 profile = "fleet-rev"
 
+[fleet.synergy]
+repo = "<owner>/synergy"
+local = "~/Projects/synergy"
+integration = "staging"
+serial_paths = ["supabase/migrations/**"]   # one `--serial` lane at a time (SERIAL_BUSY / SERIAL_UNMARKED)
+# max_impl = 2   # optional caps (CAP); unset = no cap, the host check protects the Mac
+# max_rev = 2
+
+[fleet.synergy.role.orch]
+harness = "hermes"
+profile = "fleet-orch"
+
+[fleet.synergy.role.impl]
+harness = "hermes"
+profile = "fleet-impl"
+
+[fleet.synergy.role.rev]
+harness = "hermes"
+profile = "fleet-rev"
+
+# Conductor-only: `herdsman spawn synergy <issue> design`; the hook denies it from any lane.
+[fleet.synergy.role.design]
+harness = "hermes"
+profile = "fleet-design"
+
 [limits]
 review_rounds = 3
 stall_minutes = 30   # herdsman check: stall / ready-unmerged threshold

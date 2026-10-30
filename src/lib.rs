@@ -125,6 +125,7 @@ enum SpawnRole {
     Orch,
     Impl,
     Rev,
+    Design,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -298,6 +299,9 @@ enum QueueCmd {
         /// Put them right after issue N
         #[arg(long, value_name = "N")]
         after: Option<u64>,
+        /// They touch the fleet's serial_paths (DB migrations): one serial impl at a time
+        #[arg(long)]
+        serial: bool,
     },
     /// Move a queued issue
     #[command(group(clap::ArgGroup::new("to").required(true).args(["top", "before", "after"])))]
@@ -372,7 +376,8 @@ pub fn usage_doc() -> String {
           `gh issue view` / `gh pr checks` loops. Never comment on issues or PRs; `herdsman merge` writes the one closing comment.\n\n\
           ## Hard blocks (Claude and Hermes hook)\n\n`gh pr merge`, `gh issue|pr comment`, `gh pr review`, `gh api` comment writes, `git push` to\n\
           main/master/staging/integration, edits to fleet, fleet-operations and Hermes profile config. Reviewers are\n\
-          read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`.\n\n\
+          read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`. `herdsman spawn … design` is\n\
+          conductor-only: denied from every lane, orch included; design lanes never take part in verdict or merge.\n\n\
           ## Events\n\n`herdsman check` emits `stall`, `lane-dead`, `ready-unmerged` once per state; `herdsman merge` emits\n\
           `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain\n\
           line, or the raw event JSON with `format = \"json\"`.\n";
@@ -448,7 +453,10 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 writeln!(out, "{}", serde_json::to_string_pretty(&rows)?)?;
             }
             for r in rows.as_array().into_iter().flatten().filter(|_| !json) {
-                let on = r["blocked_by"].as_u64().map_or(String::new(), |b| format!("  blocked by #{b}"));
+                let mut on = r["blocked_by"].as_u64().map_or(String::new(), |b| format!("  blocked by #{b}"));
+                if r["serial"] == true {
+                    on += "  serial";
+                }
                 let n = |k: &str| r[k].as_u64().unwrap_or_default();
                 writeln!(out, "{:>2} #{:<5} {}{on}", n("pos"), n("issue"), r["state"].as_str().unwrap_or_default())?;
             }
@@ -512,7 +520,13 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 Cmd::Queue { fleet, cmd } => {
                     cfg.fleet(&fleet)?;
                     let d = match cmd {
-                        QueueCmd::Add { issues, top, after } => queue::op("add", &issues, top, None, after, None),
+                        QueueCmd::Add { issues, top, after, serial } => {
+                            let mut d = queue::op("add", &issues, top, None, after, None);
+                            if serial {
+                                d["serial"] = json!(true);
+                            }
+                            d
+                        }
                         QueueCmd::Mv { issue, top, before, after } => queue::op("mv", &[issue], top, before, after, None),
                         QueueCmd::Rm { issue } => queue::op("rm", &[issue], false, None, None, None),
                         QueueCmd::Block { issue, on } => queue::op("block", &[issue], false, None, None, Some(on)),
@@ -537,6 +551,7 @@ fn lane(issue: &str, role: SpawnRole) -> Result<(Option<u64>, &'static str)> {
         SpawnRole::Orch => "orch",
         SpawnRole::Impl => "impl",
         SpawnRole::Rev => "rev",
+        SpawnRole::Design => "design",
     };
     let issue = match issue {
         "-" => None,
