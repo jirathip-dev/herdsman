@@ -17,7 +17,7 @@ herdsman merge sendmeter 12                  # exact-head PASS + green CI + roun
 herdsman status
 herdsman check                               # stall / lane-dead / ready-unmerged, once per state
 herdsman protection                          # read-only: is branch protection on? exit 1 unless all are
-herdsman clean [--yes]                       # reclaim merged lanes (dry run by default)
+herdsman clean [--yes]                       # reclaim merged or closed-issue lanes (dry run by default)
 herdsman adopt sendmeter 12 impl --pane w9:p1 # record a lane already running in a pane
 herdsman help --agent                        # the one usage doc agents get
 herdsman queue sendmeter add 12 13 [--top]   # ordered queue (mv / rm / block --on N / ls)

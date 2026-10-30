@@ -255,7 +255,7 @@ enum Cmd {
     Check,
     /// Read-only: is GitHub branch protection on for main, staging and the integration branch of each fleet repo? Exit 1 unless all are
     Protection,
-    /// Remove worktree + pane of merged lanes (never live, dirty or unpushed ones); dry run unless --yes
+    /// Remove worktree + pane of merged or closed-issue lanes (never live, dirty or unpushed ones); dry run unless --yes
     Clean {
         fleet: Option<String>,
         /// Actually remove
