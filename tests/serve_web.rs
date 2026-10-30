@@ -240,12 +240,19 @@ fn page_reads_only_cached_pr_data_and_serves_pwa_assets() {
     for (path, ctype) in [
         ("/manifest.webmanifest", "application/manifest+json"),
         ("/sw.js", "text/javascript"),
-        ("/icon.svg", "image/svg+xml"),
         ("/icon-180.png", "image/png"),
+        ("/icon-192.png", "image/png"),
+        ("/icon-512.png", "image/png"),
     ] {
         let res = s.respond(&format!("GET {path} HTTP/1.1\r\n\r\n"), 1);
         let head = String::from_utf8_lossy(&res[..res.len().min(200)]).into_owned();
         assert!(head.starts_with("HTTP/1.1 200 OK") && head.contains(ctype), "{path}: {head}");
+    }
+    for n in [180u32, 192, 512] {
+        let res = s.respond(&format!("GET /icon-{n}.png HTTP/1.1\r\n\r\n"), 1);
+        let png = &res[res.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4..];
+        let dim = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n") && (dim(16), dim(20)) == (n, n), "icon-{n}.png dimensions");
     }
     assert!(get(&s, "/manifest.webmanifest").contains("\"display\": \"standalone\""));
     assert!(page.contains("rel=manifest href=/manifest.webmanifest") && page.contains("serviceWorker.register('/sw.js')"));
