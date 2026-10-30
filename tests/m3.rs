@@ -183,7 +183,7 @@ fn next_skips_blocked_and_live_lane_items() {
     q(&c, &["block", "13", "--on", "12"]);
     assert_eq!(next(), (0, "12\n".into()));
     // #12 gets a lane: skipped; #13 is blocked on it; #14 is next.
-    ev(&c, 100, 12, "spawn", json!({"role": "impl", "agent": "sendmeter-impl-12", "branch": "issue-12"}));
+    ev(&c, 100, 12, "spawn", json!({"role": "impl", "agent": "sendmeter-impl-12", "branch": "issue-12", "effort": "high"}));
     assert_eq!(next(), (0, "14\n".into()));
     ev(&c, 110, 14, "spawn", json!({"role": "impl", "agent": "sendmeter-impl-14", "branch": "issue-14"}));
     assert_eq!(next(), (2, "#13 is blocked by #12\n".into()));
@@ -198,7 +198,7 @@ fn next_skips_blocked_and_live_lane_items() {
 fn board_log(c: &herdsman::Ctx) {
     q(c, &["add", "17", "18", "12"]);
     q(c, &["block", "18", "--on", "17"]);
-    ev(c, 1_000_000 - 300, 12, "spawn", json!({"role": "impl", "agent": "sendmeter-impl-12", "branch": "issue-12"}));
+    ev(c, 1_000_000 - 300, 12, "spawn", json!({"role": "impl", "agent": "sendmeter-impl-12", "branch": "issue-12", "effort": "high"}));
     ev(c, 1_000_000 - 7200, 9, "spawn", json!({"role": "rev", "agent": "sendmeter-rev-9-r1-with-a-long-name"}));
     ev(c, 1_000_000 - 3600, 13, "merged", json!({"pr": "15", "merge_sha": "08c9338", "into": "staging"}));
     ev(c, 1_000_000 - 200_000, 10, "merged", json!({"pr": "11", "merge_sha": "3514adb", "into": "staging"}));
@@ -206,12 +206,12 @@ fn board_log(c: &herdsman::Ctx) {
 
 const BOARD: &str = "\
 sendmeter: 3 queued, 2 active
- Q ISSUE  STATE       LANE                 AGE  LAST
- 1 #17    queued      -                    -    -
- 2 #18    queued      -                    -    on #17
- 3 #12    impl        sendmeter-impl-12    5m   spawn
- - #9     review(1)   sendmeter-rev-9-r1-w 2h   spawn
- - #13    merged      -                    60m  merged
+ Q ISSUE  STATE       LANE                 EFF   AGE  LAST
+ 1 #17    queued      -                    -     -    -
+ 2 #18    queued      -                    -     -    on #17
+ 3 #12    impl        sendmeter-impl-12    high  5m   spawn
+ - #9     review(1)   sendmeter-rev-9-r1-w -     2h   spawn
+ - #13    merged      -                    -     60m  merged
 ";
 
 #[test]

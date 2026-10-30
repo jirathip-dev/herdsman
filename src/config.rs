@@ -36,11 +36,16 @@ pub struct Role {
     pub harness: String,
     pub profile: Option<String>,
     pub model: Option<String>,
+    /// Reasoning effort, mapped per harness (`harness::effort_ok`); `[limits].effort` when unset.
+    pub effort: Option<String>,
 }
 
 impl Role {
     pub fn profile_or(&self, role: &str) -> String {
         self.profile.clone().unwrap_or_else(|| format!("fleet-{role}"))
+    }
+    pub fn effort_or(&self, limits: &Limits) -> Option<String> {
+        self.effort.clone().or_else(|| limits.effort.clone())
     }
 }
 
@@ -56,6 +61,9 @@ pub struct Limits {
     /// Pages swapped out per 2 s sample.
     #[serde(default = "swapout_rate")]
     pub swapout_rate: f64,
+    /// Default reasoning effort for roles that set none.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 fn three() -> u32 {
@@ -78,6 +86,7 @@ impl Default for Limits {
             stall_minutes: thirty(),
             load_per_cpu: load_per_cpu(),
             swapout_rate: swapout_rate(),
+            effort: None,
         }
     }
 }
@@ -105,6 +114,10 @@ impl Config {
         if raw.get("limits").and_then(|l| l.get("max_agents")).is_some() {
             eprintln!("herdsman: [limits].max_agents is no longer used; ignoring it");
         }
+        let levels = crate::harness::EFFORTS;
+        if let Some(e) = c.limits.effort.as_deref().filter(|e| !levels.contains(e)) {
+            bail!("limits.effort: \"{e}\" must be one of {levels:?}");
+        }
         for (name, f) in &c.fleet {
             for (role, r) in &f.role {
                 if !ROLES.contains(&role.as_str()) {
@@ -112,6 +125,15 @@ impl Config {
                 }
                 if !crate::harness::NAMES.contains(&r.harness.as_str()) {
                     bail!("fleet.{name}.role.{role}: harness must be one of {:?}", crate::harness::NAMES);
+                }
+                if let Some(e) = r.effort_or(&c.limits) {
+                    let ok = crate::harness::efforts(&r.harness);
+                    if !levels.contains(&e.as_str()) {
+                        bail!("fleet.{name}.role.{role}: effort \"{e}\" must be one of {levels:?}");
+                    }
+                    if !ok.contains(&e.as_str()) {
+                        bail!("fleet.{name}.role.{role}: harness {} does not support effort \"{e}\" (supported: {ok:?})", r.harness);
+                    }
                 }
             }
         }

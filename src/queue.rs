@@ -142,16 +142,17 @@ pub fn board(events: &[Event], fleet: &str, now: u64) -> String {
     let mine: Vec<&IssueState> = st.values().filter(|s| s.fleet == fleet).collect();
     let active = mine.iter().filter(|s| s.active_lane().is_some()).count();
     let mut lines = vec![format!("{fleet}: {} queued, {active} active", q.len()), format!(
-        "{:>2} {:<6} {:<11} {:<20} {:<4} LAST",
-        "Q", "ISSUE", "STATE", "LANE", "AGE"
+        "{:>2} {:<6} {:<11} {:<20} {:<5} {:<4} LAST",
+        "Q", "ISSUE", "STATE", "LANE", "EFF", "AGE"
     )];
     let row = |pos: String, n: u64, last: Option<String>| {
         let s = st.get(&(fleet.to_string(), n));
         let lane: String = s.and_then(|s| s.lane.as_deref()).unwrap_or("-").chars().take(20).collect();
+        let eff = s.and_then(|s| s.effort.as_deref()).unwrap_or("-");
         let (ts, ev) = s.map_or((0, ""), |s| (s.last_ts, s.last_event.as_str()));
         let a = if ts == 0 { "-".into() } else { age(now.saturating_sub(ts)) };
         let last = last.unwrap_or_else(|| if ev.is_empty() { "-".into() } else { ev.into() });
-        format!("{pos:>2} #{n:<5} {:<11} {lane:<20} {a:<4} {last}", state(&st, fleet, n))
+        format!("{pos:>2} #{n:<5} {:<11} {lane:<20} {eff:<5} {a:<4} {last}", state(&st, fleet, n))
     };
     for (k, i) in q.iter().enumerate() {
         lines.push(row((k + 1).to_string(), i.issue, i.blocked_by.map(|b| format!("on #{b}"))));

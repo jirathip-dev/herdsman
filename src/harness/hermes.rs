@@ -18,7 +18,7 @@ impl Harness for Hermes {
         let yaml = ctx.hermes.join(profile).join("config.yaml");
         let Ok(text) = std::fs::read_to_string(&yaml) else { return Ok(()) };
         let hook_cmd = serde_json::to_string(&hook_command(ctx, role))?;
-        let new = set_hooks(&text, &HERMES_HOOKS.replace("{{FLEET_HOOK}}", &hook_cmd));
+        let new = set_hooks(&drop_reasoning_effort(&text), &HERMES_HOOKS.replace("{{FLEET_HOOK}}", &hook_cmd));
         if new != text {
             std::fs::write(&yaml, new)?;
         }
@@ -28,7 +28,11 @@ impl Harness for Hermes {
 
     fn start_cmd(&self, _ctx: &Ctx, p: &Plan, pane: &str) -> Vec<String> {
         // Unattended lanes cannot answer Hermes' first-use hook consent prompt.
-        agent_start(p, "hermes", pane, argv(&["-p", &p.profile, "--accept-hooks"]))
+        let mut a = argv(&["-p", &p.profile, "--accept-hooks"]);
+        if let Some(e) = &p.effort {
+            a.extend(["--reasoning".into(), e.clone()]);
+        }
+        agent_start(p, "hermes", pane, a)
     }
 
     /// Hermes boots idle and drops a prompt sent before its input is ready: wait for
@@ -103,6 +107,28 @@ pub fn set_hooks(text: &str, block: &str) -> String {
             out.push('\n');
         }
         out.push_str(block);
+    }
+    out
+}
+
+/// Drop `agent.reasoning_effort` (the role's effort now comes from fleet.toml): only
+/// the direct child of the top-level `agent:` block; nested keys and every other line
+/// are kept byte for byte.
+pub fn drop_reasoning_effort(text: &str) -> String {
+    let (mut out, mut in_agent, mut child) = (String::new(), false, None);
+    for line in text.split_inclusive('\n') {
+        let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+        let body = &line[indent..];
+        if !line.trim().is_empty() && indent == 0 {
+            in_agent = line.starts_with("agent:");
+            child = None;
+        } else if in_agent && !body.trim().is_empty() && !body.starts_with('#') {
+            let c = *child.get_or_insert(indent);
+            if indent == c && body.starts_with("reasoning_effort:") {
+                continue;
+            }
+        }
+        out.push_str(line);
     }
     out
 }

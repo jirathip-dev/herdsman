@@ -59,7 +59,7 @@ came up it closes the pane and logs nothing. `herdsman adopt` repairs a lane by 
 | `~/.local/state/herdsman/events.jsonl` (`FLEET_STATE`) | append-only event log; state and queue are folds over it |
 | `~/.local/state/herdsman/cache/` | cached issue specs and PR/CI reads |
 | `~/.config/herdsman/claude/<profile>/` | `settings.json` (PreToolUse hook), `role.md`, `fleet.md` |
-| `~/.hermes/profiles/<profile>/config.yaml` (`FLEET_HERMES_PROFILES`) | sync rewrites only its `hooks:` key (pre_tool_call hook) |
+| `~/.hermes/profiles/<profile>/config.yaml` (`FLEET_HERMES_PROFILES`) | sync rewrites its `hooks:` key (pre_tool_call hook) and drops `agent.reasoning_effort` (fleet.toml `effort` owns it) |
 | `~/.config/herdsman/dsh/<profile>.patch.yml` | DSH patch layer for `harness = "dsh"` lanes ([docs/dsh.md](docs/dsh.md)) |
 | `roles/`, `hooks/` | role prompts and hook settings, compiled into the binary |
 
