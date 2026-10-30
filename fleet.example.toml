@@ -1,9 +1,15 @@
 # Copy to ~/.config/herdsman/fleet.toml (or point FLEET_CONFIG at it).
 
+models = ["opus", "sonnet", "claude-opus-5-5"]   # the model dropdown `herdsman serve` offers
+
+[serve]
+allowed_hosts = ["<mac>.<tailnet>.ts.net"]   # `tailscale serve` proxies the page over HTTPS
+
 [fleet.sendmeter]
 repo = "jirathip-dev/sendmeter"
 local = "~/Projects/sendmeter"
 integration = "staging"          # herdsman merge target; main is never a target
+# paused = true                  # `herdsman pause|resume sendmeter`: no next, impl/rev spawns refuse PAUSED
 
 [fleet.sendmeter.role.orch]
 harness = "hermes"

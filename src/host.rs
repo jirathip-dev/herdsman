@@ -19,7 +19,7 @@ pub fn live_in<'a>(agents: &'a [Value], name: &str, dir: &Path) -> Vec<&'a Value
     agents.iter().filter(|a| a["name"] == name || inside(a, "cwd") || inside(a, "foreground_cwd")).collect()
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Host {
     /// normal | warn | critical
     pub pressure: Option<String>,

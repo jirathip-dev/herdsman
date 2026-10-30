@@ -231,7 +231,9 @@ fn serve_is_read_only_html() {
     let d = tmpdir("serve");
     let c = ctx(&d, CONFIG);
     board_log(&c);
-    let res = herdsman::serve::respond(&c, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", 1_000_000);
+    let r = Fake::default();
+    let srv = herdsman::serve::Server::new(&c, &r, None);
+    let res = String::from_utf8(srv.respond("GET / HTTP/1.1\r\nHost: x\r\n\r\n", 1_000_000)).unwrap();
     assert!(res.starts_with("HTTP/1.1 200 OK\r\n") && res.contains("Content-Type: text/html"), "{res}");
     for n in ["#17", "#18", "#12"] {
         assert!(res.contains(n), "queued {n} missing");
@@ -240,14 +242,14 @@ fn serve_is_read_only_html() {
     assert!(res.contains("https://github.com/jirathip-dev/sendmeter/issues/12"), "issue link");
     assert!(res.contains("actions?query=branch%3Aissue-12"), "Actions runs link");
     for m in ["POST", "PUT", "DELETE", "PATCH", "HEAD"] {
-        let res = herdsman::serve::respond(&c, &format!("{m} / HTTP/1.1\r\n\r\n"), 1_000_000);
+        let res = String::from_utf8(srv.respond(&format!("{m} / HTTP/1.1\r\n\r\n"), 1_000_000)).unwrap();
         assert!(res.starts_with("HTTP/1.1 405 "), "{m}: {res}");
     }
     // Over a real socket.
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.local_addr().unwrap();
     let c2 = ctx(&d, CONFIG);
-    std::thread::spawn(move || herdsman::serve::serve_on(&c2, l));
+    std::thread::spawn(move || herdsman::serve::serve_on(&c2, &Fake::default(), l, true));
     let get = |req: &str| {
         let mut s = std::net::TcpStream::connect(addr).unwrap();
         s.write_all(req.as_bytes()).unwrap();

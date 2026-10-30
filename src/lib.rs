@@ -8,6 +8,7 @@ pub mod gh;
 pub mod harness;
 pub mod hook;
 pub mod host;
+pub mod lanes;
 pub mod protection;
 pub mod queue;
 pub mod runner;
@@ -16,13 +17,14 @@ pub mod spawn;
 
 use anyhow::{bail, Result};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use config::{home, set_value, write_atomic, Config};
+use config::{home, set_in, set_value, write_atomic, Config};
 use events::{emit, fold, read, status_line, Event};
 use runner::Runner;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
+#[derive(Clone)]
 pub struct Ctx {
     pub config: PathBuf,
     pub state: PathBuf,
@@ -146,7 +148,7 @@ enum Until {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Switch a role's harness/model/profile in fleet.toml; prints old -> new
+    /// Switch a role's harness/model/profile/effort in fleet.toml; prints old -> new
     Set {
         fleet: String,
         /// orch | impl | rev
@@ -160,7 +162,14 @@ enum Cmd {
         /// Profile name (default fleet-<role>)
         #[arg(long)]
         profile: Option<String>,
+        /// none | low | medium | high | xhigh
+        #[arg(long)]
+        effort: Option<String>,
     },
+    /// Pause a fleet: `next` offers nothing and impl/rev spawns refuse PAUSED; live lanes are untouched
+    Pause { fleet: String },
+    /// Resume a paused fleet
+    Resume { fleet: String },
     /// Create worktree + herdr pane, write .brief.md, launch the role's harness, verify the prompt landed;
     /// ISSUE `-` with role orch starts the fleet's orchestrator
     Spawn {
@@ -246,11 +255,14 @@ enum Cmd {
     Next { fleet: String },
     /// Compact board (≤ 60 cols): queue order, state, lane, age, last event
     Board { fleet: Option<String> },
-    /// Read-only HTML page: boards, queues, last 50 events with GitHub links (GET only)
+    /// Phone page (PWA): queue, lanes, host, events; buttons for queue order, pause/resume, role model/effort
     Serve {
         /// Listen address
         #[arg(long, default_value = "127.0.0.1:7777")]
         addr: String,
+        /// GET only: no buttons, every POST is 405
+        #[arg(long)]
+        read_only: bool,
     },
     /// Alert once per state on stall, lane-dead and ready-unmerged issues; idempotent, safe from cron
     Check,
@@ -366,8 +378,9 @@ pub fn usage_doc() -> String {
         "# herdsman — usage for agents\n\nAct only through `herdsman`. It owns state (event log) and refuses anything that\n\
          breaks a rule. A refusal is final: report it, never work around it.\n\n## Commands\n",
     );
-    // `accounts` is the operator's; the section below documents it.
-    let subs = cmd.get_subcommands().filter(|c| !c.is_hide_set() && c.get_name() != "accounts");
+    // The owner's commands; the sections below name them.
+    let owner = ["accounts", "pause", "resume", "serve"];
+    let subs = cmd.get_subcommands().filter(|c| !c.is_hide_set() && !owner.contains(&c.get_name()));
     let subs: Vec<_> = subs.flat_map(|c| if c.has_subcommands() { c.get_subcommands().collect() } else { vec![c] }).collect();
     for sub in subs {
         let mut sub = sub.clone();
@@ -397,7 +410,8 @@ pub fn usage_doc() -> String {
           ## Events\n\n`herdsman check` emits `stall`, `lane-dead`, `ready-unmerged`, `account-capped` (limit banner) once per state; `herdsman merge` emits\n\
           `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain line, or raw \
           event JSON with `format = \"json\"`. A fleet's own `[[fleet.<name>.notify]]` (same fields)\n\
-          replaces the global `[[notify]]` for its events; `notify_global = true` in `[fleet.<name>]` sends to both.\n";
+          replaces the global `[[notify]]` for its events; `notify_global = true` in `[fleet.<name>]` sends to both.\n\
+          Owner-only: `herdsman pause|resume <fleet>` (PAUSED) and `herdsman serve`, the phone page (its writes log `\"via\":\"web\"`).\n";
     s
 }
 
@@ -451,8 +465,22 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 }
             }
         }
-        Cmd::Set { fleet, role, harness, model, profile } => set(ctx, out, &fleet, &role, harness, model, profile)?,
+        Cmd::Set { fleet, role, harness, model, profile, effort } => {
+            let harness = harness.map(|h| match h {
+                Harness::Claude => "claude".to_string(),
+                Harness::Hermes => "hermes".into(),
+                Harness::Dsh => "dsh".into(),
+            });
+            let wanted = [("harness", harness), ("model", model), ("profile", profile), ("effort", effort)];
+            set(ctx, out, &fleet, &role, wanted.into_iter().filter_map(|(k, v)| Some((k, v?))).collect(), None)?
+        }
+        Cmd::Pause { fleet } => pause(ctx, out, &fleet, true, None)?,
+        Cmd::Resume { fleet } => pause(ctx, out, &fleet, false, None)?,
         Cmd::Next { fleet } => {
+            if Config::load(&ctx.config).is_ok_and(|c| c.fleet.get(&fleet).is_some_and(|f| f.paused)) {
+                writeln!(out, "{fleet}: paused")?;
+                return Ok(1);
+            }
             let (code, line) = queue::next(&read(&ctx.state)?, &fleet);
             writeln!(out, "{line}")?;
             return Ok(code);
@@ -463,7 +491,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
             let boards: Vec<_> = all.iter().map(|f| queue::board(&events, f, ctx.now)).collect();
             write!(out, "{}", boards.join("\n"))?;
         }
-        Cmd::Serve { addr } => serve::serve(ctx, &addr)?,
+        Cmd::Serve { addr, read_only } => serve::serve(ctx, r, &addr, read_only)?,
         Cmd::Queue { fleet, cmd: QueueCmd::Ls { json } } => {
             let rows = queue::ls_json(&read(&ctx.state)?, &fleet);
             if json {
@@ -551,9 +579,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                         QueueCmd::Block { issue, on } => queue::op("block", &[issue], false, None, None, Some(on)),
                         QueueCmd::Ls { .. } => unreachable!(),
                     };
-                    let mut q = queue::replay(&read(&ctx.state)?, &fleet);
-                    queue::apply(&mut q, &d)?;
-                    emit(&ctx.state, &cfg, Event::new(ctx.now, &fleet, None, "queue", d))?;
+                    let q = queue_change(ctx, &cfg, &fleet, d, None)?;
                     let order: Vec<String> = q.iter().map(|i| format!("#{}", i.issue)).collect();
                     writeln!(out, "{fleet} queue: {}", if order.is_empty() { "empty".into() } else { order.join(" ") })?;
                 }
@@ -579,36 +605,47 @@ fn lane(issue: &str, role: SpawnRole) -> Result<(Option<u64>, &'static str)> {
     Ok((issue, role))
 }
 
-fn set(
-    ctx: &Ctx,
-    out: &mut dyn Write,
-    fleet: &str,
-    role: &str,
-    harness: Option<Harness>,
-    model: Option<String>,
-    profile: Option<String>,
-) -> Result<()> {
+/// Apply one queue change and log it (`herdsman queue`, and the page's ▲/▼ with `via`).
+pub fn queue_change(ctx: &Ctx, cfg: &Config, fleet: &str, mut d: Value, via: Option<&str>) -> Result<Vec<queue::Item>> {
+    cfg.fleet(fleet)?;
+    let mut q = queue::replay(&read(&ctx.state)?, fleet);
+    queue::apply(&mut q, &d)?;
+    if let Some(v) = via {
+        d["via"] = json!(v);
+    }
+    emit(&ctx.state, cfg, Event::new(ctx.now, fleet, None, "queue", d))?;
+    Ok(q)
+}
+
+/// `herdsman set` (and the page's model/effort dropdowns, with `via`): `wanted` is (key, new value).
+pub fn set(ctx: &Ctx, out: &mut dyn Write, fleet: &str, role: &str, wanted: Vec<(&str, String)>, via: Option<&str>) -> Result<()> {
     let text = std::fs::read_to_string(&ctx.config)?;
     let cfg = Config::parse(&text)?;
     let cur = cfg.fleet(fleet)?.role(role)?.clone();
-    let harness = harness.map(|h| match h {
-        Harness::Claude => "claude".to_string(),
-        Harness::Hermes => "hermes".into(),
-        Harness::Dsh => "dsh".into(),
-    });
-    let wanted = [("harness", harness, Some(cur.harness)), ("model", model, cur.model), ("profile", profile, cur.profile)];
-    if wanted.iter().all(|w| w.1.is_none()) {
-        bail!("nothing to set: pass --harness, --model or --profile");
+    if wanted.is_empty() {
+        bail!("nothing to set: pass --harness, --model, --profile or --effort");
+    }
+    if let Some((_, m)) = wanted.iter().find(|(k, m)| *k == "model" && !cfg.models.is_empty() && !cfg.models.contains(m)) {
+        bail!("model \"{m}\" is not in `models` {:?}", cfg.models);
     }
     let mut new = text.clone();
     let mut changes = vec![];
-    for (key, val, old) in wanted {
-        let Some(val) = val else { continue };
+    for (key, val) in wanted {
+        let old = match key {
+            "harness" => Some(cur.harness.clone()),
+            "model" => cur.model.clone(),
+            "profile" => cur.profile.clone(),
+            _ => cur.effort.clone(),
+        };
         let old = old.unwrap_or_else(|| "-".into());
         writeln!(out, "{fleet}.{role} {key}: {old} -> {val}")?;
         if old != val {
             new = set_value(&new, fleet, role, key, &val)?;
-            changes.push(json!({"role": role, "key": key, "old": old, "new": val}));
+            let mut c = json!({"role": role, "key": key, "old": old, "new": val});
+            if let Some(v) = via {
+                c["via"] = json!(v);
+            }
+            changes.push(c);
         }
     }
     let new_cfg = Config::parse(&new)?;
@@ -618,6 +655,24 @@ fn set(
     for c in changes {
         emit(&ctx.state, &new_cfg, Event::new(ctx.now, fleet, None, "set", c))?;
     }
+    Ok(())
+}
+
+/// `herdsman pause|resume <fleet>` (and the page's button, with `via`): `paused = true|false`.
+pub fn pause(ctx: &Ctx, out: &mut dyn Write, fleet: &str, paused: bool, via: Option<&str>) -> Result<()> {
+    let text = std::fs::read_to_string(&ctx.config)?;
+    let cfg = Config::parse(&text)?;
+    let word = if paused { "paused" } else { "resumed" };
+    if cfg.fleet(fleet)?.paused == paused {
+        writeln!(out, "{fleet}: already {word}")?;
+        return Ok(());
+    }
+    let new = set_in(&text, &format!("[fleet.{fleet}]"), "paused", &paused.to_string())?;
+    let new_cfg = Config::parse(&new)?;
+    write_atomic(&ctx.config, &new)?;
+    let d = via.map_or(json!({}), |v| json!({"via": v}));
+    emit(&ctx.state, &new_cfg, Event::new(ctx.now, fleet, None, if paused { "pause" } else { "resume" }, d))?;
+    writeln!(out, "{fleet}: {word}")?;
     Ok(())
 }
 
