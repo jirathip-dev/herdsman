@@ -17,6 +17,7 @@ pub fn role_prompt(role: &str) -> &'static str {
     match role {
         "orch" => include_str!("../roles/orch.md"),
         "impl" => include_str!("../roles/impl.md"),
+        "design" => include_str!("../roles/design.md"),
         _ => include_str!("../roles/rev.md"),
     }
 }
@@ -73,6 +74,7 @@ pub struct Plan {
     pub harness: String,
     pub profile: String,
     pub model: Option<String>,
+    pub effort: Option<String>,
     pub branch: String,
     pub base: String,
     pub worktree: PathBuf,
@@ -124,6 +126,8 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
             let (agent, branch, base) = if role == "rev" {
                 let k = st.as_ref().map_or(0, |s| s.rounds) + 1;
                 (format!("{fleet}-rev-{issue}-r{k}"), format!("rev-{issue}-r{k}"), format!("origin/{impl_branch}"))
+            } else if role == "design" {
+                (format!("{fleet}-design-{issue}"), format!("design-{issue}"), format!("origin/{}", f.integration))
             } else {
                 (format!("{fleet}-{role}-{issue}"), impl_branch, format!("origin/{}", f.integration))
             };
@@ -147,6 +151,7 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
         harness: r.harness.clone(),
         profile: r.profile_or(role),
         model: r.model.clone(),
+        effort: r.effort_or(&cfg.limits),
         branch,
         base,
         worktree,
@@ -167,6 +172,13 @@ fn brief(f: &Fleet, issue: u64, p: &Plan, title: &str, body: &str, fix: Option<&
              - Report the exact head sha you reviewed (`git rev-parse HEAD`).",
             format_args!("origin/{}", f.integration),
             p.worktree.display()
+        )
+    } else if p.role == "design" {
+        format!(
+            "- Work on branch `{}` only; never push to `{}` or main.\n\
+             - Design lanes take no part in `herdsman verdict` or `herdsman merge`; a PR, if any, is the owner's call.\n\
+             - Report: what you produced and where.",
+            p.branch, f.integration
         )
     } else {
         format!(
@@ -217,7 +229,7 @@ fn plan_json(ctx: &Ctx, f: &Fleet, p: &Plan) -> Value {
     cmds.extend(p.kick_cmds("<pane>").into_iter().map(herdr));
     json!({
         "agent": p.agent, "role": p.role, "harness": p.harness, "profile": p.profile,
-        "model": p.model, "branch": p.branch, "base": p.base, "account": p.account.as_ref().map(|a| &a.0),
+        "model": p.model, "effort": p.effort, "branch": p.branch, "base": p.base, "account": p.account.as_ref().map(|a| &a.0),
         "worktree": p.worktree, "brief": p.brief, "kick": p.kick, "commands": cmds,
     })
 }
@@ -312,6 +324,10 @@ pub fn spawn(
         return Err(refuse(code, format!("{msg}; `--supersede` replaces it")).into());
     }
 
+    if let Some(n) = issue {
+        lane_admit(f, &events, fleet, n, role)?;
+    }
+
     // Host-load gate, before anything is created.
     if let Err(why) = host::admit(&host::sample(r), &cfg.limits) {
         if !o.force {
@@ -386,6 +402,34 @@ pub fn spawn(
     Ok(confirmed)
 }
 
+/// SERIAL_BUSY: a `--serial` impl waits while another serial issue is in flight.
+/// CAP: the fleet's optional `max_impl` / `max_rev` concurrent-lane caps.
+fn lane_admit(f: &Fleet, events: &[Event], fleet: &str, issue: u64, role: &str) -> Result<()> {
+    let st = fold(events);
+    let others: Vec<_> = st.values().filter(|s| s.fleet == fleet && s.issue != issue).collect();
+    let building = |s: &str| s == "impl" || s.starts_with("fix");
+    if role == "impl" {
+        let serial = crate::queue::serial(events, fleet);
+        if serial.contains(&issue) {
+            let busy = others.iter().find(|s| {
+                serial.contains(&s.issue) && (building(&s.state) || s.state.starts_with("review") || s.state == "ready")
+            });
+            if let Some(s) = busy {
+                return Err(refuse("SERIAL_BUSY", format!("serial #{} is unmerged ({}); retry after it merges", s.issue, s.state)).into());
+            }
+        }
+    }
+    let (cap, n) = match role {
+        "impl" => (f.max_impl, others.iter().filter(|s| building(&s.state)).count()),
+        "rev" => (f.max_rev, others.iter().filter(|s| s.state.starts_with("review")).count()),
+        _ => (None, 0),
+    };
+    if let Some(cap) = cap.filter(|&c| n >= c) {
+        return Err(refuse("CAP", format!("{n} {role} lane(s) open in {fleet}, max_{role} = {cap}")).into());
+    }
+    Ok(())
+}
+
 /// The pane's `herdr pane get` info when a harness (any detected agent) runs in it.
 fn harness_in(r: &dyn Runner, pane: &str) -> Option<Value> {
     let v = json(r, "herdr", &["pane", "get", pane]).ok()?;
@@ -394,7 +438,7 @@ fn harness_in(r: &dyn Runner, pane: &str) -> Option<Value> {
 
 /// The `spawn` event's data for a lane of plan `p` running in `pane`.
 fn lane_data(p: &Plan, pane: &str, ws: &str) -> Value {
-    json!({"role": p.role, "harness": p.harness, "profile": p.profile, "model": p.model, "agent": p.agent,
+    json!({"role": p.role, "harness": p.harness, "profile": p.profile, "model": p.model, "effort": p.effort, "agent": p.agent,
         "pane": pane, "workspace": ws, "worktree": p.worktree, "branch": p.branch, "account": p.account.as_ref().map(|a| &a.0)})
 }
 

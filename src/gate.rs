@@ -41,6 +41,9 @@ pub const CODES: &[(&str, &str)] = &[
     ("LANE_LIVE", "spawn: a herdr agent is live in the worktree, or the log has an unfinished lane for it; --supersede"),
     ("WORKTREE_DIRTY", "spawn: the worktree has unpushed or uncommitted work from no known lane; --supersede"),
     ("MERGED", "spawn/adopt: the issue is merged; a merged issue never reopens"),
+    ("SERIAL_BUSY", "spawn: a `--serial` impl waits while another serial issue has a live impl/fix lane or sits at review/ready"),
+    ("SERIAL_UNMARKED", "merge: the PR touches the fleet's serial_paths but the issue was not queued `--serial`"),
+    ("CAP", "spawn: the fleet's optional max_impl / max_rev lane cap is reached (unset = no cap)"),
     ("MCP_FORBIDDEN", "spawn/profiles sync: a role's `mcp` names a server matching `mcp_deny` (default `*prod*`)"),
 ];
 
@@ -142,10 +145,22 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
             _ => json!({"error": "no-pr"}),
         }
     };
+    let num = pr["number"].as_u64().unwrap_or_default().to_string();
     let res = if pr.get("error").is_some() {
         Err(refuse("NO_PR", format!("no open PR for branch {branch} in {}", f.repo)))
     } else {
         gate(&f.integration, &pr, st.as_ref(), cfg.limits.review_rounds)
+    };
+    let serial = || crate::queue::serial(&read(&ctx.state).unwrap_or_default(), fleet).contains(&issue);
+    let res = match res {
+        Ok(head) if !f.serial_paths.is_empty() && !serial() => {
+            let files = gh::diff_names(ctx, r, f, (fleet, issue), &num, &head)?;
+            match files.iter().find(|p| f.serial_path(p)) {
+                Some(p) => Err(refuse("SERIAL_UNMARKED", format!("PR touches serial path {p}; queue #{issue} with `--serial` first"))),
+                None => Ok(head),
+            }
+        }
+        res => res,
     };
     let head = match res {
         Ok(h) => h,
@@ -156,7 +171,6 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
             return Err(rf.into());
         }
     };
-    let num = pr["number"].as_u64().unwrap_or_default().to_string();
     gh::forget_pr(ctx, fleet, issue);
     ok(r, "gh", &["pr", "merge", &num, "-R", &f.repo, "--merge", "--match-head-commit", &head])?;
     let mc = json(r, "gh", &["pr", "view", &num, "-R", &f.repo, "--json", "mergeCommit"])?;

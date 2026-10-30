@@ -16,6 +16,18 @@ pub use hermes::{set_hooks, set_mcp};
 
 pub const NAMES: [&str; 3] = ["claude", "hermes", "dsh"];
 
+/// Effort levels a role may set (`effort = "…"`).
+pub const EFFORTS: [&str; 5] = ["none", "low", "medium", "high", "xhigh"];
+
+/// The levels `harness` can be launched with: Claude `--effort` (`none` omits it),
+/// Hermes `--reasoning`; dsh has no effort setting yet (herdsman-archive#22).
+pub fn efforts(harness: &str) -> &'static [&'static str] {
+    match harness {
+        "dsh" => &["none"],
+        _ => &EFFORTS,
+    }
+}
+
 pub trait Harness {
     /// Write this harness's files for role `role`'s `profile` (prompts, hooks).
     fn sync(&self, ctx: &Ctx, role: &str, profile: &str, usage: &str, out: &mut dyn Write) -> Result<()>;

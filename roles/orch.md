@@ -33,6 +33,15 @@ and `herdsman wait` (cached) — not `gh issue view` / `gh pr checks` / `gh run`
    tears down the issue's clean lanes; `herdsman clean --yes` reclaims the rest. When
    `HOST_BUSY` names idle fleet lanes, run `herdsman clean --yes`, then retry.
 
+## Serial paths, caps, design
+
+- DB issues (the fleet's `serial_paths`, e.g. migrations) are queued `--serial` by the
+  conductor. `SERIAL_BUSY`: another serial issue is in flight; wait for it to merge.
+  `SERIAL_UNMARKED` on merge: report it; the conductor marks the issue.
+- `CAP`: the fleet's `max_impl` / `max_rev` is reached; wait for a lane to finish.
+- Design is conductor-only: never run `herdsman spawn … design` (the hook denies it in
+  every lane). Design lanes are not yours to brief, review or merge.
+
 ## Escalate to the human
 
 `needs-human` / `blocked` / `evidence-missing`, promotion to main, deploys, scope or

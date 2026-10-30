@@ -48,6 +48,9 @@ impl Harness for Claude {
         if let Some(m) = &p.model {
             a.extend(["--model".into(), m.clone()]);
         }
+        if let Some(e) = p.effort.as_deref().filter(|e| *e != "none") {
+            a.extend(["--effort".into(), e.into()]);
+        }
         // `--mcp-config` is variadic: `--strict-mcp-config` ends it before the kick.
         a.extend(["--mcp-config".into(), p.mcp_file.to_string_lossy().into(), "--strict-mcp-config".into()]);
         a.push(p.kick.clone());

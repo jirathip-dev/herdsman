@@ -54,7 +54,8 @@ fn bash(cmd: &str, cwd: &str, p: &Policy, cur_branch: &dyn Fn(&str) -> Option<St
             .filter(|t| !t.is_empty())
             .collect();
         let t: Vec<&str> = toks.iter().map(String::as_str).collect();
-        if let Some(r) = gh(&t).or_else(|| git_push(&t, cwd, p, cur_branch)).or_else(|| reviewer_git(&t, p)) {
+        let found = gh(&t).or_else(|| git_push(&t, cwd, p, cur_branch)).or_else(|| reviewer_git(&t, p));
+        if let Some(r) = found.or_else(|| design_spawn(&t)) {
             return Some(r);
         }
         if let Some(pp) = protected_path(seg, p) {
@@ -81,6 +82,13 @@ fn gh(t: &[&str]) -> Option<String> {
     let comment = rest.windows(2).any(|w| w == ["issue", "comment"] || w == ["pr", "comment"] || w == ["pr", "review"])
         || (api && rest.iter().any(|w| w.contains("/comments") || w.contains("addComment")) && api_writes(rest));
     comment.then(|| "lanes never comment on GitHub: report in your pane; fleet logs routing, verdicts and the merge".into())
+}
+
+/// `herdsman spawn … design` (or pre-rename `fleet`): design lanes are conductor-only.
+fn design_spawn(t: &[&str]) -> Option<String> {
+    let i = t.iter().position(|w| matches!(w.rsplit('/').next(), Some("herdsman" | "fleet")))?;
+    (t.get(i + 1) == Some(&"spawn") && t[i + 2..].contains(&"design"))
+        .then(|| "design lanes are conductor-only: only the owner runs `herdsman spawn … design`, never a lane".into())
 }
 
 /// `gh api` sends a write: a non-GET method, or fields/input (which default to POST).

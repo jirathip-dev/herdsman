@@ -17,7 +17,7 @@ herdsman merge sendmeter 12                  # exact-head PASS + green CI + roun
 herdsman status
 herdsman check                               # stall / lane-dead / ready-unmerged, once per state
 herdsman protection                          # read-only: is branch protection on? exit 1 unless all are
-herdsman clean [--yes]                       # reclaim merged lanes (dry run by default)
+herdsman clean [--yes]                       # reclaim merged or closed-issue lanes (dry run by default)
 herdsman adopt sendmeter 12 impl --pane w9:p1 # record a lane already running in a pane
 herdsman help --agent                        # the one usage doc agents get
 herdsman queue sendmeter add 12 13 [--top]   # ordered queue (mv / rm / block --on N / ls)
@@ -59,7 +59,7 @@ came up it closes the pane and logs nothing. `herdsman adopt` repairs a lane by 
 | `~/.local/state/herdsman/events.jsonl` (`FLEET_STATE`) | append-only event log; state and queue are folds over it |
 | `~/.local/state/herdsman/cache/` | cached issue specs and PR/CI reads |
 | `~/.config/herdsman/claude/<profile>/` | `settings.json` (PreToolUse hook), `role.md`, `fleet.md` |
-| `~/.hermes/profiles/<profile>/config.yaml` (`FLEET_HERMES_PROFILES`) | sync rewrites only its `hooks:` key (pre_tool_call hook) |
+| `~/.hermes/profiles/<profile>/config.yaml` (`FLEET_HERMES_PROFILES`) | sync rewrites its `hooks:` key (pre_tool_call hook) and drops `agent.reasoning_effort` (fleet.toml `effort` owns it) |
 | `~/.config/herdsman/dsh/<profile>.patch.yml` | DSH patch layer for `harness = "dsh"` lanes ([docs/dsh.md](docs/dsh.md)) |
 | `roles/`, `hooks/` | role prompts and hook settings, compiled into the binary |
 

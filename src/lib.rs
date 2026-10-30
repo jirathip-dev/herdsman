@@ -126,6 +126,7 @@ enum SpawnRole {
     Orch,
     Impl,
     Rev,
+    Design,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -260,7 +261,7 @@ enum Cmd {
     },
     /// Read-only: is GitHub branch protection on for main, staging and the integration branch of each fleet repo? Exit 1 unless all are
     Protection,
-    /// Remove worktree + pane of merged lanes (never live, dirty or unpushed ones); dry run unless --yes
+    /// Remove worktree + pane of merged or closed-issue lanes (never live, dirty or unpushed ones); dry run unless --yes
     Clean {
         fleet: Option<String>,
         /// Actually remove
@@ -304,6 +305,9 @@ enum QueueCmd {
         /// Put them right after issue N
         #[arg(long, value_name = "N")]
         after: Option<u64>,
+        /// They touch the fleet's serial_paths (DB migrations): one serial impl at a time
+        #[arg(long)]
+        serial: bool,
     },
     /// Move a queued issue
     #[command(group(clap::ArgGroup::new("to").required(true).args(["top", "before", "after"])))]
@@ -362,7 +366,8 @@ pub fn usage_doc() -> String {
         "# herdsman — usage for agents\n\nAct only through `herdsman`. It owns state (event log) and refuses anything that\n\
          breaks a rule. A refusal is final: report it, never work around it.\n\n## Commands\n",
     );
-    let subs = cmd.get_subcommands().filter(|c| !c.is_hide_set());
+    // `accounts` is the operator's; the section below documents it.
+    let subs = cmd.get_subcommands().filter(|c| !c.is_hide_set() && c.get_name() != "accounts");
     let subs: Vec<_> = subs.flat_map(|c| if c.has_subcommands() { c.get_subcommands().collect() } else { vec![c] }).collect();
     for sub in subs {
         let mut sub = sub.clone();
@@ -382,16 +387,16 @@ pub fn usage_doc() -> String {
           `herdsman next`: 0 found · 1 empty · 2 top item blocked. `herdsman wait`: 0 reached · 1 failed/closed · 124 timeout.\n\n\
           ## GitHub\n\nThe issue is the spec: read it with `herdsman brief`; PR/CI with `herdsman pr` / `herdsman wait` (cached), never\n\
           `gh issue view` / `gh pr checks` loops. Never comment on issues or PRs; `herdsman merge` writes the one closing comment.\n\n\
-          ## Tool guard, accounts, MCP (lanes skip permission prompts; the Claude/Hermes hook is the guard)\n\n\
-          Hard blocks: `gh pr merge`, `gh issue|pr comment`, `gh pr review`, `gh api` comment writes, `git push` to\n\
-          main/master/staging/integration, edits to fleet, fleet-operations and Hermes profile config. Reviewers are\n\
-          read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`.\n\
-          Accounts: a Claude role's `account`/`accounts` picks the first uncapped `[accounts]` name as `CLAUDE_CODE_OAUTH_TOKEN`;\n\
-          `herdsman check` emits `account-capped <name>` on the limit banner; spawns skip it for `cap_reset_minutes` or until\n\
-          `herdsman accounts reset <name>`; `herdsman accounts` lists them. MCP: a lane gets only its role's `mcp` (default none).\n\n\
-          ## Events\n\n`herdsman check` emits `stall`, `lane-dead`, `ready-unmerged` once per state; `herdsman merge` emits\n\
-          `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain\n\
-          line, or the raw event JSON with `format = \"json\"`.\n";
+          ## Tool guard, accounts, MCP\n\n\
+          Lanes skip permission prompts; the Claude/Hermes hook blocks `gh pr merge`, `gh issue|pr comment`, `gh pr review`,\n\
+          `gh api` comment writes, `git push` to main/master/staging/integration, edits to fleet, fleet-operations and Hermes\n\
+          profile config. Reviewers are read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`.\n\
+          `herdsman spawn … design` is conductor-only: denied from every lane, orch included; never in verdict or merge.\n\
+          Accounts (`herdsman accounts`): a Claude role's `account`/`accounts` exports the first uncapped one as `CLAUDE_CODE_OAUTH_TOKEN`;\n\
+          an `account-capped` one waits `cap_reset_minutes` or `herdsman accounts reset <name>`. MCP: only the role's `mcp` (default none).\n\n\
+          ## Events\n\n`herdsman check` emits `stall`, `lane-dead`, `ready-unmerged`, `account-capped` (limit banner) once per state; `herdsman merge` emits\n\
+          `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain line, or raw \
+          event JSON with `format = \"json\"`.\n";
     s
 }
 
@@ -464,7 +469,10 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 writeln!(out, "{}", serde_json::to_string_pretty(&rows)?)?;
             }
             for r in rows.as_array().into_iter().flatten().filter(|_| !json) {
-                let on = r["blocked_by"].as_u64().map_or(String::new(), |b| format!("  blocked by #{b}"));
+                let mut on = r["blocked_by"].as_u64().map_or(String::new(), |b| format!("  blocked by #{b}"));
+                if r["serial"] == true {
+                    on += "  serial";
+                }
                 let n = |k: &str| r[k].as_u64().unwrap_or_default();
                 writeln!(out, "{:>2} #{:<5} {}{on}", n("pos"), n("issue"), r["state"].as_str().unwrap_or_default())?;
             }
@@ -530,7 +538,13 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 Cmd::Queue { fleet, cmd } => {
                     cfg.fleet(&fleet)?;
                     let d = match cmd {
-                        QueueCmd::Add { issues, top, after } => queue::op("add", &issues, top, None, after, None),
+                        QueueCmd::Add { issues, top, after, serial } => {
+                            let mut d = queue::op("add", &issues, top, None, after, None);
+                            if serial {
+                                d["serial"] = json!(true);
+                            }
+                            d
+                        }
                         QueueCmd::Mv { issue, top, before, after } => queue::op("mv", &[issue], top, before, after, None),
                         QueueCmd::Rm { issue } => queue::op("rm", &[issue], false, None, None, None),
                         QueueCmd::Block { issue, on } => queue::op("block", &[issue], false, None, None, Some(on)),
@@ -555,6 +569,7 @@ fn lane(issue: &str, role: SpawnRole) -> Result<(Option<u64>, &'static str)> {
         SpawnRole::Orch => "orch",
         SpawnRole::Impl => "impl",
         SpawnRole::Rev => "rev",
+        SpawnRole::Design => "design",
     };
     let issue = match issue {
         "-" => None,

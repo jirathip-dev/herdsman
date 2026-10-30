@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub const ROLES: [&str; 3] = ["orch", "impl", "rev"];
+pub const ROLES: [&str; 4] = ["orch", "impl", "rev", "design"];
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -52,6 +52,12 @@ pub struct Fleet {
     pub repo: String,
     pub local: String,
     pub integration: String,
+    /// Globs only one lane at a time may touch: `--serial` issues (SERIAL_BUSY, SERIAL_UNMARKED).
+    #[serde(default)]
+    pub serial_paths: Vec<String>,
+    /// Optional caps on concurrent impl/fix and review lanes (CAP); unset = no cap.
+    pub max_impl: Option<usize>,
+    pub max_rev: Option<usize>,
     #[serde(default)]
     pub role: BTreeMap<String, Role>,
 }
@@ -61,6 +67,8 @@ pub struct Role {
     pub harness: String,
     pub profile: Option<String>,
     pub model: Option<String>,
+    /// Reasoning effort, mapped per harness (`harness::effort_ok`); `[limits].effort` when unset.
+    pub effort: Option<String>,
     /// Claude lanes: the account (`[accounts]` name) to run on, or an ordered fallback list.
     pub account: Option<String>,
     #[serde(default)]
@@ -81,6 +89,9 @@ impl Role {
     pub fn profile_or(&self, role: &str) -> String {
         self.profile.clone().unwrap_or_else(|| format!("fleet-{role}"))
     }
+    pub fn effort_or(&self, limits: &Limits) -> Option<String> {
+        self.effort.clone().or_else(|| limits.effort.clone())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,6 +106,9 @@ pub struct Limits {
     /// Pages swapped out per 2 s sample.
     #[serde(default = "swapout_rate")]
     pub swapout_rate: f64,
+    /// Default reasoning effort for roles that set none.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 fn three() -> u32 {
@@ -117,6 +131,7 @@ impl Default for Limits {
             stall_minutes: thirty(),
             load_per_cpu: load_per_cpu(),
             swapout_rate: swapout_rate(),
+            effort: None,
         }
     }
 }
@@ -144,6 +159,10 @@ impl Config {
         if raw.get("limits").and_then(|l| l.get("max_agents")).is_some() {
             eprintln!("herdsman: [limits].max_agents is no longer used; ignoring it");
         }
+        let levels = crate::harness::EFFORTS;
+        if let Some(e) = c.limits.effort.as_deref().filter(|e| !levels.contains(e)) {
+            bail!("limits.effort: \"{e}\" must be one of {levels:?}");
+        }
         for (name, f) in &c.fleet {
             for (role, r) in &f.role {
                 if !ROLES.contains(&role.as_str()) {
@@ -154,6 +173,15 @@ impl Config {
                 }
                 if let Some(a) = r.account_list().iter().find(|a| !c.accounts.names.contains_key(*a)) {
                     bail!("fleet.{name}.role.{role}: account '{a}' is not in [accounts]");
+                }
+                if let Some(e) = r.effort_or(&c.limits) {
+                    let ok = crate::harness::efforts(&r.harness);
+                    if !levels.contains(&e.as_str()) {
+                        bail!("fleet.{name}.role.{role}: effort \"{e}\" must be one of {levels:?}");
+                    }
+                    if !ok.contains(&e.as_str()) {
+                        bail!("fleet.{name}.role.{role}: harness {} does not support effort \"{e}\" (supported: {ok:?})", r.harness);
+                    }
                 }
             }
         }
@@ -174,6 +202,21 @@ impl Fleet {
     }
     pub fn repo_name(&self) -> &str {
         self.repo.rsplit('/').next().unwrap_or(&self.repo)
+    }
+    /// `path` matches a `serial_paths` glob.
+    pub fn serial_path(&self, path: &str) -> bool {
+        self.serial_paths.iter().any(|g| glob(g.as_bytes(), path.as_bytes()))
+    }
+}
+
+/// `**` matches anything, `*` anything but `/`, `?` one char other than `/`.
+pub fn glob(g: &[u8], s: &[u8]) -> bool {
+    match g {
+        [] => s.is_empty(),
+        [b'*', b'*', rest @ ..] => (0..=s.len()).any(|i| glob(rest, &s[i..])),
+        [b'*', rest @ ..] => (0..=s.len()).take_while(|&i| i == 0 || s[i - 1] != b'/').any(|i| glob(rest, &s[i..])),
+        [b'?', rest @ ..] => s.first().is_some_and(|&c| c != b'/') && glob(rest, &s[1..]),
+        [c, rest @ ..] => s.first() == Some(c) && glob(rest, &s[1..]),
     }
 }
 
