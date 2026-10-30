@@ -128,3 +128,62 @@ fn quick_start_runs_as_written() {
     let _ = child.wait();
     assert!(body.starts_with("HTTP/1.") && body.contains(" 200 "), "{body}");
 }
+
+fn setup() -> String {
+    std::fs::read_to_string(root().join("docs/setup.md")).unwrap()
+}
+
+/// The bodies of every fenced block of `lang` in `text`.
+fn blocks<'a>(text: &'a str, lang: &str) -> Vec<&'a str> {
+    let fence = format!("```{lang}\n");
+    text.split(fence.as_str()).skip(1).map(|b| b.split("```").next().unwrap()).collect()
+}
+
+#[test]
+fn readme_links_setup() {
+    assert!(readme().contains("](docs/setup.md)"));
+}
+
+#[test]
+fn setup_commands_exist() {
+    let help = Command::new(BIN).arg("--help").output().unwrap();
+    let help = String::from_utf8(help.stdout).unwrap();
+    let known: Vec<&str> = help.lines().filter_map(|l| l.strip_prefix("  ")?.split_whitespace().next()).collect();
+    let text = setup();
+    let mut n = 0;
+    for b in blocks(&text, "sh").into_iter().chain(blocks(&text, "ini")) {
+        for part in b.split("herdsman ").skip(1) {
+            let cmd = part.split_whitespace().next().unwrap();
+            if cmd.starts_with('-') || cmd.starts_with('#') {
+                continue; // `herdsman --version`, a comment
+            }
+            assert!(known.contains(&cmd), "setup.md runs `herdsman {cmd}`, not in herdsman --help");
+            n += 1;
+        }
+    }
+    assert!(n >= 5, "only {n} herdsman commands found");
+}
+
+#[test]
+fn setup_toml_parses() {
+    let text = setup();
+    let all = blocks(&text, "toml");
+    assert!(all.len() >= 3, "toml blocks not found");
+    // Each snippet adds to the same fleet.toml: parse the file as it grows.
+    let mut file = String::new();
+    for b in all {
+        file.push_str(b);
+        herdsman::config::Config::parse(&file).unwrap_or_else(|e| panic!("{e:#}\n{file}"));
+    }
+}
+
+#[test]
+fn docs_name_no_real_tailnet_host() {
+    for f in doc_files() {
+        let text = std::fs::read_to_string(&f).unwrap();
+        for (i, _) in text.match_indices(".ts.net") {
+            let before = text[..i].chars().last().unwrap();
+            assert!(before == '>' || before == '*', "{}: a real ts.net hostname near byte {i}", f.display());
+        }
+    }
+}

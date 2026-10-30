@@ -18,6 +18,8 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: test
         run: cargo test --locked
+      - name: docs leak gate (no ts.net hostname, chat ID or /Users/ path)
+        run: "! grep -rnE '[A-Za-z0-9-]\\.ts\\.net|telegram:-?[0-9]|/Users/' docs/"
       - name: line cap (≤ 5000 non-test Rust lines under src/)
         run: |
           n=$(find src -name '*.rs' -print0 | xargs -0 cat | wc -l)

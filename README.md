@@ -10,7 +10,6 @@ keeps the state in an append-only event log and owns every step that matters: sp
 verdict, merge. Agents act only through it, and it refuses anything that breaks a rule.
 
 ## Quick start
-
 ```sh
 cargo install --path .
 mkdir -p ~/.config/herdsman
@@ -29,6 +28,7 @@ herdsman spawn app 12 impl --dry-run  # print the plan; drop --dry-run to launch
 herdsman status
 herdsman serve --addr 127.0.0.1:7777  # phone page at http://127.0.0.1:7777
 ```
+Full setup, from install to the board on your phone over Tailscale: [docs/setup.md](docs/setup.md).
 
 ## Commands
 
