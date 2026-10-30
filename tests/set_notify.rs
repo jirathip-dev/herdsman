@@ -37,7 +37,7 @@ fn set_unknown_role_table_fails_without_writing() {
 #[test]
 fn set_inserts_missing_key_in_place() {
     let d = tmpdir("set-insert");
-    let c = ctx(&d, CONFIG);
+    let c = ctx(&d, &format!("models = [\"glm\"]\n{CONFIG}"));
     let (code, out) = run(&c, &Fake::default(), &["set", "sendmeter", "rev", "--model", "glm"]);
     assert_eq!(code, 0, "{out}");
     let t = std::fs::read_to_string(&c.config).unwrap();

@@ -146,11 +146,37 @@ fn role_dropdowns_set_like_herdsman_set() {
     // Same validation as the CLI: a model outside `models`, an effort the harness lacks.
     let before = text(&web);
     let res = post(&s, &format!("op=set&fleet=sendmeter&role=impl&model=gpt&mtime={}", mtime(&s)), "");
-    assert!(location(&res).starts_with("/?msg=error: model \"gpt\" is not in `models`"), "{res}");
+    assert!(location(&res).starts_with("/?msg=REFUSED BAD_VALUE: model \"gpt\" is not in `models`"), "{res}");
     let res = post(&s, &format!("op=set&fleet=sendmeter&role=impl&effort=max&mtime={}", mtime(&s)), "");
     assert!(location(&res).contains("effort \"max\" must be one of"), "{res}");
     assert_eq!(text(&web), before, "no write");
-    assert_eq!(run(&cli, &Fake::default(), &["set", "sendmeter", "impl", "--model", "gpt"]).0, 1);
+    assert_eq!(run(&cli, &Fake::default(), &["set", "sendmeter", "impl", "--model", "gpt"]).0, 3);
+}
+
+#[test]
+fn set_refuses_toml_injection_on_web_and_cli() {
+    let (cli, web) = pair("inject");
+    let r = Fake::default();
+    let s = Server::new(&web, &r, Some(ADDR.into()));
+    let text = |c: &herdsman::Ctx| std::fs::read_to_string(&c.config).unwrap();
+    let (before, log) = (text(&web), std::fs::read_to_string(&web.state).unwrap());
+    // `opus"\n[[notify]]\ncmd = "touch /tmp/pwned"\n#`, form-encoded, as model and as effort.
+    let evil = "opus%22%0A%5B%5Bnotify%5D%5D%0Acmd+%3D+%22touch+%2Ftmp%2Fpwned%22%0A%23";
+    for field in ["model", "effort"] {
+        let res = post(&s, &format!("op=set&fleet=sendmeter&role=impl&{field}={evil}&mtime={}", mtime(&s)), "");
+        assert!(location(&res).starts_with(&format!("/?msg=REFUSED BAD_VALUE: {field} ")), "{res}");
+    }
+    assert_eq!(text(&web), before, "fleet.toml byte-identical");
+    assert_eq!(std::fs::read_to_string(&web.state).unwrap(), log, "no event");
+    let before = text(&cli);
+    for v in ["opus\"\n[[notify]]\ncmd = \"touch /tmp/pwned\"\n#", "x\"\nprofile = \"evil", "a\\b", ""] {
+        for flag in ["--model", "--effort", "--profile"] {
+            let (code, out) = run(&cli, &Fake::default(), &["set", "sendmeter", "impl", flag, v]);
+            assert_eq!(code, 3, "{flag} {v:?}: {out}");
+            assert!(out.contains("REFUSED BAD_VALUE"), "{out}");
+        }
+    }
+    assert_eq!(text(&cli), before, "fleet.toml byte-identical");
 }
 
 #[test]

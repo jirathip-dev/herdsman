@@ -45,6 +45,7 @@ pub const CODES: &[(&str, &str)] = &[
     ("SERIAL_UNMARKED", "merge: the PR touches the fleet's serial_paths but the issue was not queued `--serial`"),
     ("CAP", "spawn: the fleet's optional max_impl / max_rev lane cap is reached (unset = no cap)"),
     ("PAUSED", "spawn: the fleet is paused (`herdsman resume <fleet>`); impl/rev lanes wait, live lanes are untouched"),
+    ("BAD_VALUE", "set: a value is empty or has a quote/backslash/control char, or the model is not in `models`"),
     ("STALE", "serve: fleet.toml changed since the page was rendered; reload and retry"),
     ("MCP_FORBIDDEN", "spawn/profiles sync: a role's `mcp` names a server matching `mcp_deny` (default `*prod*`)"),
 ];

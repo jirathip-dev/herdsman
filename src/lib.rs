@@ -633,8 +633,12 @@ pub fn set(ctx: &Ctx, out: &mut dyn Write, fleet: &str, role: &str, wanted: Vec<
     if wanted.is_empty() {
         bail!("nothing to set: pass --harness, --model, --profile or --effort");
     }
-    if let Some((_, m)) = wanted.iter().find(|(k, m)| *k == "model" && !cfg.models.is_empty() && !cfg.models.contains(m)) {
-        bail!("model \"{m}\" is not in `models` {:?}", cfg.models);
+    // Values become TOML strings: a quote, backslash or control char could inject lines (e.g. `[[notify]]`).
+    if let Some((k, v)) = wanted.iter().find(|(_, v)| v.is_empty() || v.chars().any(|c| c == '"' || c == '\\' || c.is_control())) {
+        return Err(gate::refuse("BAD_VALUE", format!("{k} {v:?}: empty, or has a quote, backslash or control char")).into());
+    }
+    if let Some((_, m)) = wanted.iter().find(|(k, m)| *k == "model" && !cfg.models.contains(m)) {
+        return Err(gate::refuse("BAD_VALUE", format!("model {m:?} is not in `models` {:?}", cfg.models)).into());
     }
     let mut new = text.clone();
     let mut changes = vec![];
