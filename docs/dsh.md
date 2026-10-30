@@ -44,7 +44,16 @@ DSH 0.2.1-rc.3 / dsh-TUI 0.17.0 document no pre-tool hook, so the Claude
 | Edits to fleet config, the event log, fleet-operations, Hermes profiles | hook denies | **not enforced** for non-reviewer roles (`danger-full-access`); reviewers' sandbox keeps them outside the writable root |
 | Hook inert outside fleet lanes (`HERDSMAN_LANE`) | yes | n/a: the `pre-push` hook only exists in fleet lane worktrees and always applies there |
 
-Server-side protection is the real backstop. As of 2026-10-30, `jirathip-dev/sendmeter`
-has no branch protection or rulesets on main or staging, and `jirathip-dev/herdsman` is
-private on a plan without branch protection (HTTP 403), so neither repo enforces this on
-the server yet. Tracked in [#34](https://github.com/jirathip-dev/herdsman/issues/34).
+Server-side protection is the real backstop, and it is not on yet (measured 2026-10-30,
+`gh api repos/<repo>/branches/<branch>/protection` and `.../rulesets`):
+
+| Repo | main / staging protection |
+|---|---|
+| `jirathip-dev/sendmeter` | none (HTTP 404 "Branch not protected", no rulesets) |
+| `jirathip-dev/herdsman` | none (HTTP 404 "Branch not protected", no rulesets) |
+| `jirathip-dev/fleet` | unavailable: private repo on the free plan (HTTP 403 "Upgrade to GitHub Pro or make this repository public") |
+
+Until the owner enables protection (PR + CI check required on `staging` and `main`) or
+records risk acceptance, "`herdsman merge` is the only path to staging" is a convention
+for dsh lanes, not an enforced rule, so dsh stays reviewer-only. Tracked in
+[#4](https://github.com/jirathip-dev/herdsman/issues/4).
