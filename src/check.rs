@@ -20,7 +20,7 @@ fn mergeable(ctx: &Ctx, r: &dyn Runner, cfg: &Config, s: &IssueState) -> Option<
     let branch = s.branch.clone().unwrap_or_else(|| format!("issue-{}", s.issue));
     let pr = gh::pr(ctx, r, f, (&s.fleet, s.issue), &branch, ctx.now).ok()?;
     (pr["state"] == "OPEN").then_some(())?;
-    gate(&f.integration, &pr, Some(s), cfg.limits.review_rounds).ok()
+    gate(f, &pr, Some(s), cfg.limits.review_rounds).ok()
 }
 
 /// Each alert carries a dedup key built from the issue's last activity, so it

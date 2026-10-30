@@ -557,7 +557,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     if json {
                         writeln!(out, "{}", serde_json::to_string_pretty(&pr)?)?;
                     } else {
-                        writeln!(out, "{}", gh::summary(&pr, &branch))?;
+                        writeln!(out, "{}", gh::summary(&pr, &branch, &cfg.fleet(&fleet)?.required_checks))?;
                     }
                     if pr.is_null() {
                         return Ok(1);

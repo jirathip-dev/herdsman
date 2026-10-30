@@ -67,6 +67,10 @@ pub struct Fleet {
     /// Globs only one lane at a time may touch: `--serial` issues (SERIAL_BUSY, SERIAL_UNMARKED).
     #[serde(default)]
     pub serial_paths: Vec<String>,
+    /// The only checks the merge gate, `check` and `wait` look at (latest run of each name);
+    /// empty = every check in the rollup.
+    #[serde(default)]
+    pub required_checks: Vec<String>,
     /// Optional caps on concurrent impl/fix and review lanes (CAP); unset = no cap.
     pub max_impl: Option<usize>,
     pub max_rev: Option<usize>,

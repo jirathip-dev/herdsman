@@ -47,6 +47,7 @@ repo = "<owner>/synergy"
 local = "~/Projects/synergy"
 integration = "staging"
 serial_paths = ["supabase/migrations/**"]   # one `--serial` lane at a time (SERIAL_BUSY / SERIAL_UNMARKED)
+# required_checks = ["quality"]   # gate/check/wait look only at these (latest run each); unset = all checks
 # max_impl = 2   # optional caps (CAP); unset = no cap, the host check protects the Mac
 # max_rev = 2
 # notify_global = true   # also send this fleet's events to the global [[notify]]
