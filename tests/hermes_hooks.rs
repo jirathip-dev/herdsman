@@ -111,3 +111,26 @@ fn sync_check_requires_allowed_hooks() {
     let (code, out) = run(&c, &r, &["profiles", "sync", "--check"]);
     assert_eq!(code, 0, "{out}");
 }
+
+/// #2 AC2: sync drops `agent.reasoning_effort` (fleet.toml owns effort now); nested
+/// per-auxiliary values and every other line are unchanged.
+#[test]
+fn sync_removes_agent_reasoning_effort_only() {
+    let d = tmpdir("hermes-effort");
+    let c = ctx(&d, CONFIG);
+    let rev = c.hermes.join("fleet-rev/config.yaml");
+    std::fs::create_dir_all(rev.parent().unwrap()).unwrap();
+    let before = "model:\n  default: opus\n\
+agent:\n  max_turns: 90\n  reasoning_effort: high   # owned by fleet now\n  auxiliary:\n    vision:\n      reasoning_effort: low\n    compression:\n      reasoning_effort: minimal\n\
+auxiliary:\n  web_extract:\n    reasoning_effort: medium\n";
+    std::fs::write(&rev, before).unwrap();
+    let (code, out) = run(&c, &Fake::default(), &["profiles", "sync"]);
+    assert_eq!(code, 0, "{out}");
+    let after = std::fs::read_to_string(&rev).unwrap();
+    let want = before.replace("  reasoning_effort: high   # owned by fleet now\n", "");
+    assert_eq!(without_hooks(&after), without_hooks(&want), "{after}");
+    assert!(!after.contains("reasoning_effort: high"));
+    for v in ["      reasoning_effort: low\n", "      reasoning_effort: minimal\n", "    reasoning_effort: medium\n"] {
+        assert!(after.contains(v), "auxiliary {v:?} kept:\n{after}");
+    }
+}

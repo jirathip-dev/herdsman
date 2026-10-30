@@ -165,6 +165,8 @@ pub struct IssueState {
     pub state: String,
     pub lane: Option<String>,
     pub branch: Option<String>,
+    /// The latest lane's reasoning effort, as spawned.
+    pub effort: Option<String>,
     pub rounds: u32,
     pub last_ts: u64,
     pub last_event: String,
@@ -198,6 +200,7 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
         match e.kind.as_str() {
             "spawn" => {
                 s.lane = e.str("agent").map(String::from);
+                s.effort = e.str("effort").map(String::from);
                 if let (Some(r), Some(a)) = (e.str("role"), e.str("agent")) {
                     s.lanes.insert(r.into(), a.into());
                 }

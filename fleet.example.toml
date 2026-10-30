@@ -13,6 +13,7 @@ profile = "fleet-orch"
 harness = "claude"
 profile = "fleet-impl"
 model = "opus"
+effort = "xhigh"                 # none|low|medium|high|xhigh: Claude --effort, Hermes --reasoning
 
 [fleet.sendmeter.role.rev]
 harness = "hermes"
@@ -38,6 +39,7 @@ review_rounds = 3
 stall_minutes = 30   # herdsman check: stall / ready-unmerged threshold
 load_per_cpu = 2.5   # herdsman spawn HOST_BUSY thresholds
 swapout_rate = 2000  # pages swapped out per 2 s sample
+effort = "high"      # default for roles without `effort`; dsh accepts only "none" for now
 
 [[notify]]
 cmd = "hermes send -q -t telegram:<chat_id>"   # one plain line on stdin

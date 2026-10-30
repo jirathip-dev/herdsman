@@ -71,6 +71,7 @@ pub struct Plan {
     pub harness: String,
     pub profile: String,
     pub model: Option<String>,
+    pub effort: Option<String>,
     pub branch: String,
     pub base: String,
     pub worktree: PathBuf,
@@ -129,6 +130,7 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
         harness: r.harness.clone(),
         profile: r.profile_or(role),
         model: r.model.clone(),
+        effort: r.effort_or(&cfg.limits),
         branch,
         base,
         worktree,
@@ -196,7 +198,7 @@ fn plan_json(ctx: &Ctx, f: &Fleet, p: &Plan) -> Value {
     cmds.extend(p.kick_cmds("<pane>").into_iter().map(herdr));
     json!({
         "agent": p.agent, "role": p.role, "harness": p.harness, "profile": p.profile,
-        "model": p.model, "branch": p.branch, "base": p.base,
+        "model": p.model, "effort": p.effort, "branch": p.branch, "base": p.base,
         "worktree": p.worktree, "brief": p.brief, "kick": p.kick, "commands": cmds,
     })
 }
@@ -373,7 +375,7 @@ fn harness_in(r: &dyn Runner, pane: &str) -> Option<Value> {
 
 /// The `spawn` event's data for a lane of plan `p` running in `pane`.
 fn lane_data(p: &Plan, pane: &str, ws: &str) -> Value {
-    json!({"role": p.role, "harness": p.harness, "profile": p.profile, "model": p.model, "agent": p.agent,
+    json!({"role": p.role, "harness": p.harness, "profile": p.profile, "model": p.model, "effort": p.effort, "agent": p.agent,
         "pane": pane, "workspace": ws, "worktree": p.worktree, "branch": p.branch})
 }
 
