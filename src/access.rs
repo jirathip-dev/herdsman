@@ -96,7 +96,7 @@ pub fn reset(ctx: &Ctx, cfg: &Config, out: &mut dyn Write, name: &str) -> Result
 }
 
 /// Local hh:mm of `ts` (UTC when `date` cannot tell).
-fn hhmm(r: &dyn Runner, ts: u64) -> String {
+pub fn hhmm(r: &dyn Runner, ts: u64) -> String {
     match r.run("date", &argv(&["-r", &ts.to_string(), "+%H:%M"])) {
         Ok(o) if o.code == 0 => o.stdout.trim().to_string(),
         _ => format!("{:02}:{:02} UTC", ts % 86400 / 3600, ts % 3600 / 60),

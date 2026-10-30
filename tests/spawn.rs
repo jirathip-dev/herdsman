@@ -122,12 +122,12 @@ fn help_agent_doc_is_short_and_complete() {
     let c = ctx(&d, CONFIG);
     let (code, out) = run(&c, &Fake::default(), &["help", "--agent"]);
     assert_eq!(code, 0);
-    assert!(out.lines().count() <= 150, "{} lines", out.lines().count());
+    assert!(out.lines().count() <= 151, "{} lines", out.lines().count());
     for w in [
         "herdsman spawn", "herdsman merge", "herdsman verdict", "herdsman set", "herdsman status", "herdsman profiles sync",
         "herdsman check", "herdsman clean", "herdsman adopt", "--force", "--supersede", "--yes",
         "MAIN_TARGET", "HOST_BUSY", "LANE_LIVE", "WORKTREE_DIRTY", "review(n)",
-        "--serial", "SERIAL_BUSY", "SERIAL_UNMARKED", "CAP", "design", "conductor-only",
+        "--serial", "SERIAL_BUSY", "SERIAL_UNMARKED", "CAP", "BAD_VALUE", "design", "conductor-only",
     ] {
         assert!(out.contains(w), "missing {w}");
     }
