@@ -1,13 +1,14 @@
 // Render a page in WebKit at a phone width; print `scrollWidth viewportWidth` of the body
-// with every <details> open, and optionally save a full-height PNG.
-// swift webview.swift <page.html> <width> <tab> <mode> [out.png]
+// with every <details> open, and optionally save a full-height PNG (with `js`: run it
+// after the tab/mode switch and save one 844 px tall screen, e.g. an open sheet).
+// swift webview.swift <page.html> <width> <tab> <mode> [out.png] [js]
 import AppKit
 import WebKit
 
 let a = CommandLine.arguments
 let html = try! String(contentsOfFile: a[1], encoding: .utf8)
 let width = CGFloat(Double(a[2])!)
-let (tab, mode, png) = (a[3], a[4], a.count > 5 ? a[5] : nil)
+let (tab, mode, png, extra) = (a[3], a[4], a.count > 5 ? a[5] : nil, a.count > 6 ? a[6] : "")
 let app = NSApplication.shared
 app.setActivationPolicy(.prohibited)
 let web = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: 844))
@@ -17,7 +18,7 @@ win.contentView = web
 final class Nav: NSObject, WKNavigationDelegate {
     func webView(_ w: WKWebView, didFinish _: WKNavigation!) {
         let js = """
-        tab('\(tab)'); mode('\(mode)');
+        tab('\(tab)'); mode('\(mode)'); \(extra);
         \(png == nil ? "document.querySelectorAll('details').forEach(d => d.open = true);" : "document.querySelectorAll('section').forEach(s => { const d = s.querySelector('details'); if (d) d.open = true; });")
         [document.body.scrollWidth, document.documentElement.clientWidth, document.documentElement.scrollHeight]
         """
@@ -25,7 +26,7 @@ final class Nav: NSObject, WKNavigationDelegate {
             guard let v = r as? [Double] else { print("js error: \(String(describing: e))"); exit(2) }
             print(Int(v[0]), Int(v[1]))
             guard let png else { exit(0) }
-            w.setFrameSize(NSSize(width: width, height: CGFloat(v[2])))
+            w.setFrameSize(NSSize(width: width, height: extra.isEmpty ? CGFloat(v[2]) : 844))
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 w.takeSnapshot(with: nil) { img, _ in
                     let rep = NSBitmapImageRep(data: img!.tiffRepresentation!)!

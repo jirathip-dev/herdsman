@@ -1,6 +1,6 @@
-//! The page's Lanes tab: every herdr agent joined with the herdsman log, grouped by
-//! fleet (agents in unregistered dirs go to Others), plus a masked activity line
-//! taken from the agent's visible pane text.
+//! The page's Lanes tab: every herdr agent joined with the herdsman log, grouped by state
+//! then fleet (agents in unregistered dirs go to Others), plus a masked activity line
+//! and transcript taken from the agent's visible pane text.
 use crate::config::Config;
 use crate::events::{Event, IssueState};
 use serde_json::Value;
@@ -19,6 +19,7 @@ pub struct Lane {
     pub harness: String,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub account: Option<String>,
     /// herdr's live state (idle | working | done | blocked | unknown), or `dead`.
     pub state: String,
     /// When herdsman spawned it (0: unknown).
@@ -82,9 +83,36 @@ fn from_spawn(e: &Event, l: Lane) -> Lane {
         harness: s("harness").unwrap_or_default(),
         model: s("model"),
         effort: s("effort"),
+        account: s("account"),
         since: e.ts,
         ..l
     }
+}
+
+/// Section order on the page; any other herdr state (unknown) counts as idle.
+pub const SECTIONS: [&str; 5] = ["blocked", "working", "idle", "done", "dead"];
+
+pub type Groups<'a> = Vec<(&'static str, Vec<(String, Vec<&'a Lane>)>)>;
+
+/// State sections in [`SECTIONS`] order, each split by fleet (alphabetical, Others last),
+/// newest `changed` first inside; empty sections are left out.
+pub fn group<'a>(all: &'a [Lane], changed: impl Fn(&Lane) -> u64) -> Groups<'a> {
+    let section = |l: &Lane| SECTIONS.iter().position(|s| *s == l.state).unwrap_or(2);
+    let mut v: Vec<&Lane> = all.iter().collect();
+    v.sort_by_key(|l| (section(l), l.fleet.is_none(), l.fleet.clone(), std::cmp::Reverse(changed(l))));
+    let mut out: Groups = vec![];
+    for l in v {
+        let (s, f) = (SECTIONS[section(l)], l.fleet.clone().unwrap_or_else(|| "Others".into()));
+        if out.last().is_none_or(|x| x.0 != s) {
+            out.push((s, vec![]));
+        }
+        let subs = &mut out.last_mut().unwrap().1;
+        if subs.last().is_none_or(|x| x.0 != f) {
+            subs.push((f, vec![]));
+        }
+        subs.last_mut().unwrap().1.push(l);
+    }
+    out
 }
 
 const HIDE: &str = "•••";

@@ -1,12 +1,13 @@
 //! `herdsman serve`: the phone page, an installable PWA with Queue · Lanes · Host · Events
 //! tabs, and a few POST buttons that run the CLI's own write paths (queue mv, pause,
-//! set). std `TcpListener`, one request at a time; log and config are re-read per request.
+//! set), plus a paired-device reply box that prompts an agent. std `TcpListener`, one
+//! request at a time; log and config are re-read per request.
 use crate::config::{Config, Role};
-use crate::events::{age, fold, plain, read, Event, IssueState};
+use crate::events::{age, append, fold, plain, read, Event, IssueState};
 use crate::gate::{refuse, Refusal};
 use crate::host::{self, Host};
 use crate::runner::{argv, Runner};
-use crate::{gh, lanes, queue, Ctx};
+use crate::{devices, gh, lanes, queue, Ctx};
 use anyhow::{bail, Context, Result};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -48,6 +49,8 @@ pub struct Server<'a> {
     /// Command stdout by argv, with its time: herdr reads are rate-limited.
     cache: RefCell<BTreeMap<String, (u64, Option<String>)>>,
     host: RefCell<Option<(u64, Host)>>,
+    /// Reply-box send times per device hash (10 a minute).
+    sent: RefCell<BTreeMap<String, Vec<u64>>>,
 }
 
 fn header<'h>(head: &'h str, name: &str) -> Option<&'h str> {
@@ -111,29 +114,51 @@ fn row(class: &str, lead: &str, a: &str, state: &str, age: &str, card: &[String]
     )
 }
 
+/// The non-empty fields, ` · `-joined (no `-` placeholders).
+fn join(parts: &[&str]) -> String {
+    parts.iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join(" · ")
+}
+
 fn hidden(op: &str, fleet: &str, mt: &str) -> String {
     format!("<input type=hidden name=op value={op}><input type=hidden name=fleet value=\"{}\"><input type=hidden name=mtime value={mt}>", esc(fleet))
 }
 
-const GALLOP: [&str; 2] = ["   ,^\n _/ )\n/ \\/\\", "   ,^\n _/ )\n  | |"];
-const GRAZE: &str = " ___\n/   \\_\n|  | \\,";
-const LIE: &str = "\n  ,^\n_/__)_";
-const REAR: &str = "  ,^\n / )\n/ /";
+const GALLOP: [&str; 2] = ["    _/>\n~(___)\n /  \\", "    _/>\n~(___)\n  ><"];
+const STAND: &str = "    _/>\n~(___)\n  | |";
+const REST: &str = "\n    _/>\n~(___)_";
+const REAR: &str = "     />\n ~(_/\n  / \\";
+
+/// Corral's 8 coats (HerdArt.swift): body, shade, mane; chestnut, palomino, dun and buckskin carry a blaze.
+const COATS: [(&str, &str, &str, bool); 8] = [
+    ("8a5a33", "6f4527", "2e2019", false), ("a05c2c", "7d4520", "5d3317", true), ("3b3b44", "2a2a31", "17161a", false),
+    ("b9bcc6", "989ca9", "7d8089", false), ("c89a56", "a37a3c", "e8dcc0", true), ("b08d5e", "8e6f45", "41321f", true),
+    ("96685a", "77524a", "4a342c", false), ("bd8f4e", "96703a", "241a10", true),
+];
 
 /// The state as an avatar in all three modes; CSS shows the one `body[data-mode]` picks.
-fn avatar(state: &str) -> String {
-    let (key, glyph, art) = match state {
-        "working" => ("working", "▶", format!("<i class=\"asc run\"><b>{}</b><b>{}</b></i>", GALLOP[0], GALLOP[1])),
-        "done" => ("done", "✓", format!("<i class=asc><b>{LIE}</b></i>")),
-        "blocked" | "dead" => ("blocked", "✗", format!("<i class=asc><b>{REAR}</b></i>")),
-        _ => ("idle", "⏸", format!("<i class=asc><b>{GRAZE}</b></i>")),
+/// The horse's coat is stable per agent name.
+pub fn avatar(name: &str, state: &str) -> String {
+    let (pose, glyph, art) = match state {
+        "working" => (1, "▶", format!("<i class=\"asc run\"><b>{}</b><b>{}</b></i>", GALLOP[0], GALLOP[1])),
+        "done" => (3, "✓", format!("<i class=asc><b>{REST}</b></i>")),
+        "blocked" | "dead" => (4, "✗", format!("<i class=asc><b>{REAR}</b></i>")),
+        _ => (2, "⏸", format!("<i class=asc><b>{STAND}</b></i>")),
     };
-    format!("<span class=\"av {}\"><i class=gl>{glyph}</i>{art}<svg class=px viewBox=\"0 0 132 100\"><use href=\"#h-{key}\"/></svg></span>", tone(state))
+    let (c, d, m, blaze) = COATS[usize::from_str_radix(&devices::sha256(name.as_bytes())[..2], 16).unwrap_or(0) % 8];
+    let coat = format!("--c:#{c};--d:#{d};--m:#{m};--b:{}", if blaze { "#efe7dc" } else { "transparent" });
+    let horse = HORSES.lines().nth(pose).unwrap_or_default();
+    format!("<span class=\"av {} {state}\"><i class=gl>{glyph}</i>{art}<svg class=px viewBox=\"0 0 132 100\" style=\"{coat}\">{horse}</svg></span>", tone(state))
+}
+
+/// The device kind from `User-Agent`, for the Host tab's device list.
+fn kind(head: &str) -> &'static str {
+    let ua = header(head, "user-agent").unwrap_or_default();
+    ["iPhone", "iPad", "Android", "Mac", "Windows", "Linux"].into_iter().find(|k| ua.contains(k)).unwrap_or("device")
 }
 
 impl<'a> Server<'a> {
     pub fn new(ctx: &'a Ctx, r: &'a dyn Runner, addr: Option<String>) -> Self {
-        Server { ctx, r, addr, cache: RefCell::default(), host: RefCell::default() }
+        Server { ctx, r, addr, cache: RefCell::default(), host: RefCell::default(), sent: RefCell::default() }
     }
 
     fn handle(&self, mut s: TcpStream) -> std::io::Result<()> {
@@ -173,10 +198,15 @@ impl<'a> Server<'a> {
         let (path, query) = target.split_once('?').unwrap_or((target, ""));
         let ctx = &Ctx { now, ..self.ctx.clone() };
         let text = |s: &str| s.as_bytes().to_vec();
+        let mut extra = String::new();
         let (status, ctype, body) = match (method, path) {
             ("GET", "/") => match self.page(ctx, &form(query)) {
                 Ok(b) => ("200 OK", "text/html; charset=utf-8", b.into_bytes()),
                 Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
+            },
+            ("GET", "/lane") => match self.transcript(ctx, form(query).get("agent").map_or("", String::as_str)) {
+                Some(j) => ("200 OK", "application/json", j.into_bytes()),
+                None => ("404 Not Found", "text/plain", text("no such agent pane\n")),
             },
             ("GET", "/sw.js") => ("200 OK", "text/javascript", text(SW)),
             ("GET", "/manifest.webmanifest") => ("200 OK", "application/manifest+json", text(MANIFEST)),
@@ -185,18 +215,29 @@ impl<'a> Server<'a> {
             ("GET", "/icon-512.png") => ("200 OK", "image/png", ICON_512.to_vec()),
             ("GET", _) => ("404 Not Found", "text/plain", text("not found\n")),
             ("POST", _) if self.addr.is_none() => ("405 Method Not Allowed", "text/plain", text("read-only: GET only\n")),
-            ("POST", "/") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
+            ("POST", _) if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("POST", "/") => {
                 let msg = self.post(ctx, &form(body.trim()));
                 let loc = format!("/?msg={}", enc(&msg));
                 return format!("HTTP/1.1 303 See Other\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes();
+            }
+            ("POST", "/pair") => match devices::redeem(ctx, form(body.trim()).get("code").map_or("", String::as_str), kind(head)) {
+                Ok(Some(t)) => {
+                    extra = format!("Set-Cookie: hd={t}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict\r\n");
+                    ("200 OK", "text/plain", text("paired\n"))
+                }
+                _ => ("403 Forbidden", "text/plain", text("wrong or expired code: run `herdsman serve pair` for a new one\n")),
+            },
+            ("POST", "/send") => {
+                let (status, msg) = self.send(ctx, head, &form(body.trim()));
+                (status, "text/plain", format!("{msg}\n").into_bytes())
             }
             ("POST", _) => ("404 Not Found", "text/plain", text("not found\n")),
             _ => ("405 Method Not Allowed", "text/plain", text("GET or POST only\n")),
         };
         let allow = if self.addr.is_some() { "GET, POST" } else { "GET" };
         let mut res = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nAllow: {allow}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nAllow: {allow}\r\n{extra}Cache-Control: no-store\r\nConnection: close\r\n\r\n",
             body.len()
         )
         .into_bytes();
@@ -211,6 +252,62 @@ impl<'a> Server<'a> {
         let host = header(head, "host").unwrap_or_default();
         let origin = header(head, "origin").map(|o| o.strip_prefix("https://").or(o.strip_prefix("http://")).unwrap_or("\0"));
         hosts.iter().any(|h| names(h, host)) && origin.is_none_or(|o| hosts.iter().any(|h| names(h, o)))
+    }
+
+    /// The reply box: a paired device (cookie) prompts one agent, at most 10 sends a minute.
+    fn send(&self, ctx: &Ctx, head: &str, f: &BTreeMap<String, String>) -> (&'static str, String) {
+        let Some(dev) = devices::find(ctx, header(head, "cookie").unwrap_or_default()) else {
+            return ("401 Unauthorized", "pair this device: run `herdsman serve pair` on the Mac".into());
+        };
+        let mut sent = self.sent.borrow_mut();
+        let times = sent.entry(dev.hash.clone()).or_default();
+        times.retain(|t| ctx.now < t + 60);
+        if times.len() >= 10 {
+            return ("429 Too Many Requests", "10 sends a minute: wait a moment".into());
+        }
+        times.push(ctx.now);
+        match self.prompt(ctx, &dev, f) {
+            Ok(msg) => ("200 OK", msg),
+            Err(e) => ("409 Conflict", e.downcast_ref::<Refusal>().map_or_else(|| format!("error: {e:#}"), |r| r.to_string())),
+        }
+    }
+
+    /// `herdr agent prompt` (dsh: `pane send-text`) + Enter; logs a `prompt` event without the text.
+    fn prompt(&self, ctx: &Ctx, dev: &devices::Device, f: &BTreeMap<String, String>) -> Result<String> {
+        let g = |k: &str| f.get(k).map_or("", String::as_str);
+        let (agent, text) = (g("agent"), g("text"));
+        let (cfg, events) = (Config::load(&ctx.config)?, read(&ctx.state)?);
+        let all = self.lanes(ctx.now, &cfg, &events, &fold(&events)).context("herdr agent list failed")?;
+        let l = all.iter().find(|l| l.name == agent).with_context(|| format!("no agent `{agent}`"))?;
+        let (Some(fleet), Some(pane)) = (&l.fleet, &l.pane) else { bail!("`{agent}` is not a live fleet lane") };
+        if cfg.fleet.get(fleet).is_some_and(|f| f.paused) {
+            return Err(refuse("PAUSED", format!("{fleet} is paused (`herdsman resume {fleet}`)")).into());
+        }
+        if l.role == "rev" {
+            return Err(refuse("REV_READONLY", "reviewer lanes are not steered mid-review").into());
+        }
+        let n = text.chars().count();
+        if text.trim().is_empty() || n > 2000 {
+            return Err(refuse("BAD_VALUE", format!("a message is 1 to 2000 chars, not {n}")).into());
+        }
+        let first = if l.harness == "dsh" { argv(&["pane", "send-text", pane, text]) } else { argv(&["agent", "prompt", agent, text]) };
+        for a in [first, argv(&["pane", "send-keys", pane, "Enter"])] {
+            let o = self.r.run("herdr", &a)?;
+            if o.code != 0 {
+                bail!("herdr {} {}: {}", a[0], a[1], o.stderr.trim());
+            }
+        }
+        let d = serde_json::json!({"via": "web", "agent": agent, "device": dev.label, "chars": n});
+        append(&ctx.state, &Event::new(ctx.now, fleet, l.issue, "prompt", d))?;
+        Ok(format!("sent to {agent}"))
+    }
+
+    /// The sheet's transcript: the agent's last 40 pane lines, masked, as JSON.
+    fn transcript(&self, ctx: &Ctx, agent: &str) -> Option<String> {
+        let (cfg, events) = (Config::load(&ctx.config).ok()?, read(&ctx.state).ok()?);
+        let l = self.lanes(ctx.now, &cfg, &events, &fold(&events))?.into_iter().find(|l| l.name == agent)?;
+        let screen = self.cached(ctx.now, 5, "herdr", &["pane", "read", l.pane.as_deref()?, "--source", "recent", "--lines", "80"])?;
+        Some(serde_json::json!({"harness": l.harness, "lines": lanes::tail(&screen, 40)}).to_string())
     }
 
     /// Run one form write; the line shown on the page (CLI output, or `REFUSED <CODE>: …`).
@@ -241,6 +338,12 @@ impl<'a> Server<'a> {
                 let wanted = ["model", "effort"].into_iter().filter(|k| !g(k).is_empty()).map(|k| (k, g(k).to_string()));
                 crate::set(ctx, &mut out, fleet, g("role"), wanted.collect(), Some("web"))?
             }
+            "unpair" => {
+                let mut all = devices::load(ctx);
+                all.retain(|d| d.hash != g("hash"));
+                devices::store(ctx, &all)?;
+                writeln!(out, "device removed")?;
+            }
             op => bail!("unknown op `{op}`"),
         }
         Ok(String::from_utf8_lossy(&out).trim().replace('\n', "; "))
@@ -261,11 +364,11 @@ impl<'a> Server<'a> {
              <meta name=theme-color content=\"#1f2a38\"><meta name=apple-mobile-web-app-capable content=yes>\
              <link rel=manifest href=/manifest.webmanifest><link rel=icon href=/icon-192.png><link rel=apple-touch-icon href=/icon-180.png>\
              <title>herdsman</title><style>{CSS}</style></head>\
-             <body data-ts={} data-mode=glyph{ro}><header><b>herdsman</b><span id=stale hidden></span>\
-             <button id=mode type=button aria-label=\"lane display mode\">glyph</button></header>{msg}<main>\
+             <body data-ts={} data-mode=horse{ro}><header><b>herdsman</b><span id=stale hidden></span>\
+             <button id=mode type=button aria-label=\"lane display mode\">horse</button></header>{msg}<main>\
              <section id=queue>{}</section><section id=lanes>{}</section><section id=host>{}</section>\
              <section id=events>{}</section></main><nav><a href=#queue>Queue</a><a href=#lanes>Lanes</a>\
-             <a href=#host>Host</a><a href=#events>Events</a></nav>{HORSES}<script>{JS}</script></body></html>\n",
+             <a href=#host>Host</a><a href=#events>Events</a></nav><script>{JS}</script></body></html>\n",
             ctx.now,
             self.queue_tab(ctx, cfg.as_ref(), &events, &st),
             self.lanes_tab(ctx, cfg.as_ref(), &events, &st),
@@ -301,10 +404,10 @@ impl<'a> Server<'a> {
                 let s = st.get(&(f.clone(), n));
                 let is_dead = s.is_some_and(dead);
                 let state = if is_dead { "dead" } else { s.map_or("queued", |s| s.state.as_str()) };
-                let a = s.filter(|s| s.last_ts > 0).map_or("-".into(), |s| age(now.saturating_sub(s.last_ts)));
-                let lane = s.and_then(|s| s.lane.as_deref()).unwrap_or("-");
+                let a = s.filter(|s| s.last_ts > 0).map_or(String::new(), |s| age(now.saturating_sub(s.last_ts)));
+                let lane = s.and_then(|s| s.lane.as_deref()).unwrap_or_default();
                 let logged = s.map_or("queued", |s| s.state.as_str());
-                let mut card = vec![esc(&format!("#{n} {logged} · {lane} · {a}")), pr_line(ctx, Some(fc), f, n, s)];
+                let mut card = vec![esc(&join(&[&format!("#{n} {logged}"), lane, &a])), pr_line(ctx, Some(fc), f, n, s)];
                 if is_dead {
                     card.push("<span class=r>dead: the log has this lane open, herdr has no such agent</span>".into());
                 }
@@ -366,53 +469,64 @@ impl<'a> Server<'a> {
         h
     }
 
-    fn lanes_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States) -> String {
-        let now = ctx.now;
-        let Some(cfg) = cfg else { return "<p class=m>no fleet.toml</p>".into() };
+    /// herdr's agents joined with the log (None when herdr cannot be read).
+    fn lanes(&self, now: u64, cfg: &Config, events: &[Event], st: &States) -> Option<Vec<lanes::Lane>> {
         let parse = |s: Option<String>| s.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
-        let Some(list) = parse(self.cached(now, 10, "herdr", &["agent", "list"])) else {
-            return "<p class=r>herdr agent list failed</p>".into();
-        };
+        let list = parse(self.cached(now, 10, "herdr", &["agent", "list"]))?;
         let agents = list["result"]["agents"].as_array().cloned().unwrap_or_default();
         let wsl = parse(self.cached(now, 10, "herdr", &["workspace", "list"])).unwrap_or_default();
         let ws: BTreeMap<String, String> = wsl["result"]["workspaces"].as_array().into_iter().flatten()
             .filter_map(|w| Some((w["workspace_id"].as_str()?.into(), w["label"].as_str()?.into())))
             .collect();
-        let all = lanes::join(cfg, &self.ctx.worktrees, events, st, &agents, &ws);
-        let groups = cfg.fleet.keys().map(Some).chain([None]);
+        Some(lanes::join(cfg, &self.ctx.worktrees, events, st, &agents, &ws))
+    }
+
+    /// State sections (blocked → working → idle → done → dead), fleet subgroups inside;
+    /// a row opens the bottom sheet (serve.js) with its hidden card.
+    fn lanes_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States) -> String {
+        let Some(cfg) = cfg else { return "<p class=m>no fleet.toml</p>".into() };
+        let Some(all) = self.lanes(ctx.now, cfg, events, st) else { return "<p class=r>herdr agent list failed</p>".into() };
+        let state = |l: &lanes::Lane| l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| st.get(&(f.clone(), n)));
         let mut h = String::new();
-        for g in groups {
-            let mine: Vec<&lanes::Lane> = all.iter().filter(|l| l.fleet.as_ref() == g).collect();
-            if mine.is_empty() {
-                continue;
-            }
-            h += &format!("<h2><span>{}</span><span class=m>{}</span></h2>", esc(g.map_or("Others", |s| s.as_str())), mine.len());
-            for l in mine {
-                let screen = l.pane.as_ref().and_then(|p| self.cached(now, 30, "herdr", &["pane", "read", p, "--source", "visible"]));
-                let screen = screen.unwrap_or_default();
-                let a = if l.since > 0 { age(now.saturating_sub(l.since)) } else { "-".into() };
-                let issue = l.issue.map_or("-".into(), |n| format!("#{n}"));
-                let s = l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| st.get(&(f.clone(), n)));
-                let round = s.map_or("-".into(), |s| s.state.split_once('(').map_or(s.rounds.to_string(), |r| r.1.trim_end_matches(')').into()));
-                let o = |v: &Option<String>| v.clone().unwrap_or_else(|| "-".into());
-                let mut card = vec![
-                    esc(&format!("{issue} · {} · round {round} · {} · {} · {a}", l.role, o(&l.model), o(&l.effort))),
-                    match (l.issue, &l.fleet) {
-                        (Some(n), Some(f)) => pr_line(ctx, cfg.fleet.get(f), f, n, s),
-                        _ => String::new(),
-                    },
-                ];
-                if l.mismatch {
-                    card.push("<span class=r>⚠ log/pane mismatch: the log has this lane open, herdr has no pane</span>".into());
+        for (sec, subs) in lanes::group(&all, |l| state(l).map_or(l.since, |s| s.last_ts.max(l.since))) {
+            h += &format!("<h2><span class={}>{sec} ({})</span></h2>", tone(sec), subs.iter().map(|s| s.1.len()).sum::<usize>());
+            for (repo, ls) in subs {
+                h += &format!("<h3>{} ({})</h3>", esc(&repo), ls.len());
+                for l in ls {
+                    h += &self.lane_row(ctx, cfg, l, state(l));
                 }
-                let tail = lanes::tail(&screen, 10).iter().map(|t| esc(t)).collect::<Vec<_>>().join("\n");
-                card.push(format!("<span class=tail>{tail}</span>"));
-                let act = format!("<span class=act>{}</span>", esc(&lanes::activity(&l.harness, &screen)));
-                let lead = avatar(&l.state);
-                h += &row("lane", &lead, &l.name, &l.state, &a, &card).replacen("</summary>", &format!("{act}</summary>"), 1);
             }
         }
         if h.is_empty() { "<p class=m>no agents</p>".into() } else { h }
+    }
+
+    fn lane_row(&self, ctx: &Ctx, cfg: &Config, l: &lanes::Lane, s: Option<&IssueState>) -> String {
+        let screen = l.pane.as_ref().and_then(|p| self.cached(ctx.now, 30, "herdr", &["pane", "read", p, "--source", "visible"]));
+        let a = if l.since > 0 { age(ctx.now.saturating_sub(l.since)) } else { String::new() };
+        let title = l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| gh::cached_spec(ctx, f, n)).and_then(|v| v["title"].as_str().map(String::from));
+        let issue = l.issue.map(|n| format!("#{n}")).unwrap_or_default();
+        let round = s.map(|s| format!("round {}", s.state.split_once('(').map_or(s.rounds.to_string(), |r| r.1.trim_end_matches(')').into())));
+        let o = |v: &Option<String>| v.clone().unwrap_or_default();
+        let facts = [l.role.clone(), o(&round), l.harness.clone(), o(&l.model), o(&l.effort), o(&l.account), a.clone()];
+        let mut card = vec![esc(format!("{issue} {}", o(&title)).trim()), esc(&join(&facts.iter().map(String::as_str).collect::<Vec<_>>()))];
+        if let (Some(n), Some(f)) = (l.issue, &l.fleet) {
+            card.push(pr_line(ctx, cfg.fleet.get(f), f, n, s));
+        }
+        if l.mismatch {
+            card.push("<span class=r>⚠ log/pane mismatch: the log has this lane open, herdr has no pane</span>".into());
+        }
+        let card: String = card.iter().filter(|c| !c.is_empty()).map(|c| format!("<p>{c}</p>")).collect();
+        let act = esc(&lanes::activity(&l.harness, &screen.unwrap_or_default()));
+        format!(
+            "<div class=lane data-agent=\"{}\" data-role={}><button type=button class=lr>{}<span>{}</span><span class={}>{}</span>\
+             <span class=m>{a}</span><span class=act>{act}</span></button><div class=card hidden>{card}</div></div>",
+            esc(&l.name),
+            esc(&l.role),
+            avatar(&l.name, &l.state),
+            esc(&l.name),
+            tone(&l.state),
+            esc(&l.state)
+        )
     }
 
     fn host_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event]) -> String {
@@ -449,6 +563,22 @@ impl<'a> Server<'a> {
                 h += &format!("<p class=kv>{} {s}</p>", esc(name));
             }
         }
+        if self.addr.is_some() {
+            let (all, mt) = (devices::load(ctx), mtime(ctx));
+            h += "<h2>Paired devices</h2>";
+            if all.is_empty() {
+                h += "<p class=m>none yet: the reply box asks for a `herdsman serve pair` code</p>";
+            }
+            for d in all {
+                let when = format!("paired {} ago · used {} ago", age(ctx.now.saturating_sub(d.created)), age(ctx.now.saturating_sub(d.used)));
+                h += &format!(
+                    "<form method=post class=role>{}<input type=hidden name=hash value={}><span>{} <span class=m>{when}</span></span><button>Remove</button></form>",
+                    hidden("unpair", "", &mt),
+                    esc(&d.hash),
+                    esc(&d.label)
+                );
+            }
+        }
         h
     }
 }
@@ -478,13 +608,15 @@ fn pr_line(ctx: &Ctx, fc: Option<&crate::config::Fleet>, fleet: &str, issue: u64
 fn role_form(cfg: &Config, fleet: &str, role: &str, r: &Role, rw: bool, mt: &str) -> String {
     let head = format!("<b>{}</b> <span class=m>{}</span> ", esc(role), esc(&r.harness));
     if !rw {
-        let o = |v: &Option<String>| esc(v.as_deref().unwrap_or("-"));
-        return format!("<p>{head}{} · {}</p>", o(&r.model), o(&r.effort));
+        return format!("<p>{head}{}</p>", esc(&join(&[r.model.as_deref().unwrap_or_default(), r.effort.as_deref().unwrap_or_default()])));
     }
-    let select = |name: &str, cur: &Option<String>, opts: &[&str]| {
+    // Unset: what the lane actually gets (the profile's/harness's model, `[limits].effort`).
+    let model = if r.harness == "hermes" { "profile".to_string() } else { r.harness.clone() };
+    let effort = cfg.limits.effort.clone().unwrap_or_else(|| "none".into());
+    let select = |name: &str, cur: &Option<String>, def: &str, opts: &[&str]| {
         let mut s = format!("<select name={name} aria-label={name}>");
         if cur.as_ref().is_none_or(|c| !opts.contains(&c.as_str())) {
-            s += &format!("<option value=\"\" selected>{}</option>", esc(cur.as_deref().unwrap_or("—")));
+            s += &format!("<option value=\"\" selected>{}</option>", esc(&cur.clone().unwrap_or(format!("default ({def})"))));
         }
         for o in opts {
             let sel = if cur.as_deref() == Some(o) { " selected" } else { "" };
@@ -497,8 +629,8 @@ fn role_form(cfg: &Config, fleet: &str, role: &str, r: &Role, rw: bool, mt: &str
         "<form method=post class=role>{}<input type=hidden name=role value={}>{head}{}{}<button>Set</button></form>",
         hidden("set", fleet, mt),
         esc(role),
-        select("model", &r.model, &models),
-        select("effort", &r.effort, crate::harness::efforts(&r.harness)),
+        select("model", &r.model, &model, &models),
+        select("effort", &r.effort, &effort, crate::harness::efforts(&r.harness)),
     )
 }
 

@@ -1,5 +1,6 @@
 :root{--bg:#0d1117;--fg:#c9d1d9;--mute:#8b949e;--line:#21262d;--g:#3fb950;--a:#d29922;--r:#f85149;--l:#58a6ff;color-scheme:dark}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{overflow-x:hidden}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere;padding:0 12px calc(72px + env(safe-area-inset-bottom))}
 header{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;min-height:48px;background:var(--bg);border-bottom:1px solid var(--line)}
@@ -16,9 +17,11 @@ summary{display:grid;grid-template-columns:7ch minmax(0,1fr) auto;gap:8px;align-
 summary::-webkit-details-marker{display:none}
 summary>span{min-width:0}
 details>p{margin:0 0 8px;padding-left:4px}
-.lane summary{grid-template-columns:48px minmax(0,1fr) auto auto}
+.lane{border-bottom:1px solid var(--line)}
+.lr{display:grid;grid-template-columns:48px minmax(0,1fr) auto auto;gap:8px;align-items:center;width:100%;text-align:left;background:none;border:0;border-radius:0;padding:4px 0}
+.lr>span{min-width:0}
+h3{font-size:12px;font-weight:400;color:var(--mute);margin:10px 0 2px}
 .lane .act{grid-column:1/-1;color:var(--mute);font-size:12px;min-height:1.5em}
-.tail{display:block;white-space:pre-wrap;font-size:11px;color:var(--mute);border-left:2px solid var(--line);padding-left:6px}
 .roles summary,.done summary,.paused summary{grid-template-columns:1fr}
 form{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0}
 form.role{display:flex;padding:6px 0;border-top:1px solid var(--line)}
@@ -32,13 +35,36 @@ nav a.on{color:var(--fg);box-shadow:inset 0 2px var(--g)}
 #stale{color:var(--a);font-size:12px}
 .av{display:flex;align-items:center;justify-content:center;width:48px;height:40px;overflow:hidden}
 .av>*{display:none}
-[data-mode=glyph] .av .gl,[data-mode=pixel] .av .px{display:block}
+[data-mode=glyph] .av .gl,[data-mode=horse] .av .px{display:block}
 [data-mode=ascii] .av .asc{display:grid}
 .gl{font-style:normal;font-size:20px}
 .px{width:48px;height:36px}
-.av .asc{font:8px/1 ui-monospace,Menlo,monospace;white-space:pre;font-style:normal}
+.av .asc{font:10px/1 ui-monospace,Menlo,monospace;white-space:pre;font-style:normal}
 .asc b{grid-area:1/1;font-weight:400}
 .run b:last-child{animation:f .5s steps(1) infinite}
 .run b:first-child{animation:f .5s steps(1) -.25s infinite}
 @keyframes f{0%{visibility:hidden}50%{visibility:visible}}
-@media (prefers-reduced-motion:reduce){.run b{animation:none!important}.run b:last-child{visibility:hidden}}
+/* Corral's gait: diagonal leg pairs swing in opposition around the trot's rest angles. */
+.px .leg{transform-box:fill-box;transform-origin:50% 0;transform:rotate(var(--a))}
+.av.working .leg-nf,.av.working .leg-fh{animation:g1 .4s ease-in-out infinite alternate}
+.av.working .leg-ff,.av.working .leg-nh{animation:g2 .4s ease-in-out infinite alternate}
+@keyframes g1{from{transform:rotate(10deg)}to{transform:rotate(42deg)}}
+@keyframes g2{from{transform:rotate(-10deg)}to{transform:rotate(-42deg)}}
+.av.done .px{opacity:.5}
+.av.r .px{filter:sepia(1) saturate(6) hue-rotate(-50deg)}
+@media (prefers-reduced-motion:reduce){.run b,.px .leg{animation:none!important}.run b:last-child{visibility:hidden}}
+#sheet{position:fixed;inset:0;z-index:2}
+.bd{position:absolute;inset:0;background:#000a}
+.sh{position:absolute;left:0;right:0;bottom:0;height:78vh;height:78dvh;display:flex;flex-direction:column;background:var(--bg);border-top:1px solid #30363d;border-radius:14px 14px 0 0;padding:0 12px env(safe-area-inset-bottom);transition:height .2s}
+.sh.full{height:100vh;height:100dvh;border-radius:0}
+.grip{flex:none;height:24px;touch-action:none;cursor:grab}
+.grip::after{content:"";display:block;width:40px;height:5px;margin:9px auto;border-radius:3px;background:#30363d}
+.top{flex:none;touch-action:none;border-bottom:1px solid var(--line);padding-bottom:6px}
+.top p{margin:2px 0}
+.chat{flex:1;overflow:hidden auto;display:flex;flex-direction:column;gap:6px;padding:8px 0}
+.b{margin:0;padding:6px 8px;border-radius:10px;background:#161b22;white-space:pre-wrap;font-size:11px;max-width:92%}
+.b.me{align-self:flex-end;background:#1f3a5f}
+.reply,.pairf{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;flex:none}
+.reply textarea,.pairf input{flex:1;min-width:0;font:inherit;color:var(--fg);background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px;min-height:44px;resize:none}
+.pairf p{flex-basis:100%;margin:0;font-size:12px}
+.st{flex:none;margin:0;font-size:12px;min-height:1.5em}
