@@ -16,7 +16,17 @@
     herd2: () => herd(true),
     'herd-scroll': () => herd(true),
     'queue-scroll': () => { tab('queue'); $$('#queue details.q').forEach(d => { d.open = true; }); },
+    toast: () => { // #66: a fixture ▲ POST (the redirect a live server sends), through the page's fetch-submit path
+      tab('queue');
+      const r = Object.defineProperties(new Response(''), { redirected: { value: true }, url: { value: location.origin + '/?msg=moved%20%2312%20before%20%2318' } });
+      window.fetch = () => Promise.resolve(r);
+      const f = [...$$('#queue form')].find(f => f.elements.op.value === 'mv');
+      f.inert = false;
+      f.requestSubmit();
+      setTimeout(() => { toasted = $('.msg.g') && $('.msg.g').textContent; }, 500);
+    },
   };
+  let toasted = null;
   const ROOTS = { sheet: () => [$('#sheet')], herd1: () => [hp(0), $('.hx'), $('.hwx')], herd2: () => [hp(1), $('.hx'), $('.hwx')] };
   const CTL = 'button:not(.lr,.hh,.hqh), .pk, [role=button]', ROW = 'summary, .lr, .hh, .hqh', NAME = '.nw, .hl b';
   const CHOICE = '.ask button[name=choice], .ask .pick'; // amendment A: wraps, ≤ 4 lines, instead of 28 px
@@ -121,6 +131,13 @@
     return out.size;
   }
   const SCROLL = {
+    toast: () => {
+      const bad = [];
+      if (toasted !== 'moved #12 before #18') bad.push(`toast after the POST: ${toasted}`);
+      if ($('.msg.g, .msg.r')) bad.push('.msg still shown 5 s after the POST');
+      if (/[?&]msg=/.test(location.search)) bad.push(`location.search keeps msg: ${location.search}`);
+      return { view: V, controls: 0, outliers: bad };
+    },
     'herd-scroll': () => {
       const base = structuredClone(data), bad = [], f = base.fleets[0];
       // Tall enough to scroll 400 px: the first fleet's lanes ×3.
@@ -161,7 +178,7 @@
     setTimeout(() => {
       if (V === 'herd2') PG.scrollLeft = PG.clientWidth;
       setTimeout(() => { if (DBG.get('check')) check(); }, 1000);
-    }, 2000);
+    }, V === 'toast' ? 4500 : 2000);
   };
   if (document.readyState === 'complete') go(); else addEventListener('load', go);
 })();

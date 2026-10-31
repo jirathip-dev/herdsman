@@ -13,6 +13,9 @@ h2>span:first-child{flex:1}
 p{margin:var(--s2) 0}
 .tag{border:1px solid currentColor;border-radius:4px;padding:0 var(--s1);font-size:var(--fs-meta)}
 .msg{padding:var(--s2);border:1px solid currentColor;border-radius:6px}
+/* #66: an action's toast, one line under the sticky header; the demo banner (.msg.a) stays in the flow. */
+.msg.g,.msg.r{position:fixed;z-index:2;top:calc(var(--hit) + var(--s2));left:var(--s3);right:var(--s3);margin:0;padding:var(--s1) var(--s2);background:var(--bg);font-size:var(--fs-meta);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;transition:opacity .4s}
+.msg.out{opacity:0}
 details,.ev,.kv{border-bottom:1px solid var(--line)}
 summary{display:grid;grid-template-columns:7ch minmax(0,1fr) auto;gap:var(--s2);align-items:center;min-height:var(--hit);cursor:pointer;list-style:none}
 summary::-webkit-details-marker{display:none}
