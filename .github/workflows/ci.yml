@@ -40,6 +40,7 @@ jobs:
   # #63 gate 2 (docs/ui.md): headless Chrome (preinstalled on ubuntu-latest) audits the demo at 390 px.
   ui:
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # #71: backstop; ui-audit.sh kills a hung Chrome run after 60 s
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.99.1
@@ -54,7 +55,7 @@ jobs:
           c=$(npx -y @puppeteer/browsers@2.6.1 install chrome-headless-shell@156.0.8078.80 --path "$RUNNER_TEMP/chs" | tail -1 | cut -d' ' -f2-)
           test -x "$c" || { echo "::error::chrome-headless-shell install gave no binary: '$c'"; exit 1; }
           echo "CHROME=$c" >> "$GITHUB_ENV"
-      - name: ui audit at 390 px (12 views)
+      - name: ui audit at 390 px (14 views)
         run: scripts/ui-audit.sh site ui-390
       - uses: actions/upload-artifact@v4
         if: always()

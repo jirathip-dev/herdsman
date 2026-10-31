@@ -3,15 +3,28 @@
 .herding,.herding body{overflow:hidden}
 #herd{position:fixed;inset:0;z-index:2;overflow:hidden;background:#485e3b;--sky1:#388fc4;--sky2:#8ebbc6;color:#f4ecd8}
 #herd.storm{--sky1:#1d2530;--sky2:#4f5a63}
+/* #71 ranch light: Corral's RanchPainter color(day, dark) pairs, one custom property per fill; `.night` swaps them all.
+   The sky (390 × 640 there, the top half here) is 388fc4→e5e8c9 / 121a32→667991; the pasture continues the ground gradient. */
+#herd{--h0:#a9c9bf;--h1:#9fb9a5;--h2:#8aab88;--h3:#79966d;--lw:#d2c48c;--sh:#334c2e;--st:#e8e3b3;--bn:#a86e52;--rf:#536456;--dr:#344635;--wn:#e5dfb8;
+  --tk:#776745;--l1:#859b5c;--l2:#66874f;--lh:#b0b67b;--fp:#9c916a;--fh:#e2d7ac;--fr:#8b825d;--fl:#d6c99f;--cl:#e3f1e9;--gs:#aeb57a}
+#herd.night{background:#273f3e;--sky1:#121a32;--sky2:#3c4961;--h0:#617484;--h1:#586c78;--h2:#4c666a;--h3:#425b5a;--lw:#789085;--sh:#172e32;--st:#b9c3b1;--bn:#705b58;--rf:#344b50;--dr:#182d35;--wn:#ceb581;
+  --tk:#3c4c4a;--l1:#557068;--l2:#405e59;--lh:#96aea0;--fp:#73847f;--fh:#d0dbd4;--fr:#6b7d75;--fl:#c4d6e0;--cl:#a6b6c6;--gs:#90a397}
+#herd.night.storm{--sky1:#0b0f1a;--sky2:#262d38}
+.rs .gd{fill:url(#hgr)}.night .rs .gd{fill:url(#hgrn)}
+.rs .wa{fill:url(#hwd)}.night .rs .wa{fill:url(#hwn)}
+.sky-night{display:none}.night .sky-night{display:inline}.storm .sky-night{opacity:.3}
+.mw path{fill:none;stroke:#bab8db;stroke-opacity:.022;stroke-linecap:round}
+.hc svg{fill-opacity:.2}.night .hc svg{fill-opacity:.055}
 .herding #ptr{z-index:4}
 .hdefs{position:absolute;width:0;height:0}
 .hpages{display:flex;height:100%;overflow:auto hidden;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;scrollbar-width:none}
 .hpages::-webkit-scrollbar{display:none}
 .hp{flex:0 0 100%;height:100%;overflow:hidden auto;scroll-snap-align:start;scroll-snap-stop:always;scroll-behavior:smooth;overscroll-behavior-y:contain;
   background:linear-gradient(#a9b06c,#7f8f50 40vh,#4c6340);padding-bottom:calc(2 * var(--ctl) + env(safe-area-inset-bottom))}
-/* The strip: one 28 px dark bar, `[×]` inside it on the right; the counts share its line when they fit, else wrap to an 11 px second line in the same bar. */
-#herd .hx{position:fixed;z-index:3;top:env(safe-area-inset-top);right:var(--s2)}
-.hs{position:sticky;top:0;z-index:1;display:flex;flex-wrap:wrap;align-content:center;column-gap:var(--s2);height:calc(var(--ctl) + env(safe-area-inset-top));padding:env(safe-area-inset-top) calc(var(--hit) + var(--s2)) 0 var(--s3);
+/* The strip: one 28 px dark bar, `[A]` `[×]` inside it on the right; the counts share its line when they fit, else wrap to an 11 px second line in the same bar. */
+#herd .hx,#herd .hlt{position:fixed;z-index:3;top:env(safe-area-inset-top);right:var(--s2)}
+#herd .hlt{right:calc(var(--s2) + var(--hit))}
+.hs{position:sticky;top:0;z-index:1;display:flex;flex-wrap:wrap;align-content:center;column-gap:var(--s2);height:calc(var(--ctl) + env(safe-area-inset-top));padding:env(safe-area-inset-top) calc(2 * var(--hit) + var(--s2)) 0 var(--s3);
   background:#1f2a38f0;line-height:var(--s4);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
 .hs p{margin:0;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hs .dots{letter-spacing:2px;color:#f4ecd8aa}
@@ -21,12 +34,14 @@
 .hc{position:absolute;filter:blur(3px);will-change:transform}
 .hc svg{display:block;width:100%;height:auto}
 .rs{position:absolute;inset:0;width:100%;height:100%}
-.rs .gt{fill:none;stroke:#aeb57a;stroke-opacity:.45;stroke-width:.8}
+.rs .gt{fill:none;stroke:var(--gs);stroke-opacity:.45;stroke-width:.8}
 .storm .rs{filter:brightness(.72) saturate(.8)}
 .storm .hc{filter:blur(3px) brightness(.55)}
 .fog{position:absolute;inset:0;pointer-events:none;opacity:0;background:linear-gradient(#e9eef0 0,#dfe6e8cc 55%,#e9eef0 100%);transition:opacity .6s}
 .fog1 .fog{opacity:.4}.fog2 .fog{opacity:.75}
 .fog2 .hp{background:linear-gradient(#b8bfa8,#8d9a78 40vh,#66775c)}
+#herd.night .hp{background:linear-gradient(#576c62,#3b5750 40vh,#28413f)}
+.night .fog{background:linear-gradient(#5d6977 0,#4f5b68cc 55%,#5d6977 100%)}
 .hrain{position:absolute;inset:-60px 0 0 -60px;pointer-events:none;display:none;opacity:.7;
   background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M10 0l-3 14M40 20l-3 14M25 40l-3 14M52 46l-3 14M3 28l-3 14' stroke='%23d8e6f5' stroke-opacity='.6'/%3E%3C/svg%3E")}
 .storm .hrain{display:block}
@@ -53,8 +68,8 @@
 .b-blocked .hl{background:#f6d9d3}
 /* The gate: queued horses (53×40 in a 60 px slot) line up in queue order in their own rows, after its posts (#65 A: the row starts 8 px past them). */
 .gate{position:relative;display:flex;flex-wrap:wrap;padding:var(--s2) 0 0 calc(var(--s1) + 2 * var(--s2))}
-.gate::after{content:"";position:absolute;inset:0 auto 0 var(--s1);width:8px;border-left:5px solid #9c916a;pointer-events:none;
-  background:repeating-linear-gradient(#0000 0 10px,#8b825d 10px 14px,#0000 14px 26px)}
+.gate::after{content:"";position:absolute;inset:0 auto 0 var(--s1);width:8px;border-left:5px solid var(--fp);pointer-events:none;
+  background:repeating-linear-gradient(#0000 0 10px,var(--fr) 10px 14px,#0000 14px 26px)}
 .hqh{position:relative;flex:0 0 60px;font-size:var(--fs-meta)}
 .hqh::before{content:"";position:absolute;left:50%;top:50%;width:max(100%,var(--hit));height:max(100%,var(--hit));transform:translate(-50%,-50%)}
 .hqh span{display:block;margin:calc(-1 * var(--s1)) var(--s1) 0;border-radius:6px;background:#f4ecd8;color:#3a332e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
