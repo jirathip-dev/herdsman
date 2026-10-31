@@ -32,6 +32,12 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
 - **Type scale:** text is 13 or 11 px, nothing else; inputs 16 px (iOS zooms below 16 px).
 - **Herd strip:** one 28 px bar on top of each Herd page with `[×]` inside it on the right; the
   counts share its line or wrap to an 11 px second line in the same bar, and are never ellipsised (#65 A).
+- **Labels, not sentences (#68):** a button holds its label (in a span that ellipsises, so `[`/`]` never
+  overlap text). A control's runtime result or error (alerts, pair, stop/kill/clean, send, answer) is an 11 px
+  `p.st` under it that wraps, red on error; #66's toast is for page actions. Unpaired, `[enable alerts]` dims
+  with "pair this phone first" under it.
+- **No text past the screen (#68):** every text box shrinks (`min-width:0`) and wraps anywhere (paths, shas,
+  URLs, `code`); one-line cells (`.nw`, `.el`, `.tl`) ellipsise.
 - Names never wrap vertically (`.nw` cells stay on one line, horse labels clamp at 2 lines);
   text that does not fit ellipsises. Nothing scrolls sideways at 390 px.
 
@@ -55,6 +61,12 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
    Each fails if the scroll moved, a row closed, or the MutationObserver saw more nodes leave than were removed.
    `toast` (#66) submits a ▲ form through the page's fetch path with a fixture redirect and fails unless the
    one-line toast showed, is gone 5 s later, and `location.search` has no `msg`.
+   #68: on every view, a box whose content is wider than it (`scrollWidth > clientWidth + 1`, tap rings off)
+   fails unless it ellipsises or scrolls by design, and so does any box past the screen's right edge. `host` and
+   `sheet` run each inline control's failure path with a canned long reply (Alerts: an error, then the old 401
+   pair text, leaving it unpaired; kill refused, kill's dry run, clean refused, a send error) and re-check after
+   each step. The demo fixture carries a 60-char agent name, a 200-char title, a Thai title, an 80-char path
+   and a 140-char event line.
    Screenshots are uploaded as the `ui-390` artifact on every run.
 
 Run both locally:
