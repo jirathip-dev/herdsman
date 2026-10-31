@@ -133,6 +133,12 @@ fn req(s: &Server, method: &str, path: &str, body: &str, extra: &str) -> String 
     String::from_utf8_lossy(&s.respond(&r, T)).into_owned()
 }
 
+/// The `data-h` the needs-you card's menu buttons carry (the menu as the card shows it).
+fn shown_h(page: &str) -> String {
+    let i = page.find("data-h=").expect("menu buttons") + 7;
+    page[i..].chars().take_while(char::is_ascii_digit).collect()
+}
+
 fn cookie(s: &Server, c: &herdsman::Ctx) -> String {
     let (rc, out) = run(c, &Fake::default(), &["serve", "pair"]);
     assert_eq!(rc, 0, "{out}");
@@ -149,7 +155,8 @@ fn answer_sends_the_digit_and_logs_no_question() {
     let ck = cookie(&s, &c);
     let page = req(&s, "GET", "/", "", &ck);
     let needs = &page[page.find("<div id=needs>").unwrap()..page.find("<main>").unwrap()];
-    assert!(needs.contains("Do you want to proceed?") && needs.contains("<button type=button class=pick value=2>2. Yes, and don"), "{needs}");
+    let h = shown_h(needs);
+    assert!(needs.contains("Do you want to proceed?") && needs.contains(&format!("<button type=button class=pick value=2 data-h={h}>2. Yes, and don")), "{needs}");
     assert!(needs.contains("data-ask=\"sendmeter-impl-12\""), "{needs}");
     let res = req(&s, "POST", "/answer", "agent=sendmeter-impl-12&choice=2", "");
     assert!(res.starts_with("HTTP/1.1 401 "), "no device cookie: {res}");
@@ -164,7 +171,7 @@ fn answer_sends_the_digit_and_logs_no_question() {
     for screen in [PERMISSION, "⏺ Bash(cargo test --all)\n  ⎿ ok"] {
         r.onces.borrow_mut().push(("herdr pane read".into(), herdsman::runner::Out { code: 0, stdout: screen.into(), stderr: String::new() }));
     }
-    let res = req(&s, "POST", "/answer", "agent=sendmeter-impl-12&choice=2", &ck);
+    let res = req(&s, "POST", "/answer", &format!("agent=sendmeter-impl-12&choice=2&h={h}"), &ck);
     assert!(res.starts_with("HTTP/1.1 200 OK") && res.contains("sent to sendmeter-impl-12"), "{res}");
     assert_eq!(r.count("herdr pane send-keys"), 1);
     assert!(r.called("herdr pane send-keys w1:p2 2"));
@@ -173,9 +180,38 @@ fn answer_sends_the_digit_and_logs_no_question() {
     assert_eq!(serde_json::Value::Object(e.data.clone()), json!({"via": "web", "agent": "sendmeter-impl-12", "device": e.str("device").unwrap(), "choice": "2"}));
     assert!(!std::fs::read_to_string(&c.state).unwrap().contains("proceed"), "never the question text");
     // The prompt is still there after the key: "still waiting". A reviewer may answer a permission prompt.
-    let res = req(&s, "POST", "/answer", "agent=sendmeter-rev-9-r1&choice=1", &ck);
+    let res = req(&s, "POST", "/answer", &format!("agent=sendmeter-rev-9-r1&choice=1&h={h}"), &ck);
     assert!(res.contains("still waiting: sendmeter-rev-9-r1"), "{res}");
     assert!(r.called("herdr pane send-keys w1:p3 1"));
+}
+
+/// The card showed menu A; the pane (read afresh, past every cache) now shows menu B: no key, and
+/// "menu changed". After a send, the next render reads the pane again (no cached stale menu).
+#[test]
+fn answer_refuses_a_changed_menu_and_rerenders_fresh() {
+    let (c, r) = blocked("stale-menu", &[]);
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    let ck = cookie(&s, &c);
+    let h = shown_h(&req(&s, "GET", "/", "", &ck));
+    let b = PERMISSION.replace("for cargo  ", "for git    ");
+    r.onces.borrow_mut().push(("herdr pane read".into(), herdsman::runner::Out { code: 0, stdout: b, stderr: String::new() }));
+    let res = req(&s, "POST", "/answer", &format!("agent=sendmeter-impl-12&choice=2&h={h}"), &ck);
+    assert!(res.contains("REFUSED STALE: menu changed — refreshed"), "{res}");
+    assert_eq!(r.count("herdr pane send-keys"), 0, "menu A tapped, menu B on the pane: no key");
+    let res = req(&s, "POST", "/answer", "agent=sendmeter-impl-12&choice=2", &ck);
+    assert!(res.contains("REFUSED STALE"), "no h: {res}");
+    assert_eq!(r.count("herdr pane send-keys"), 0);
+    let reads = r.count("herdr pane read");
+    r.onces.borrow_mut().push(("herdr pane read".into(), herdsman::runner::Out { code: 0, stdout: PERMISSION.into(), stderr: String::new() }));
+    r.onces.borrow_mut().push(("herdr pane read".into(), herdsman::runner::Out { code: 0, stdout: "⏺ Bash(cargo test --all)\n  ⎿ ok".into(), stderr: String::new() }));
+    r.onces.borrow_mut().push(("herdr pane read".into(), herdsman::runner::Out { code: 0, stdout: "⏺ Bash(cargo test --all)\n  ⎿ ok".into(), stderr: String::new() }));
+    let res = req(&s, "POST", "/answer", &format!("agent=sendmeter-impl-12&choice=2&h={h}"), &ck);
+    assert!(res.contains("sent to sendmeter-impl-12") && r.called("herdr pane send-keys w1:p2 2"), "same menu: the digit: {res}");
+    // Same second (cache TTLs not expired): the page still reads the pane afresh and drops the old buttons.
+    let page = req(&s, "GET", "/", "", &ck);
+    assert!(r.count("herdr pane read") > reads + 2, "a fresh read after the send");
+    let card = &page[page.find("data-ask=\"sendmeter-impl-12\"").unwrap()..page.find("data-ask=\"sendmeter-rev-9-r1\"").unwrap()];
+    assert!(!card.contains("class=pick") && card.contains("⎿ ok"), "{card}");
 }
 
 #[test]
@@ -218,7 +254,7 @@ fn live_board_fits_390px() {
     let d = tmpdir("live-png");
     let file = d.join("page.html");
     std::fs::write(&file, &page[page.find("<!doctype").unwrap()..]).unwrap();
-    let stub = "window.fetch = async () => new Response('sent to sendmeter-impl-12', {status: 200})";
+    let stub = "window.fetch = async u => new Response(u === '/answer' ? 'sent to sendmeter-impl-12' : '{}', {status: 200})";
     let scenes = [
         ("sync-green", "queue", "sync('g'); pulse()".to_string()),
         ("sync-amber", "queue", "sync('a')".into()),
@@ -269,4 +305,10 @@ fn unpaired_viewers_see_no_pane_text() {
     assert!(a.contains("\"id\":\"needs\"") && a.contains("pair this phone to answer"), "{a}");
     assert!(pane.iter().all(|p| !a.contains(p)), "unpaired stream: {a}");
     assert!(d.contains("Do you want to proceed?") && d.contains("class=pick"), "paired stream: {d}");
+    // The device is removed: its stream closes before the next push, so no more pane text reaches it.
+    herdsman::devices::store(&c, &[]).unwrap();
+    append(&c.state, &Event::new(T + 5, "sendmeter", None, "note", json!({}))).unwrap();
+    let after = drain(&mut dev, 2_500);
+    assert!(pane.iter().all(|p| !after.contains(p)), "revoked device: {after}");
+    assert!(matches!(dev.read(&mut [0; 1]), Ok(0)), "revoked device: stream closed");
 }

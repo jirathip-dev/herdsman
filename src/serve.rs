@@ -14,6 +14,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::io::ErrorKind::{TimedOut, WouldBlock};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -27,7 +28,7 @@ const ICON_512: &[u8] = include_bytes!("../assets/icon-512.png");
 const HORSES: &str = include_str!("../assets/horses.svg");
 
 type States = BTreeMap<(String, u64), IssueState>;
-type Clients = Arc<Mutex<Vec<(Sender<String>, bool)>>>;
+type Clients = Arc<Mutex<Vec<(Sender<String>, Option<String>)>>>;
 
 pub fn serve(ctx: &Ctx, r: &dyn Runner, addr: &str, read_only: bool) -> Result<()> {
     let l = TcpListener::bind(addr)?;
@@ -38,7 +39,7 @@ pub fn serve(ctx: &Ctx, r: &dyn Runner, addr: &str, read_only: bool) -> Result<(
 
 pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> Result<()> {
     let s = Server::new(ctx, r, (!read_only).then(|| l.local_addr().map(|a| a.to_string())).transpose()?);
-    let w = Server { clients: s.clients.clone(), ..Server::new(ctx, r, s.addr.clone()) };
+    let w = Server { clients: s.clients.clone(), kick: s.kick.clone(), ..Server::new(ctx, r, s.addr.clone()) };
     std::thread::scope(|sc| {
         sc.spawn(move || loop {
             w.tick();
@@ -53,6 +54,11 @@ fn hash(s: &impl Hash) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.hash(&mut h);
     h.finish()
+}
+
+/// A menu as its card shows it (masked question and options): `/answer` refuses a tap on any other.
+fn seen(q: &str, opts: &[String]) -> u64 {
+    hash(&(lanes::mask(q), opts.iter().map(|o| lanes::mask(o)).collect::<Vec<_>>()))
 }
 
 /// The watcher's last look: the log's (size, mtime), the `herdr agent list` read (secs, hash), last render, per-(paired, fragment) hashes.
@@ -74,8 +80,10 @@ pub struct Server<'a> {
     host: RefCell<Option<(u64, Host)>>,
     /// Reply-box send times per device hash (10 a minute).
     sent: RefCell<BTreeMap<String, Vec<u64>>>,
-    /// `/live` client threads (at most 8; paired or not, shared with the watcher) and the watcher's state.
+    /// `/live` client threads (at most 8; the paired device's hash, shared with the watcher), the
+    /// watcher's state, and `kick`: an answer was tapped, the watcher re-reads panes and pushes now.
     clients: Clients,
+    kick: Arc<AtomicBool>,
     watch: RefCell<Watch>,
 }
 
@@ -193,7 +201,7 @@ fn kind(head: &str) -> &'static str {
 
 impl<'a> Server<'a> {
     pub fn new(ctx: &'a Ctx, r: &'a dyn Runner, addr: Option<String>) -> Self {
-        Server { ctx, r, addr, cache: RefCell::default(), host: RefCell::default(), sent: RefCell::default(), clients: Arc::default(), watch: RefCell::default() }
+        Server { ctx, r, addr, cache: RefCell::default(), host: RefCell::default(), sent: RefCell::default(), clients: Arc::default(), kick: Arc::default(), watch: RefCell::default() }
     }
 
     fn handle(&self, mut s: TcpStream) -> std::io::Result<()> {
@@ -218,7 +226,7 @@ impl<'a> Server<'a> {
             s.set_write_timeout(Some(Duration::from_secs(10)))?;
             s.set_read_timeout(Some(Duration::from_millis(1)))?;
             let (tx, rx) = channel::<String>();
-            clients.push((tx, self.device(&Ctx { now: crate::now(), ..self.ctx.clone() }, &req).is_some()));
+            clients.push((tx, self.device(&Ctx { now: crate::now(), ..self.ctx.clone() }, &req).map(|d| d.hash)));
             let mut msg = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: ping\n\n".to_string();
             // Each second: a frag, else a peek (the peer closed: free the slot), else a ping every 15 s.
             std::thread::spawn(move || {
@@ -243,11 +251,16 @@ impl<'a> Server<'a> {
 
     /// Each 1 s tick: on a log change, a `herdr agent list` change (read every 2 s, uncached) or once a
     /// minute (ages), re-render the fragments per audience (paired or not) and push the changed ones.
+    /// A stream whose device was removed closes first (the page reconnects unpaired).
     fn tick(&self) {
         let mut w = self.watch.borrow_mut();
         let now = crate::now();
+        let known: Vec<String> = devices::load(self.ctx).into_iter().map(|d| d.hash).collect();
+        self.clients.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.1.as_ref().is_none_or(|h| known.contains(h)));
         let log = std::fs::metadata(&self.ctx.state).ok().map(|m| (m.len(), m.modified().ok()));
-        let mut changed = log != w.log || now >= w.rendered + 60;
+        let kicked = self.kick.swap(false, Relaxed);
+        if kicked { self.purge() }
+        let mut changed = kicked || log != w.log || now >= w.rendered + 60;
         w.log = log;
         if now >= w.herdr.0 + 2 {
             let out = self.r.run("herdr", &argv(&["agent", "list"])).ok().filter(|o| o.code == 0).map(|o| o.stdout);
@@ -263,10 +276,15 @@ impl<'a> Server<'a> {
             for (id, html) in self.frags(&Ctx { now, ..self.ctx.clone() }, false, paired).unwrap_or_default() {
                 if w.frags.insert((paired, id), hash(&html)).is_some_and(|h| h != hash(&html)) {
                     let msg = format!("event: frag\ndata: {}\n\n", serde_json::json!({"id": id, "html": html}));
-                    self.clients.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.1 != paired || c.0.send(msg.clone()).is_ok());
+                    self.clients.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.1.is_some() != paired || c.0.send(msg.clone()).is_ok());
                 }
             }
         }
+    }
+
+    /// Forget cached pane reads: the next render reads each pane afresh.
+    fn purge(&self) {
+        self.cache.borrow_mut().retain(|k, _| !k.starts_with("herdr pane read"));
     }
 
     /// stdout of `prog args` if it ran OK within the last `ttl` seconds (else run it now).
@@ -372,7 +390,9 @@ impl<'a> Server<'a> {
             return ("429 Too Many Requests", "10 sends a minute: wait a moment".into());
         }
         times.push(ctx.now);
-        match if pick { self.pick(ctx, &dev, f) } else { self.prompt(ctx, &dev, f) } {
+        let res = if pick { self.pick(ctx, &dev, f) } else { self.prompt(ctx, &dev, f) };
+        if pick { self.purge(); self.kick.store(true, Relaxed); }
+        match res {
             Ok(msg) => ("200 OK", msg),
             Err(e) => ("409 Conflict", shown(&e)),
         }
@@ -391,19 +411,23 @@ impl<'a> Server<'a> {
     }
 
     /// A blocked Claude menu's option: its digit via `pane send-keys`, then a re-read ("sent" or
-    /// "still waiting"); logs an `answer` event without the question. No menu parsed: no key.
+    /// "still waiting"); logs an `answer` event without the question. No menu parsed, or not the
+    /// menu the tapped card showed (`h`, read afresh): no key.
     fn pick(&self, ctx: &Ctx, dev: &devices::Device, f: &BTreeMap<String, String>) -> Result<String> {
         let (agent, choice) = (f.get("agent").map_or("", String::as_str), f.get("choice").map_or("", String::as_str));
         let (l, fleet, pane) = self.lane(ctx, agent)?;
         let screen = || crate::runner::ok(self.r, "herdr", &["pane", "read", &pane, "--source", "visible"]);
         let Some((q, opts)) = lanes::pending(&screen()?).filter(|p| l.harness == "claude" && !p.1.is_empty()) else {
-            return refused("BAD_VALUE", format!("no menu on {agent}'s pane: answer with the reply box"));
+            return refused("BAD_VALUE", format!("no menu on {agent}'s pane: menu changed — refreshed; answer with the reply box"));
         };
         if l.role == "rev" && !q.starts_with("Do you want") {
             return refused("REV_READONLY", "reviewer lanes answer permission prompts only");
         }
         if !choice.parse().is_ok_and(|n: usize| (1..=opts.len().min(9)).contains(&n)) || choice.len() != 1 {
             return refused("BAD_VALUE", format!("choose 1 to {}", opts.len()));
+        }
+        if f.get("h") != Some(&seen(&q, &opts).to_string()) {
+            return refused("STALE", "menu changed — refreshed");
         }
         crate::runner::ok(self.r, "herdr", &["pane", "send-keys", &pane, choice])?;
         let d = serde_json::json!({"via": "web", "agent": agent, "device": dev.label, "choice": choice});
@@ -544,7 +568,7 @@ impl<'a> Server<'a> {
         let body = match lanes::pending(&screen).filter(|_| l.harness == "claude") {
             _ if !paired => format!("<p class=m>{}</p><p class=m>pair this phone to answer: `herdsman serve pair`</p>", esc(&lanes::activity(&l.harness, &screen))),
             Some((q, opts)) => format!("<p>{}</p>", esc(&lanes::mask(&q)))
-                + &opts.iter().zip(1..).filter(|_| rw).map(|(o, n)| format!("<button type=button class=pick value={n}>{n}. {}</button>", esc(&lanes::mask(o)))).collect::<String>(),
+                + &opts.iter().zip(1..).filter(|_| rw).map(|(o, n)| format!("<button type=button class=pick value={n} data-h={}>{n}. {}</button>", seen(&q, &opts), esc(&lanes::mask(o)))).collect::<String>(),
             None => format!("<pre>{}</pre>", esc(&lanes::tail(&screen, 6).join("\n"))),
         };
         let who = join(&[l.fleet.as_deref().unwrap_or_default(), &l.issue.map_or(String::new(), |n| format!("#{n}")), &l.name]);

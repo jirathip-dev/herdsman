@@ -133,9 +133,15 @@ document.addEventListener('click', async e => {
   if (b.classList.contains('lr')) return open(b.parentNode);
   const a = b.closest('.ask'), lane = [...$$('.lane')].find(l => l.dataset.agent === a.dataset.ask);
   if (b.classList.contains('rp')) return lane && open(lane);
-  const r = await fetch('/answer', { method: 'POST', body: new URLSearchParams({ agent: a.dataset.ask, choice: b.value }) });
-  a.querySelector('.as').textContent = (await r.text()).trim();
-  a.querySelector('.as').className = 'as ' + (r.ok ? 'g' : 'r');
+  // `h` names the menu this card shows: the server refuses a tap on a menu that has since changed.
+  const r = await fetch('/answer', { method: 'POST', body: new URLSearchParams({ agent: a.dataset.ask, choice: b.value, h: b.dataset.h }) });
+  const msg = (await r.text()).trim();
+  // Re-render (fresh pane read) so stale buttons go at once; the message lands on the new card.
+  await refresh();
+  [a, ...[...$$('#needs .ask')].filter(c => c.dataset.ask === a.dataset.ask)].forEach(c => {
+    const s = c.querySelector('.as');
+    if (s) { s.textContent = msg; s.className = 'as ' + (r.ok ? 'g' : 'r'); }
+  });
 });
 $('.bd').onclick = close;
 addEventListener('keydown', e => { if (e.key === 'Escape' && !S.hidden) close(); });

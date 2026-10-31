@@ -8,7 +8,8 @@ Host/Origin check, at most 8 clients, then 503; a `: ping` every 15 s; a closed 
 slot within ~1 s). A watcher thread checks the
 event log's size/mtime every 1 s and `herdr agent list` every 2 s (uncached); on a change (or
 once a minute, for ages) it re-renders the needs-you cards and the four tabs and pushes only
-the changed ones as `event: frag` (`{id, html}`), rendered per audience (paired or not), swapped in place: open rows stay open,
+the changed ones as `event: frag` (`{id, html}`), rendered per audience (paired or not; a stream whose device was removed is closed at the next
+tick, and the page reconnects unpaired), swapped in place: open rows stay open,
 changed rows flash. The dot next to ↻ is green (live; it pulses on an update), amber
 (reconnecting, ↻ spins; back-off 1, 2, 5, 10 s, then a `/?frag=all` poll every 10 s after 30 s
 down) or red (offline). Tapping ↻, or pulling down from the top (past ~70 px), fetches
@@ -46,8 +47,11 @@ A **blocked** lane gets a needs-you card too (and the same card in its sheet). P
 paired devices only (page, `/?frag=all`, `/live`): an unpaired viewer sees who is blocked, the
 activity line and a "pair this phone to answer" hint. For a Claude
 pane showing a numbered menu (`❯ 1. Yes`, permission prompts, question lists) the options are
-buttons: a tap POSTs `/answer`, which re-reads the pane, sends that digit with
-`herdr pane send-keys`, re-reads it again and says `sent` or `still waiting`. It needs a paired
+buttons, each carrying a hash of the menu as the card shows it: a tap POSTs `/answer`, which
+re-reads the pane (past every cache), refuses `STALE: menu changed — refreshed` with no key when
+that menu is no longer the one on the pane, else sends that digit with `herdr pane send-keys`,
+re-reads it again and says `sent` or `still waiting`. Either way the cards re-render from a fresh
+pane read (pushed to `/live`, and the tapping page refreshes), so stale buttons go at once. It needs a paired
 device and the same Host/Origin check and 10-a-minute limit as the reply box, and is refused
 `PAUSED`, `BAD_VALUE` (no menu parsed, or not one of its numbers: never a guessed key) or
 `REV_READONLY` (a reviewer, except on a "Do you want to …?" permission prompt). Each logs
