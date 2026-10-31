@@ -85,6 +85,38 @@ while working (off under `prefers-reduced-motion`), dimmed when done, red when b
 
 The Home Screen icon is Corral's Palomino app icon (jirathip-dev/corral, `ios/tools/herd-art/appicon-masters/treatment-a/palomino-1024.png`, MIT © jirathip-dev).
 
+## Herd mode
+
+The 🐎 button in the header switches to **Herd mode**, a port of Corral's Herd screen
+(jirathip-dev/corral, `ios/FleetNotifier/UI/Herd/`: `HerdView.swift`, `HerdArt.swift`,
+`RanchEnvironment.swift`, `RanchWind.swift`; MIT © jirathip-dev): full screen, no tabs, one page
+per registered fleet (swipe left/right; an Others page only when unregistered agents run), ✕
+returns to the tabs. The mode and the page are kept in `localStorage`. Each page: a strip with
+`repo · N here`, page dots and `0 blocked · 3 working · 2 idle · 4 done`; the fleet's needs-you
+cards (same per-audience rules as the tabs); Corral's ranch (sky, clouds, hills, barn, fence,
+trees, grass); then the pasture in bands (working in gait, idle, done, blocked/dead in red),
+each horse with a cream label (issue title, agent, state as the Lanes row shows it incl. the
+#46 waiting reason, age) and a coat stable per name. Queued issues stand at a gate left of the
+working band, smaller, in queue order, `#issue` and `⛔#blocker`; tapping one shows its title and
+blocker. Tapping a horse opens the Lanes sheet (card, transcript, Stop/Kill/Clean, reply).
+
+Data: `GET /herd.json` (same Host/Origin check; only the fields an unpaired Lanes row shows, never
+pane text): `{fleets:[{name, lanes:[{name, issue, title, role, harness, model, effort, account,
+state, shown, tone, age, coat}], queue:[{issue, title, blocked_by, coat}]}], others:[…],
+host:{load, limit, pressure, swapouts, swap_limit, gate}}` (`gate`: null when the spawn gate
+admits, else its reason). While Herd is open the page reads it once, then takes the `/live`
+stream's `event: herd` (the same body, re-read every 10 s while a client listens); with the
+stream down, the `/?frag=all` poll reads it too. Pull to refresh works on a Herd page.
+
+Weather is the host: wind = load/cpu ÷ limit (0..1) scales Corral's `RanchWind` canopy/grass
+sway ×1..3 and the cloud drift; a refusing spawn gate is a storm (dark sky, rain, manes blown,
+lightning at most every 20 s); memory pressure `warn`/`critical` is light/thick fog; a caption
+shows `load 0.39 · mem normal · swap 0`. One `requestAnimationFrame` loop drives all motion
+(current page only, paused when hidden); horses are `<use>` instances. Under
+`prefers-reduced-motion` nothing moves and the weather is a tint only. Debug:
+`/?weather=calm|gusty|storm|fog` forces the host values on a loopback `Host` only (ignored
+elsewhere); `/?fps=1` adds an fps reading to the caption.
+
 ## Alerts (web push)
 
 The Host tab's **Enable alerts** button shows only in the Home Screen app (iOS allows web push

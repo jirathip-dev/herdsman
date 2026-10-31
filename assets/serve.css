@@ -67,7 +67,7 @@ main{transition:transform .2s}
 .av.done .px{opacity:.5}
 .av.r .px{filter:sepia(1) saturate(6) hue-rotate(-50deg)}
 @media (prefers-reduced-motion:reduce){.run b,.px .leg{animation:none!important}.run b:last-child{visibility:hidden}}
-#sheet{position:fixed;inset:0;z-index:2}
+#sheet{position:fixed;inset:0;z-index:3}
 .bd{position:absolute;inset:0;background:#000a}
 .sh{position:absolute;left:0;right:0;bottom:0;height:78vh;height:78dvh;max-height:100%;display:flex;flex-direction:column;background:var(--bg);border-top:1px solid #30363d;border-radius:14px 14px 0 0;padding:0 12px env(safe-area-inset-bottom);transition:height .2s}
 .sh.full{height:100vh;height:100dvh;border-radius:0}

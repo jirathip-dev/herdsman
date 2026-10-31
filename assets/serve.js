@@ -11,7 +11,7 @@ function tab(t) {
 }
 $$('nav a').forEach(a => a.onclick = e => { e.preventDefault(); tab(a.hash.slice(1)); });
 // A tapped alert opens `/?issue=N#tab`: that tab, the issue's row open.
-const t0 = location.hash.slice(1) || get('tab'), want = new URLSearchParams(location.search).get('issue');
+const t0 = location.hash.slice(1) || get('tab'), DBG = new URLSearchParams(location.search), want = DBG.get('issue');
 tab(t0 && document.getElementById(t0) ? t0 : 'queue');
 $$('details.q').forEach(d => { if (want && d.querySelector('summary>span').textContent === '#' + want) { d.open = true; d.scrollIntoView(); } });
 const MODES = ['horse', 'ascii', 'glyph'];
@@ -74,6 +74,7 @@ async function refresh() {
   try {
     const j = await (await fetch('/?frag=all', { cache: 'no-store' })).json();
     for (const id in j) frag(id, j[id]);
+    herdPull();
     busy = false;
     sync(live() ? 'g' : 'a');
     pulse();
@@ -85,6 +86,7 @@ function connect() {
   try { es = new EventSource('live'); } catch (e) { es = null; return sync('r'); }
   es.onopen = () => { if (down) refresh(); down = 0; tries = 0; clearInterval(poller); poller = 0; sync('g'); };
   es.addEventListener('frag', e => { const j = JSON.parse(e.data); frag(j.id, j.html); sync('g'); pulse(); });
+  es.addEventListener('herd', e => herdData(JSON.parse(e.data)));
   es.onerror = () => {
     es.close();
     es = null;
@@ -275,12 +277,13 @@ $('.pairf').onsubmit = async e => {
   if (r.ok) { e.target.hidden = true; poll(); if (ta.value.trim()) $('.reply').requestSubmit(); }
 };
 // Pull to refresh from the top (×0.5 resistance, past 70 px); never with the sheet open or a field
-// focused; the axis locks after 10 px so a sideways swipe never pulls.
+// focused; the axis locks after 10 px so a sideways swipe never pulls. In Herd mode: the current page.
 const M = $('main'), ptr = $('#ptr'), still = matchMedia('(prefers-reduced-motion: reduce)');
 let p0 = null, py = 0, axis = '';
 addEventListener('touchstart', e => {
   const typing = document.activeElement && document.activeElement.matches('input, textarea, select');
-  p0 = scrollY <= 0 && S.hidden && !typing ? e.touches[0] : null;
+  const hp = herdPage();
+  p0 = (hp ? hp.scrollTop : scrollY) <= 0 && S.hidden && !typing ? e.touches[0] : null;
   py = 0;
   axis = '';
 }, { passive: true });
@@ -290,15 +293,16 @@ addEventListener('touchmove', e => {
   if (!axis && Math.hypot(dx, dy) > 10) axis = dy > Math.abs(dx) ? 'y' : 'x';
   if (axis !== 'y') return;
   py = Math.max(0, dy * 0.5);
-  M.style.transition = 'none';
-  M.style.transform = `translateY(${py}px)`;
+  const box = herdPage() || M;
+  box.style.transition = 'none';
+  box.style.transform = `translateY(${py}px)`;
   ptr.hidden = false;
   ptr.style.transform = still.matches ? '' : `rotate(${py * 4}deg)`;
 }, { passive: true });
 addEventListener('touchend', () => {
   if (!p0) return;
   p0 = null;
-  M.style.transition = M.style.transform = '';
+  [M, ...$$('.hp')].forEach(b => { b.style.transition = b.style.transform = ''; });
   ptr.hidden = true;
   if (py > 70) refresh();
 });
