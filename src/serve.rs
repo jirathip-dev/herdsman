@@ -7,6 +7,7 @@ use crate::host::{self, Host};
 use crate::runner::{argv, Runner};
 use crate::{devices, gh, lanes, queue, Ctx};
 use anyhow::{bail, Context, Result};
+use serde_json::json;
 use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 use std::collections::{BTreeMap, BTreeSet};
@@ -26,6 +27,8 @@ const ICON_180: &[u8] = include_bytes!("../assets/icon-180.png");
 const ICON_192: &[u8] = include_bytes!("../assets/icon-192.png");
 const ICON_512: &[u8] = include_bytes!("../assets/icon-512.png");
 const HORSES: &str = include_str!("../assets/horses.svg");
+const HERD_CSS: &str = include_str!("../assets/herd.css");
+const HERD_JS: &str = include_str!("../assets/herd.js");
 
 type States = BTreeMap<(String, u64), IssueState>;
 type Clients = Arc<Mutex<Vec<(Sender<String>, Option<String>)>>>;
@@ -67,6 +70,8 @@ struct Watch {
     log: Option<(u64, Option<std::time::SystemTime>)>,
     herdr: (u64, u64),
     rendered: u64,
+    /// The last `herd` push: (time, hash of the body).
+    herd: (u64, u64),
     frags: BTreeMap<(bool, &'static str), u64>,
 }
 
@@ -179,6 +184,21 @@ const COATS: [(&str, &str, &str, bool); 8] = [
     ("96685a", "77524a", "4a342c", false), ("bd8f4e", "96703a", "241a10", true),
 ];
 
+/// The coat as CSS vars, stable per name.
+fn coat(name: &str) -> String {
+    let (c, d, m, blaze) = COATS[usize::from_str_radix(&devices::sha256(name.as_bytes())[..2], 16).unwrap_or(0) % 8];
+    format!("--c:#{c};--d:#{d};--m:#{m};--b:{}", if blaze { "#efe7dc" } else { "transparent" })
+}
+
+/// #46: an idle lane shows what it waits on, coloured by who; a working one keeps its state.
+fn shown_state(now: u64, l: &lanes::Lane, waits: &[crate::waiting::Waiting]) -> (&'static str, String) {
+    let w = waits.iter().find(|w| w.lane == l.name).cloned().or_else(|| crate::waiting::orch(waits, l.fleet.as_deref()?).filter(|_| l.role == "orch"));
+    match w.filter(|_| matches!(l.state.as_str(), "idle" | "done" | "unknown")) {
+        Some(w) => (w.tone(now), w.label(now)),
+        None => (tone(&l.state), l.state.clone()),
+    }
+}
+
 /// The state as an avatar in all three modes (CSS shows `body[data-mode]`'s); coat stable per name.
 pub fn avatar(name: &str, state: &str) -> String {
     let (pose, glyph, art) = match state {
@@ -187,8 +207,7 @@ pub fn avatar(name: &str, state: &str) -> String {
         "blocked" | "dead" => (4, "✗", format!("<i class=asc><b>{REAR}</b></i>")),
         _ => (2, "⏸", format!("<i class=asc><b>{STAND}</b></i>")),
     };
-    let (c, d, m, blaze) = COATS[usize::from_str_radix(&devices::sha256(name.as_bytes())[..2], 16).unwrap_or(0) % 8];
-    let coat = format!("--c:#{c};--d:#{d};--m:#{m};--b:{}", if blaze { "#efe7dc" } else { "transparent" });
+    let coat = coat(name);
     let horse = HORSES.lines().nth(pose).unwrap_or_default();
     format!("<span class=\"av {} {state}\"><i class=gl>{glyph}</i>{art}<svg class=px viewBox=\"0 0 132 100\" style=\"{coat}\">{horse}</svg></span>", tone(state))
 }
@@ -268,6 +287,15 @@ impl<'a> Server<'a> {
             w.herdr = (now, hash(&out));
             self.cache.borrow_mut().insert("herdr agent list".into(), (now, out));
         }
+        // #37: Herd's data rides the same stream, re-read every 10 s (host weather) while anyone listens;
+        // like a frag, pushed only on a change (the page reads `/herd.json` when Herd opens).
+        if (changed || now >= w.herd.0 + 10) && !self.clients.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
+            let j = self.herd(&Ctx { now, ..self.ctx.clone() }, None).map(|v| v.to_string()).unwrap_or_default();
+            if w.herd.0 > 0 && hash(&j) != w.herd.1 && !j.is_empty() {
+                self.clients.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.0.send(format!("event: herd\ndata: {j}\n\n")).is_ok());
+            }
+            w.herd = (now, hash(&j));
+        }
         if !changed {
             return;
         }
@@ -324,6 +352,14 @@ impl<'a> Server<'a> {
                 Some(j) => ("200 OK", "application/json", j.into_bytes()),
                 None => ("404 Not Found", "text/plain", text("no such agent pane\n")),
             },
+            ("GET", "/herd.json") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
+            ("GET", "/herd.json") => {
+                let loopback = header(head, "host").is_some_and(|h| ["127.0.0.1", "localhost", "[::1]"].iter().any(|l| names(l, h)));
+                match self.herd(ctx, form(query).get("weather").filter(|_| loopback).map(String::as_str)) {
+                    Ok(j) => ("200 OK", "application/json", j.to_string().into_bytes()),
+                    Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
+                }
+            }
             ("GET", "/sw.js") => ("200 OK", "text/javascript", text(SW)),
             ("GET", "/manifest.webmanifest") => ("200 OK", "application/manifest+json", text(MANIFEST)),
             ("GET", "/icon-180.png") => ("200 OK", "image/png", ICON_180.to_vec()),
@@ -571,12 +607,12 @@ impl<'a> Server<'a> {
              <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
              <meta name=theme-color content=\"#1f2a38\"><meta name=apple-mobile-web-app-capable content=yes>\
              <link rel=manifest href=/manifest.webmanifest><link rel=icon href=/icon-192.png><link rel=apple-touch-icon href=/icon-180.png>\
-             <title>herdsman</title><style>{CSS}</style></head>\
+             <title>herdsman</title><style>{CSS}{HERD_CSS}</style></head>\
              <body data-ts={} data-mode=horse{ro}><header><b>herdsman</b><span id=stale hidden></span><i id=dot class=a></i>\
-             <button id=rf type=button aria-label=refresh>↻</button></header><i id=ptr hidden>↻</i>{msg}<div id=needs>{}</div><main>\
+             <button id=rf type=button aria-label=refresh>↻</button><button id=herd-on type=button aria-label=\"herd mode\">🐎</button></header><i id=ptr hidden>↻</i>{msg}<div id=needs>{}</div><main>\
              <section id=queue>{}</section><section id=lanes>{}</section><section id=host>{}</section>\
              <section id=events>{}</section></main><nav><a href=#queue>Queue</a><a href=#lanes>Lanes</a>\
-             <a href=#host>Host</a><a href=#events>Events</a></nav><script>{JS}</script></body></html>\n",
+             <a href=#host>Host</a><a href=#events>Events</a></nav><svg id=horses hidden>{HORSES}</svg><script>{JS}{HERD_JS}</script></body></html>\n",
             ctx.now, f[0].1, f[1].1, f[2].1, f[3].1, f[4].1
         ))
     }
@@ -726,13 +762,51 @@ impl<'a> Server<'a> {
         Some(lanes::join(cfg, &self.ctx.worktrees, events, st, &agents, &ws))
     }
 
+    fn waits(&self, ctx: &Ctx, cfg: &Config, events: &[Event], all: &[lanes::Lane]) -> Vec<crate::waiting::Waiting> {
+        let live: Vec<_> = all.iter().map(|l| json!({"name": l.name, "agent_status": l.state})).collect();
+        crate::waiting::scan(ctx, cfg, self.r, events, &live, false).into_iter().map(|x| x.1).collect()
+    }
+
+    /// #37: Herd mode's data (`/herd.json`, the `/live` `herd` event): per fleet the lanes as the unpaired Lanes rows
+    /// show them (no pane text) and the queued issues, Others, host. `weather` (loopback only) forces the host values.
+    fn herd(&self, ctx: &Ctx, weather: Option<&str>) -> Result<serde_json::Value> {
+        let events = read(&ctx.state)?;
+        let (cfg, st) = (Config::load(&ctx.config)?, fold(&events));
+        let all = self.lanes(ctx.now, &cfg, &events, &st).unwrap_or_default();
+        let waits = self.waits(ctx, &cfg, &events, &all);
+        let title = |f: &String, n: u64| gh::cached_spec(ctx, f, n).and_then(|v| v["title"].as_str().map(String::from));
+        let lanes = |f: Option<&String>| -> Vec<_> {
+            all.iter().filter(|l| l.fleet.as_ref() == f).map(|l| {
+                let (tone, shown) = shown_state(ctx.now, l, &waits);
+                let a = if l.since > 0 { age(ctx.now.saturating_sub(l.since)) } else { String::new() };
+                json!({"name": l.name, "issue": l.issue, "title": l.issue.zip(f).and_then(|(n, f)| title(f, n)), "role": l.role, "harness": l.harness,
+                       "model": l.model, "effort": l.effort, "account": l.account, "state": l.state, "shown": shown, "tone": tone, "age": a, "coat": coat(&l.name)})
+            }).collect()
+        };
+        let queued = |f: &String| -> Vec<_> {
+            let waiting = queue::view(&events, &st, f).into_iter().filter(|i| st.get(&(f.clone(), i.issue)).is_none_or(|s| s.state == "queued"));
+            waiting.map(|i| json!({"issue": i.issue, "title": title(f, i.issue), "blocked_by": i.blocked_by, "coat": coat(&format!("{f}#{}", i.issue))})).collect()
+        };
+        let fleets: Vec<_> = cfg.fleet.keys().map(|f| json!({"name": f, "lanes": lanes(Some(f)), "queue": queued(f)})).collect();
+        let lim = &cfg.limits;
+        let forced = match weather {
+            Some("calm") => Some((0.1, "normal")),
+            Some("gusty") => Some((0.7, "normal")),
+            Some("storm") => Some((1.3, "normal")),
+            Some("fog") => Some((0.3, "warn")),
+            _ => None,
+        };
+        let h = forced.map_or_else(|| self.sample(ctx.now), |(k, p)| Host { load_per_cpu: Some(k * lim.load_per_cpu), pressure: Some(p.into()), swapout: Some(0.0) });
+        let host = json!({"load": h.load_per_cpu, "limit": lim.load_per_cpu, "pressure": h.pressure, "swapouts": h.swapout, "swap_limit": lim.swapout_rate, "gate": host::admit(&h, lim).err()});
+        Ok(json!({"fleets": fleets, "others": lanes(None), "host": host}))
+    }
+
     /// State sections, fleet subgroups inside; a row opens the bottom sheet (serve.js) with its hidden card.
     fn lanes_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States, paired: bool) -> String {
         let Some(cfg) = cfg else { return "<p class=m>no fleet.toml</p>".into() };
         let Some(all) = self.lanes(ctx.now, cfg, events, st) else { return "<p class=r>herdr agent list failed</p>".into() };
         let state = |l: &lanes::Lane| l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| st.get(&(f.clone(), n)));
-        let live: Vec<_> = all.iter().map(|l| serde_json::json!({"name": l.name, "agent_status": l.state})).collect();
-        let waits: Vec<_> = crate::waiting::scan(ctx, cfg, self.r, events, &live, false).into_iter().map(|x| x.1).collect();
+        let waits = self.waits(ctx, cfg, events, &all);
         let mut h = String::new();
         for (sec, subs) in lanes::group(&all, |l| state(l).map_or(l.since, |s| s.last_ts.max(l.since))) {
             h += &format!("<h2><span class={}>{sec} ({})</span></h2>", tone(sec), subs.iter().map(|s| s.1.len()).sum::<usize>());
@@ -761,12 +835,7 @@ impl<'a> Server<'a> {
         if l.mismatch {
             card.push("<span class=r>⚠ log/pane mismatch: the log has this lane open, herdr has no pane</span>".into());
         }
-        // #46: an idle lane shows what it waits on, coloured by who; a working one keeps its state.
-        let w = waits.iter().find(|w| w.lane == l.name).cloned().or_else(|| crate::waiting::orch(waits, l.fleet.as_deref()?).filter(|_| l.role == "orch"));
-        let (tone, shown) = match w.filter(|_| matches!(l.state.as_str(), "idle" | "done" | "unknown")) {
-            Some(w) => (w.tone(ctx.now), w.label(ctx.now)),
-            None => (tone(&l.state), l.state.clone()),
-        };
+        let (tone, shown) = shown_state(ctx.now, l, waits);
         card.insert(1, esc(&shown));
         let card = self::card(&card) + &if l.state == "blocked" { self.blocked(ctx, l, paired) } else { String::new() };
         let act = esc(&lanes::activity(&l.harness, &screen.unwrap_or_default()));
@@ -782,13 +851,18 @@ impl<'a> Server<'a> {
         )
     }
 
-    fn host_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event]) -> String {
-        let fresh = self.host.borrow().as_ref().filter(|(t, _)| ctx.now >= *t && ctx.now - t < 10).map(|h| h.1.clone());
-        let hs = fresh.unwrap_or_else(|| {
+    /// The host, sampled at most every 10 s.
+    fn sample(&self, now: u64) -> Host {
+        let fresh = self.host.borrow().as_ref().filter(|(t, _)| now >= *t && now - t < 10).map(|h| h.1.clone());
+        fresh.unwrap_or_else(|| {
             let h = host::sample(self.r);
-            *self.host.borrow_mut() = Some((ctx.now, h.clone()));
+            *self.host.borrow_mut() = Some((now, h.clone()));
             h
-        });
+        })
+    }
+
+    fn host_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event]) -> String {
+        let hs = self.sample(ctx.now);
         let limits = cfg.map(|c| &c.limits);
         let lim = |f: &dyn Fn(&crate::config::Limits) -> f64| limits.map_or(String::new(), |l| format!(" (limit {})", f(l)));
         let v = |x: Option<f64>, p: usize| x.map_or("?".into(), |x| format!("{x:.p$}"));
