@@ -62,7 +62,7 @@ fn every_control_passes_the_audit_at_390px() {
         let js = format!("{stub}; {audit}; {then}; window.measure = [audit('{root}')]; tab('{tab}'); {then}");
         let png = std::env::var("HERDSMAN_SNAPSHOTS").map_or(d.join(format!("{name}.png")), |p| std::path::Path::new(&p).join(format!("{name}.png")));
         let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/webview.swift");
-        let o = std::process::Command::new("swift").args([script, file.to_str().unwrap(), "390", tab, "horse", png.to_str().unwrap(), &js]).output().unwrap();
+        let o = swift().args([script, file.to_str().unwrap(), "390", tab, "horse", png.to_str().unwrap(), &js]).output().unwrap();
         let out = String::from_utf8_lossy(&o.stdout);
         let v: Vec<f64> = out.split_whitespace().filter_map(|n| n.parse().ok()).collect();
         assert!(o.status.success() && v.len() == 3, "{name}: {out} {}", String::from_utf8_lossy(&o.stderr));

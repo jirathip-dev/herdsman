@@ -1,5 +1,5 @@
 //! #36: Queue rows carry the issue + PR titles from the caches only (page and `?frag=all`);
-//! the lane display mode button lives in the Lanes tab; sw.js never masks a non-200 page.
+//! the lane display mode button lives in the Lanes tab; sw.js never caches a non-200 page.
 mod common;
 use common::*;
 use herdsman::serve::Server;
@@ -59,8 +59,9 @@ fn mode_button_only_in_the_lanes_tab() {
     assert_eq!(page.matches("id=mode").count(), 1, "not in the global header either");
 }
 
-/// sw.js `/`: a non-200 network answer is returned as is (not cached, not swapped for the cache);
-/// only a failed fetch falls back. Runs where node is at hand.
+/// sw.js `/` (#57: stale-while-revalidate): no copy yet, the network answer as is (a non-200 is never
+/// cached); with a copy, the copy at once while the refresh replaces it only on a 200; the assets precached.
+/// Runs where node is at hand.
 #[test]
 fn sw_never_serves_the_cache_over_a_non_200() {
     if std::process::Command::new("node").arg("--version").output().is_err() {
@@ -69,26 +70,29 @@ fn sw_never_serves_the_cache_over_a_non_200() {
     }
     let sw = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sw.js")).unwrap();
     let harness = r#"
-const on = {}, put = [];
-globalThis.self = { addEventListener: (k, f) => on[k] = f };
+const on = {}, store = new Map(), pre = [];
+globalThis.self = { addEventListener: (k, f) => on[k] = f, skipWaiting: () => {} };
 globalThis.location = { origin: 'http://h' };
-globalThis.caches = { open: async () => ({ put: (k) => put.push(k) }), match: async () => 'CACHED' };
+globalThis.caches = { open: async () => ({ put: async (k, v) => store.set(k, v), addAll: async a => pre.push(...a) }), match: async k => store.get(k) };
 "#;
     let run = r#"
 const go = async (net) => {
   globalThis.fetch = net;
-  let p; on.fetch({ request: { url: 'http://h/', method: 'GET' }, respondWith: x => p = x });
-  return p;
-};
-(async () => {
-  const r = await go(async () => ({ ok: false, status: 502, clone() { return this; } }));
-  const f = await go(async () => { throw new Error('down'); });
+  let p; on.fetch({ request: { url: 'http://h/', method: 'GET' }, respondWith: x => p = x, waitUntil: () => {} });
+  const r = await p.then(r => r.status, e => 'DOWN');
   await new Promise(s => setTimeout(s, 10));
-  console.log(JSON.stringify([r.status, f, put.length]));
+  return r;
+};
+const page = (status, body) => async () => ({ ok: status === 200, status, body, clone() { return this; } });
+(async () => {
+  let w; on.install({ waitUntil: x => w = x }); await w;
+  const out = [await go(page(502)), store.size, await go(async () => { throw new Error('down'); })];
+  out.push(await go(page(200, 'v1')), store.get('/').body, await go(page(502)), store.get('/').body, await go(page(200, 'v2')), store.get('/').body, pre.length);
+  console.log(JSON.stringify(out));
 })();
 "#;
     let d = tmpdir("sw");
     std::fs::write(d.join("t.js"), format!("{harness}\n{sw}\n{run}")).unwrap();
     let o = std::process::Command::new("node").arg(d.join("t.js")).output().unwrap();
-    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), r#"[502,"CACHED",0]"#, "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), r#"[502,0,"DOWN",200,"v1",200,"v1",200,"v2",5]"#, "{}", String::from_utf8_lossy(&o.stderr));
 }

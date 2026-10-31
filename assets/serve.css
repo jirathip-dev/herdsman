@@ -65,7 +65,8 @@ main{transition:transform .2s}
 @media (prefers-reduced-motion:reduce){#dot.p,#rf.spin i,#ptr.spin,.fl{animation:none}}
 .av{display:flex;align-items:center;justify-content:center;width:48px;height:40px;overflow:hidden}
 .av>*{display:none}
-[data-mode=glyph] .av .gl,[data-mode=horse] .av .px{display:block}
+/* Horse mode shows the glyph until herd.js's symbols land (`.hz`): no fetch or JS, no blank avatar. */
+[data-mode=glyph] .av .gl,[data-mode=horse]:not(.hz) .av .gl,[data-mode=horse].hz .av .px{display:block}
 [data-mode=ascii] .av .asc{display:grid}
 .gl{font-style:normal;font-size:20px}
 .px{width:48px;height:36px}
@@ -74,15 +75,13 @@ main{transition:transform .2s}
 .run b:last-child{animation:f .5s steps(1) infinite}
 .run b:first-child{animation:f .5s steps(1) -.25s infinite}
 @keyframes f{0%{visibility:hidden}50%{visibility:visible}}
-/* Corral's gait: diagonal leg pairs swing in opposition around the trot's rest angles. */
-.px .leg{transform-box:fill-box;transform-origin:50% 0;transform:rotate(var(--a))}
-.av.working .leg-nf,.av.working .leg-fh{animation:g1 .4s ease-in-out infinite alternate}
-.av.working .leg-ff,.av.working .leg-nh{animation:g2 .4s ease-in-out infinite alternate}
-@keyframes g1{from{transform:rotate(10deg)}to{transform:rotate(42deg)}}
-@keyframes g2{from{transform:rotate(-10deg)}to{transform:rotate(-42deg)}}
+/* Corral's gait: herd.js's symbols swing diagonal leg pairs in opposition by the inherited --g. */
+@property --g{syntax:'<angle>';inherits:true;initial-value:0deg}
+.av.working .px{animation:gt .4s ease-in-out infinite alternate}
+@keyframes gt{from{--g:-16deg}to{--g:16deg}}
 .av.done .px{opacity:.5}
 .av.r .px{filter:sepia(1) saturate(6) hue-rotate(-50deg)}
-@media (prefers-reduced-motion:reduce){.run b,.px .leg{animation:none!important}.run b:last-child{visibility:hidden}}
+@media (prefers-reduced-motion:reduce){.run b,.av .px{animation:none!important}.run b:last-child{visibility:hidden}}
 #sheet{position:fixed;inset:0;z-index:3}
 .bd{position:absolute;inset:0;background:#000a}
 .sh{position:absolute;left:0;right:0;bottom:0;height:78vh;height:78dvh;max-height:100%;display:flex;flex-direction:column;background:var(--bg);border-top:1px solid #30363d;border-radius:14px 14px 0 0;padding:0 12px env(safe-area-inset-bottom);transition:height .2s}

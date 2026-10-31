@@ -57,7 +57,9 @@ fn body(res: &str) -> Value {
 #[test]
 fn herd_json_shape_on_a_fixture() {
     let (c, r) = fixture("shape");
-    let v = body(&get(&Server::new(&c, &r, Some(ADDR.into())), "/herd.json", ADDR, ""));
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    *s.host.lock().unwrap() = herdsman::host::sample(&r);
+    let v = body(&get(&s, "/herd.json", ADDR, ""));
     let names = |l: &Value| l.as_array().unwrap().iter().map(|x| x["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
     let fleets = v["fleets"].as_array().unwrap();
     assert_eq!(fleets.iter().map(|f| f["name"].as_str().unwrap()).collect::<Vec<_>>(), ["sendmeter", "synergy"]);
@@ -102,6 +104,7 @@ fn herd_json_refuses_a_foreign_host_or_origin() {
 fn weather_param_works_on_loopback_only() {
     let (c, r) = fixture("weather");
     let s = Server::new(&c, &r, Some(ADDR.into()));
+    *s.host.lock().unwrap() = herdsman::host::sample(&r);
     let storm = body(&get(&s, "/herd.json?weather=storm", ADDR, ""));
     assert_eq!((&storm["host"]["load"], &storm["host"]["pressure"]), (&json!(3.25), &json!("normal")));
     assert!(storm["host"]["gate"].as_str().unwrap().starts_with("load/cpu 3.25 > 2.5"));
@@ -117,7 +120,7 @@ fn page_has_the_herd_button_and_horse_symbols() {
     let (c, r) = fixture("page");
     let page = get(&Server::new(&c, &r, Some(ADDR.into())), "/", ADDR, "");
     assert!(page.contains("<button id=herd-on type=button aria-label=\"herd mode\">🐎</button></header>"));
-    assert!(page.contains("<svg id=horses hidden><!-- Vector horses") && page.contains("const H = $('#herd')"));
+    assert!(page.contains("/herd.js></script>") && std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/herd.js")).unwrap().contains("const H = $('#herd')"));
 }
 
 /// The PR's 390 px Herd snapshots (fixture data): calm, gusty, storm and fog; the queue at the gate,
@@ -149,7 +152,7 @@ fn herd_snapshots_fit_390px() {
     for (name, js) in scenes {
         let png = std::env::var("HERDSMAN_SNAPSHOTS").map_or(d.join(format!("{name}.png")), |p| std::path::Path::new(&p).join(format!("{name}.png")));
         let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/webview.swift");
-        let o = std::process::Command::new("swift").args([script, file.to_str().unwrap(), "390", "lanes", "horse", png.to_str().unwrap(), &js]).output().unwrap();
+        let o = swift().args([script, file.to_str().unwrap(), "390", "lanes", "horse", png.to_str().unwrap(), &js]).output().unwrap();
         let out = String::from_utf8_lossy(&o.stdout);
         let w: Vec<u32> = out.split_whitespace().filter_map(|n| n.parse().ok()).collect();
         assert!(o.status.success() && w.len() == 2, "{name}: {out} {}", String::from_utf8_lossy(&o.stderr));
@@ -206,7 +209,7 @@ fn herd_horses_are_one_size_at_390px() {
         let js = format!("window.fetch = async () => new Response('', {{status: 404}}); herd(true); herdData({json}); {measure}{then}");
         let png = std::env::var("HERDSMAN_SNAPSHOTS").map_or(d.join(format!("{name}.png")), |p| std::path::Path::new(&p).join(format!("{name}.png")));
         let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/webview.swift");
-        let o = std::process::Command::new("swift").args([script, file.to_str().unwrap(), "390", "lanes", "horse", png.to_str().unwrap(), &js]).output().unwrap();
+        let o = swift().args([script, file.to_str().unwrap(), "390", "lanes", "horse", png.to_str().unwrap(), &js]).output().unwrap();
         let out = String::from_utf8_lossy(&o.stdout);
         let v: Vec<f64> = out.split_whitespace().filter_map(|n| n.parse().ok()).collect();
         assert!(o.status.success() && v.len() == 9, "{name}: {out} {}", String::from_utf8_lossy(&o.stderr));

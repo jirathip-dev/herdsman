@@ -7,13 +7,23 @@ The board is live: the page keeps one `GET /live` Server-Sent Events stream open
 Host/Origin check, at most 8 clients, then 503; a `: ping` every 15 s; a closed client frees its
 slot within ~1 s). A watcher thread checks the
 event log's size/mtime every 1 s and `herdr agent list` every 2 s (uncached); on a change (or
-once a minute, for ages) it re-renders the needs-you cards and the four tabs and pushes only
+every 15 s, for ages) it re-renders the needs-you cards and the four tabs and pushes only
 the changed ones as `event: frag` (`{id, html}`), rendered per audience (paired or not; a stream whose device was removed is closed at the next
 tick, and the page reconnects unpaired), swapped in place: open rows stay open,
 changed rows flash. The dot next to ↻ is green (live; it pulses on an update), amber
 (reconnecting, ↻ spins; back-off 1, 2, 5, 10 s, then a `/?frag=all` poll every 10 s after 30 s
 down) or red (offline). Tapping ↻, or pulling down from the top (past ~70 px), fetches
 `/?frag=all` from the network.
+
+Speed (#57): a background thread samples the host every 10 s (the 2 s `vm_stat` delta happens there),
+so a request never waits on it. Requests share the watcher's cache of `herdr pane read` and the
+per-issue `git log`; the watcher re-reads at a third of a request's ttl, so a request finds them warm. The icons and
+manifest are `public, max-age=86400`. The page is HTML only (`no-store`); its scripts, styles and horses are
+`/a/<hash8>/serve.js`, `serve.css`, `herd.js`, `herd.css` and `horses.svg` (`<hash8>` is FNV-1a over
+their content at build time) with `cache-control: public, max-age=31536000, immutable`, precached by
+the service worker. The SW serves the page stale-while-revalidate: the cached copy paints at once (the
+dot amber) and the live stream's first `?frag=all` fills it in (green). In horse mode a Lanes avatar shows its
+glyph until herd.js has built the horse symbols from `horses.svg`.
 
 Its only writes are ▲/▼ (`queue mv`), Pause/Resume and a role's model/effort (`set`, choices
 from `models = [...]`), each through the CLI's own code path, logged with `"via":"web"`.
@@ -151,7 +161,7 @@ client). CI's deps gate fails on any other direct dependency.
 ## Static export and the public demo
 
 `herdsman serve --export <dir>` writes the page as static files instead of serving it: `index.html`,
-`herd.json`, `manifest.webmanifest`, `sw.js` and the icons, rendered by the same code as the live page.
+`herd.json`, `manifest.webmanifest`, `sw.js`, the icons and `a/<hash8>/` assets, rendered by the same code as the live page.
 Every URL in them is relative and the service worker keys its paths and cache on its registration scope,
 so the files work under a sub-path (the live server at `/` behaves as before). A plain export is the
 read-only view, without pane text or transcripts.

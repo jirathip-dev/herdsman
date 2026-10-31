@@ -260,7 +260,7 @@ fn nine_idle_lanes_render_their_reason() {
     assert!(!page.contains("<span class=\"nw a\">idle </span><span class=act>"), "no bare idle row");
     // #43: the sheet header is the row's card (reason included) above the Stop / Kill / Clean actions.
     assert!(page.contains("<div class=card hidden><p>#42</p><p>idle · pushed fix 605297c"), "{page}");
-    assert!(page.contains("<div class=top></div><div class=acts><button type=button data-op=stop>Stop</button>"));
+    assert!(std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/serve.js")).unwrap().contains("<div class=top></div><div class=acts><button type=button data-op=stop>Stop</button>"));
 }
 
 /// #43: a killed lane falls back to its prior state; the issue's surviving lane tells the orch what to respawn.

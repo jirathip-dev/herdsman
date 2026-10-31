@@ -4,7 +4,7 @@ use crate::config::{Config, Role};
 use crate::events::{age, append, fold, plain, read, Event, IssueState};
 use crate::gate::{refused, Refusal};
 use crate::host::{self, Host};
-use crate::runner::{argv, Runner};
+use crate::runner::{argv, ok, Out, Runner};
 use crate::{devices, gh, lanes, queue, Ctx};
 use anyhow::{bail, Context, Result};
 use serde_json::json;
@@ -19,19 +19,19 @@ use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const CSS: &str = include_str!("../assets/serve.css");
-const JS: &str = include_str!("../assets/serve.js");
 const SW: &str = include_str!("../assets/sw.js");
-const MANIFEST: &str = include_str!("../assets/manifest.webmanifest");
-const ICON_180: &[u8] = include_bytes!("../assets/icon-180.png");
-const ICON_192: &[u8] = include_bytes!("../assets/icon-192.png");
-const ICON_512: &[u8] = include_bytes!("../assets/icon-512.png");
-const HORSES: &str = include_str!("../assets/horses.svg");
-const HERD_CSS: &str = include_str!("../assets/herd.css");
-const HERD_JS: &str = include_str!("../assets/herd.js");
+/// #57: served under `/a/<VER>/` as immutable (the SW precaches them); the page links them.
+const ASSETS: [(&str, &str, &[u8]); 5] = [("serve.css", "text/css", include_bytes!("../assets/serve.css")), ("herd.css", "text/css", include_bytes!("../assets/herd.css")),
+    ("serve.js", "text/javascript", include_bytes!("../assets/serve.js")), ("herd.js", "text/javascript", include_bytes!("../assets/herd.js")), ("horses.svg", "image/svg+xml", include_bytes!("../assets/horses.svg"))];
+/// At the root, the fixed paths the manifest and iOS name: cached a day (`/sw.js`, VER filled in, is no-store).
+const FILES: [(&str, &str, &[u8]); 4] = [("manifest.webmanifest", "application/manifest+json", include_bytes!("../assets/manifest.webmanifest")),
+    ("icon-180.png", "image/png", include_bytes!("../assets/icon-180.png")), ("icon-192.png", "image/png", include_bytes!("../assets/icon-192.png")), ("icon-512.png", "image/png", include_bytes!("../assets/icon-512.png"))];
+/// FNV-1a over the assets at build time: their `/a/<hash8>/` path.
+const VER: u32 = { let (mut h, mut k, mut i) = (0x811c_9dc5u32, 0, 0); while k < 5 { let b = ASSETS[k].2; while i < b.len() { h = (h ^ b[i] as u32).wrapping_mul(0x0100_0193); i += 1; } (k, i) = (k + 1, 0); } h };
 
 type States = BTreeMap<(String, u64), IssueState>;
 type Clients = Arc<Mutex<Vec<(Sender<String>, Option<String>)>>>;
+type Cache = Arc<Mutex<BTreeMap<String, (u64, Option<String>)>>>;
 
 pub fn serve(ctx: &Ctx, r: &dyn Runner, addr: &str, read_only: bool) -> Result<()> {
     let l = TcpListener::bind(addr)?;
@@ -42,8 +42,10 @@ pub fn serve(ctx: &Ctx, r: &dyn Runner, addr: &str, read_only: bool) -> Result<(
 
 pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> Result<()> {
     let s = Server::new(ctx, r, (!read_only).then(|| l.local_addr().map(|a| a.to_string())).transpose()?);
-    let w = Server { clients: s.clients.clone(), kick: s.kick.clone(), ..Server::new(ctx, r, s.addr.clone()) };
+    let (h, w) = (s.host.clone(), Server { fresh: true, cache: s.cache.clone(), clients: s.clients.clone(), kick: s.kick.clone(), host: s.host.clone(), ..Server::new(ctx, r, s.addr.clone()) });
     std::thread::scope(|sc| {
+        // #57: the host every 10 s (its 2 s vm_stat delta included) here, never on a request.
+        sc.spawn(move || loop { *h.lock().unwrap_or_else(|e| e.into_inner()) = host::sample(r); std::thread::sleep(Duration::from_secs(10)) });
         sc.spawn(move || loop {
             w.tick();
             std::thread::sleep(Duration::from_secs(1));
@@ -51,6 +53,18 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
         l.incoming().flatten().for_each(|st| drop(s.handle(st)));
     });
     Ok(())
+}
+
+/// `Server::cached` as a Runner (runner, cache, now, ttl): also `waiting::scan`'s per-issue `git log` on a request.
+struct Memo<'a>(&'a dyn Runner, &'a Cache, u64, u64);
+impl Runner for Memo<'_> {
+    fn run(&self, prog: &str, args: &[String]) -> Result<Out> {
+        let (key, cache) = (format!("{prog} {}", args.join(" ")), || self.1.lock().unwrap_or_else(|e| e.into_inner()));
+        let hit = cache().get(&key).filter(|(t, _)| self.2 >= *t && self.2 - t < self.3).cloned();
+        let (t, out) = hit.unwrap_or_else(|| (self.2, self.0.run(prog, args).ok().filter(|o| o.code == 0).map(|o| o.stdout)));
+        cache().insert(key, (t, out.clone()));
+        Ok(out.map_or(Out { code: 1, ..Out::default() }, |stdout| Out { stdout, ..Out::default() }))
+    }
 }
 
 fn hash(s: &impl Hash) -> u64 {
@@ -80,9 +94,11 @@ pub struct Server<'a> {
     r: &'a dyn Runner,
     /// The bind address a POST's `Host` must name; None: read-only.
     addr: Option<String>,
-    /// Command stdout by argv, with its time: herdr reads are rate-limited.
-    cache: RefCell<BTreeMap<String, (u64, Option<String>)>>,
-    host: RefCell<Option<(u64, Host)>>,
+    /// Command stdout by argv, with its time: rate-limited reads, shared with the watcher, which (`fresh`) re-reads at a third of the ttl.
+    cache: Cache,
+    fresh: bool,
+    /// The background sampler's last host read (serve_on); a request only reads it.
+    pub host: Arc<Mutex<Host>>,
     /// Reply-box send times per device hash (10 a minute).
     sent: RefCell<BTreeMap<String, Vec<u64>>>,
     /// `/live` client threads (at most 8; the paired device's hash, shared with the watcher), the
@@ -211,9 +227,7 @@ pub fn avatar(name: &str, state: &str) -> String {
         "blocked" | "dead" => (4, "✗", format!("<i class=asc><b>{REAR}</b></i>")),
         _ => (2, "⏸", format!("<i class=asc><b>{STAND}</b></i>")),
     };
-    let coat = coat(name);
-    let horse = HORSES.lines().nth(pose).unwrap_or_default();
-    format!("<span class=\"av {} {state}\"><i class=gl>{glyph}</i>{art}<svg class=px viewBox=\"0 0 132 100\" style=\"{coat}\">{horse}</svg></span>", tone(state))
+    format!("<span class=\"av {} {state}\"><i class=gl>{glyph}</i>{art}<svg class=px viewBox=\"0 0 132 100\" style=\"{}\"><use href=#hp{pose} /></svg></span>", tone(state), coat(name))
 }
 
 /// The device kind from `User-Agent`, for the Host tab's device list.
@@ -224,7 +238,7 @@ fn kind(head: &str) -> &'static str {
 
 impl<'a> Server<'a> {
     pub fn new(ctx: &'a Ctx, r: &'a dyn Runner, addr: Option<String>) -> Self {
-        Server { ctx, r, addr, cache: RefCell::default(), host: RefCell::default(), sent: RefCell::default(), clients: Arc::default(), kick: Arc::default(), watch: RefCell::default(), export: None }
+        Server { ctx, r, addr, cache: Arc::default(), fresh: false, host: Arc::default(), sent: RefCell::default(), clients: Arc::default(), kick: Arc::default(), watch: RefCell::default(), export: None }
     }
 
     fn handle(&self, mut s: TcpStream) -> std::io::Result<()> {
@@ -272,8 +286,8 @@ impl<'a> Server<'a> {
         s.write_all(&self.respond(&req, crate::now()))
     }
 
-    /// Each 1 s tick: on a log change, a `herdr agent list` change (read every 2 s, uncached) or once a
-    /// minute (ages), re-render the fragments per audience (paired or not) and push the changed ones.
+    /// Each 1 s tick: on a log change, a `herdr agent list` change (read every 2 s, uncached) or every
+    /// 15 s (ages; it keeps requests' cached reads warm), re-render the fragments per audience (paired or not) and push the changed ones.
     /// A stream whose device was removed closes first (the page reconnects unpaired).
     fn tick(&self) {
         let mut w = self.watch.borrow_mut();
@@ -283,13 +297,13 @@ impl<'a> Server<'a> {
         let log = std::fs::metadata(&self.ctx.state).ok().map(|m| (m.len(), m.modified().ok()));
         let kicked = self.kick.swap(false, Relaxed);
         if kicked { self.purge() }
-        let mut changed = kicked || log != w.log || now >= w.rendered + 60;
+        let mut changed = kicked || log != w.log || now >= w.rendered + 15;
         w.log = log;
         if now >= w.herdr.0 + 2 {
             let out = self.r.run("herdr", &argv(&["agent", "list"])).ok().filter(|o| o.code == 0).map(|o| o.stdout);
             changed |= hash(&out) != w.herdr.1;
             w.herdr = (now, hash(&out));
-            self.cache.borrow_mut().insert("herdr agent list".into(), (now, out));
+            self.cache.lock().unwrap_or_else(|e| e.into_inner()).insert("herdr agent list".into(), (now, out));
         }
         // #37: Herd's data rides the same stream, re-read every 10 s (host weather) while anyone listens;
         // like a frag, pushed only on a change (the page reads `/herd.json` when Herd opens).
@@ -316,18 +330,12 @@ impl<'a> Server<'a> {
 
     /// Forget cached pane reads: the next render reads each pane afresh.
     fn purge(&self) {
-        self.cache.borrow_mut().retain(|k, _| !k.starts_with("herdr pane read"));
+        self.cache.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| !k.starts_with("herdr pane read"));
     }
 
     /// stdout of `prog args` if it ran OK within the last `ttl` seconds (else run it now).
     fn cached(&self, now: u64, ttl: u64, prog: &str, args: &[&str]) -> Option<String> {
-        let key = format!("{prog} {}", args.join(" "));
-        if let Some((_, out)) = self.cache.borrow().get(&key).filter(|(t, _)| now >= *t && now - t < ttl) {
-            return out.clone();
-        }
-        let out = self.r.run(prog, &argv(args)).ok().filter(|o| o.code == 0).map(|o| o.stdout);
-        self.cache.borrow_mut().insert(key, (now, out.clone()));
-        out
+        ok(&Memo(self.r, &self.cache, now, if self.fresh { ttl / 3 } else { ttl }), prog, args).ok()
     }
 
     /// The full HTTP response to one request.
@@ -338,7 +346,7 @@ impl<'a> Server<'a> {
         let (path, query) = target.split_once('?').unwrap_or((target, ""));
         let ctx = &Ctx { now, ..self.ctx.clone() };
         let text = |s: &str| s.as_bytes().to_vec();
-        let mut extra = String::new();
+        let (mut extra, mut cache) = (String::new(), "no-store");
         let (status, ctype, body) = match (method, path) {
             ("GET", "/") if query == "frag=all" => match self.frags(ctx, false, self.device(ctx, head).is_some()) {
                 Ok(f) => ("200 OK", "application/json", serde_json::to_vec(&f.into_iter().collect::<BTreeMap<_, _>>()).unwrap_or_default()),
@@ -364,12 +372,11 @@ impl<'a> Server<'a> {
                     Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
                 }
             }
-            ("GET", "/sw.js") => ("200 OK", "text/javascript", text(SW)),
-            ("GET", "/manifest.webmanifest") => ("200 OK", "application/manifest+json", text(MANIFEST)),
-            ("GET", "/icon-180.png") => ("200 OK", "image/png", ICON_180.to_vec()),
-            ("GET", "/icon-192.png") => ("200 OK", "image/png", ICON_192.to_vec()),
-            ("GET", "/icon-512.png") => ("200 OK", "image/png", ICON_512.to_vec()),
-            ("GET", _) => ("404 Not Found", "text/plain", text("not found\n")),
+            ("GET", "/sw.js") => ("200 OK", "text/javascript", text(&SW.replace("@V", &format!("{VER:08x}")))),
+            ("GET", p) => {
+                let a = ASSETS.iter().find(|a| p == format!("/a/{VER:08x}/{}", a.0)).inspect(|_| cache = "public, max-age=31536000, immutable");
+                a.or_else(|| FILES.iter().find(|f| p.strip_prefix('/') == Some(f.0)).inspect(|_| cache = "public, max-age=86400")).map_or(("404 Not Found", "text/plain", text("not found\n")), |f| ("200 OK", f.1, f.2.to_vec()))
+            }
             ("POST", _) if self.addr.is_none() => ("405 Method Not Allowed", "text/plain", text("read-only: GET only\n")),
             ("POST", _) if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("POST", "/") if form(body.trim()).get("op").is_some_and(|o| o == "unpair" || o == "answer") && self.device(ctx, head).is_none() => {
@@ -408,7 +415,7 @@ impl<'a> Server<'a> {
         };
         let allow = if self.addr.is_some() { "GET, POST" } else { "GET" };
         let mut res = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nAllow: {allow}\r\n{extra}Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nAllow: {allow}\r\n{extra}Cache-Control: {cache}\r\nConnection: close\r\n\r\n",
             body.len()
         )
         .into_bytes();
@@ -615,12 +622,12 @@ impl<'a> Server<'a> {
              <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
              <meta name=theme-color content=\"#1f2a38\"><meta name=apple-mobile-web-app-capable content=yes>\
              <link rel=manifest href={root}manifest.webmanifest><link rel=icon href={root}icon-192.png><link rel=apple-touch-icon href={root}icon-180.png>\
-             <title>herdsman</title><style>{CSS}{HERD_CSS}</style></head>\
+             <title>herdsman</title><link rel=stylesheet href={root}a/{VER:08x}/serve.css><link rel=stylesheet href={root}a/{VER:08x}/herd.css></head>\
              <body data-ts={} data-mode=horse{ro}><header><b>herdsman</b>{badge}<span id=stale hidden></span><i id=dot class=a></i>\
              <button id=rf type=button aria-label=refresh>↻</button><button id=herd-on type=button aria-label=\"herd mode\">🐎</button></header><i id=ptr hidden>↻</i>{msg}<div id=needs>{}</div><main>\
              <section id=queue>{}</section><section id=lanes>{}</section><section id=host>{}</section>\
              <section id=events>{}</section></main><nav><a href=#queue>Queue</a><a href=#lanes>Lanes</a>\
-             <a href=#host>Host</a><a href=#events>Events</a></nav><svg id=horses hidden>{HORSES}</svg><script>{JS}{HERD_JS}</script></body></html>\n",
+             <a href=#host>Host</a><a href=#events>Events</a></nav><script src={root}a/{VER:08x}/serve.js></script><script src={root}a/{VER:08x}/herd.js></script></body></html>\n",
             ctx.now, f[0].1, f[1].1, f[2].1, f[3].1, f[4].1
         ))
     }
@@ -772,7 +779,7 @@ impl<'a> Server<'a> {
 
     fn waits(&self, ctx: &Ctx, cfg: &Config, events: &[Event], all: &[lanes::Lane]) -> Vec<crate::waiting::Waiting> {
         let live: Vec<_> = all.iter().map(|l| json!({"name": l.name, "agent_status": l.state})).collect();
-        crate::waiting::scan(ctx, cfg, self.r, events, &live, false).into_iter().map(|x| x.1).collect()
+        crate::waiting::scan(ctx, cfg, &Memo(self.r, &self.cache, ctx.now, if self.fresh { 10 } else { 30 }), events, &live, false).into_iter().map(|x| x.1).collect()
     }
 
     /// #37: Herd mode's data (`/herd.json`, the `/live` `herd` event): per fleet the lanes as the unpaired Lanes rows
@@ -804,7 +811,7 @@ impl<'a> Server<'a> {
             Some("fog") => Some((0.3, "warn")),
             _ => None,
         };
-        let h = forced.map_or_else(|| self.sample(ctx.now), |(k, p)| Host { load_per_cpu: Some(k * lim.load_per_cpu), pressure: Some(p.into()), swapout: Some(0.0) });
+        let h = forced.map_or_else(|| self.sample(), |(k, p)| Host { load_per_cpu: Some(k * lim.load_per_cpu), pressure: Some(p.into()), swapout: Some(0.0) });
         let host = json!({"load": h.load_per_cpu, "limit": lim.load_per_cpu, "pressure": h.pressure, "swapouts": h.swapout, "swap_limit": lim.swapout_rate, "gate": host::admit(&h, lim).err()});
         Ok(json!({"fleets": fleets, "others": lanes(None), "host": host}))
     }
@@ -870,18 +877,12 @@ impl<'a> Server<'a> {
         )
     }
 
-    /// The host, sampled at most every 10 s.
-    fn sample(&self, now: u64) -> Host {
-        let fresh = self.host.borrow().as_ref().filter(|(t, _)| now >= *t && now - t < 10).map(|h| h.1.clone());
-        fresh.unwrap_or_else(|| {
-            let h = host::sample(self.r);
-            *self.host.borrow_mut() = Some((now, h.clone()));
-            h
-        })
+    fn sample(&self) -> Host {
+        self.host.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     fn host_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event]) -> String {
-        let hs = self.sample(ctx.now);
+        let hs = self.sample();
         let limits = cfg.map(|c| &c.limits);
         let lim = |f: &dyn Fn(&crate::config::Limits) -> f64| limits.map_or(String::new(), |l| format!(" (limit {})", f(l)));
         let v = |x: Option<f64>, p: usize| x.map_or("?".into(), |x| format!("{x:.p$}"));
@@ -978,14 +979,13 @@ pub fn export(ctx: &Ctx, r: &dyn Runner, dir: &std::path::Path, demo: bool) -> R
     let canned = if demo { Canned(serde_json::from_str(&std::fs::read_to_string(ctx.config.with_file_name("runner.json"))?)?) } else { Canned::default() };
     let (r, events): (&dyn Runner, _) = (if demo { &canned } else { r }, read(&ctx.state)?);
     let ctx = &Ctx { now: if demo { events.iter().map(|e| e.ts).max().unwrap_or(0) + 60 } else { ctx.now }, ..ctx.clone() };
-    let s = Server { export: Some(demo), ..Server::new(ctx, r, demo.then(|| "demo".into())) };
-    // The live page registers `/sw.js` (its tests pin that); a sub-path needs it relative.
-    let page = s.page(ctx, &BTreeMap::new(), demo)?.replace("<form method=post", "<form inert").replace("register('/sw.js')", "register('sw.js')");
-    let herd = s.herd(ctx, None)?.to_string();
+    let s = Server { export: Some(demo), host: Arc::new(Mutex::new(host::sample(r))), ..Server::new(ctx, r, demo.then(|| "demo".into())) };
+    let (page, herd) = (s.page(ctx, &BTreeMap::new(), demo)?.replace("<form method=post", "<form inert"), s.herd(ctx, None)?.to_string());
+    let (sw, v) = (SW.replace("@V", &format!("{VER:08x}")), format!("a/{VER:08x}/"));
     std::fs::create_dir_all(dir.join("lane"))?;
-    let files: [(&str, &[u8]); 7] = [("index.html", page.as_bytes()), ("herd.json", herd.as_bytes()), ("manifest.webmanifest", MANIFEST.as_bytes()),
-        ("sw.js", SW.as_bytes()), ("icon-180.png", ICON_180), ("icon-192.png", ICON_192), ("icon-512.png", ICON_512)];
-    for (name, body) in files {
+    std::fs::create_dir_all(dir.join(&v))?;
+    let files = [("index.html", page.as_bytes()), ("herd.json", herd.as_bytes()), ("sw.js", sw.as_bytes())].map(|(n, b)| (n.to_string(), b));
+    for (name, body) in files.into_iter().chain(FILES.map(|f| (f.0.to_string(), f.2))).chain(ASSETS.map(|a| (v.clone() + a.0, a.2))) {
         std::fs::write(dir.join(name), body)?;
     }
     let (cfg, st) = (Config::load(&ctx.config)?, fold(&events));
