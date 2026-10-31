@@ -194,11 +194,13 @@ fn coat(name: &str) -> String {
 
 /// #46: an idle lane shows what it waits on, coloured by who; a working one keeps its state.
 fn shown_state(now: u64, l: &lanes::Lane, waits: &[crate::waiting::Waiting]) -> (&'static str, String) {
+    wait_of(l, waits).map_or_else(|| (tone(&l.state), l.state.clone()), |w| (w.tone(now), w.label(now)))
+}
+
+/// The lane's wait reason while herdr shows it idle, done or unknown.
+fn wait_of(l: &lanes::Lane, waits: &[crate::waiting::Waiting]) -> Option<crate::waiting::Waiting> {
     let w = waits.iter().find(|w| w.lane == l.name).cloned().or_else(|| crate::waiting::orch(waits, l.fleet.as_deref()?).filter(|_| l.role == "orch"));
-    match w.filter(|_| matches!(l.state.as_str(), "idle" | "done" | "unknown")) {
-        Some(w) => (w.tone(now), w.label(now)),
-        None => (tone(&l.state), l.state.clone()),
-    }
+    w.filter(|_| matches!(l.state.as_str(), "idle" | "done" | "unknown"))
 }
 
 /// The state as an avatar in all three modes (CSS shows `body[data-mode]`'s); coat stable per name.
@@ -845,15 +847,26 @@ impl<'a> Server<'a> {
         card.insert(1, esc(&shown));
         let card = self::card(&card) + &if l.state == "blocked" { self.blocked(ctx, l, paired) } else { String::new() };
         let act = esc(&lanes::activity(&l.harness, &screen.unwrap_or_default()));
+        // #53: line 1 name (one line) + `state age`; line 2 the reason (no age), or `superseded by` on an issue's older lane.
+        let w = wait_of(l, waits);
+        let sup = s.and_then(|s| s.lane.as_ref()).filter(|x| **x != l.name && w.is_some());
+        let why = match (sup, &w) {
+            (Some(x), _) => format!("<span class=\"why m\">superseded by {}</span>", esc(x)),
+            (None, Some(w)) => format!("<span class=\"why {tone}\">{}</span>", esc(&w.what)),
+            _ => String::new(),
+        };
+        let tone = if sup.is_some() { "m" } else { tone };
+        let since = w.filter(|_| sup.is_none()).map_or(l.since, |w| w.since);
+        let a = if since > 0 { age(ctx.now.saturating_sub(since)) } else { String::new() };
         format!(
-            "<div class=lane data-agent=\"{}\" data-role={}><button type=button class=lr>{}<span>{}</span><span class={}>{}</span>\
-             <span class=m>{a}</span><span class=act>{act}</span></button><div class=card hidden>{card}</div></div>",
+            "<div class=lane data-agent=\"{}\" data-role={}><button type=button class=lr>{}<span class=\"nw el\">{}</span><span class=\"nw {}\">{} {a}</span>\
+             {why}<span class=act>{act}</span></button><div class=card hidden>{card}</div></div>",
             esc(&l.name),
             esc(&l.role),
             avatar(&l.name, &l.state),
             esc(&l.name),
             tone,
-            esc(&shown)
+            esc(&l.state)
         )
     }
 

@@ -254,9 +254,10 @@ fn nine_idle_lanes_render_their_reason() {
         ("a", "idle · idle without pushing (check the pane) (25m)"),
         ("m", "idle · nothing to do (merged): clean me (24m)"),
     ] {
-        assert!(page.contains(&format!("<span class={tone}>{label}</span>")), "{label}:\n{page}");
+        let (what, a) = label.trim_start_matches("idle · ").rsplit_once(" (").unwrap();
+        assert!(page.contains(&format!("<span class=\"nw {tone}\">idle {}</span><span class=\"why {tone}\">{what}</span>", a.trim_end_matches(')'))), "{label}:\n{page}");
     }
-    assert!(!page.contains("<span class=a>idle</span>"), "no bare idle row");
+    assert!(!page.contains("<span class=\"nw a\">idle </span><span class=act>"), "no bare idle row");
     // #43: the sheet header is the row's card (reason included) above the Stop / Kill / Clean actions.
     assert!(page.contains("<div class=card hidden><p>#42</p><p>idle · pushed fix 605297c"), "{page}");
     assert!(page.contains("<div class=top></div><div class=acts><button type=button data-op=stop>Stop</button>"));
@@ -285,4 +286,22 @@ fn a_killed_lane_waits_on_the_orch_to_respawn_it() {
         (3, "sendmeter-rev-3-r1".into(), "orch", "lane killed, waiting for orch to respawn impl".into(), s("spawn sendmeter 3 impl")),
         (42, "sendmeter-impl-42".into(), "orch", "pushed 605297c, waiting for orch to spawn review".into(), s("spawn sendmeter 42 rev")),
     ]);
+}
+
+/// #53: a 120-char reason gets its own line under a one-line name; an older lane of the issue says `superseded by`.
+#[test]
+fn a_long_reason_never_squeezes_the_name() {
+    let c = ctx(&tmpdir("waiting-long"), CONFIG);
+    let id = "q".repeat(120 - "waiting on your answer ()".len());
+    spawn(&c, NOW - 2000, 2859, "rev", "synergy-rev-2859-r2");
+    spawn(&c, NOW - 1900, 2859, "impl", "synergy-impl-2859");
+    ev(&c, NOW - 600, Some(2859), "needs-decision", json!({"id": id, "agent": "synergy-impl-2859", "question": "?", "options": [], "recommend": null}));
+    let list: Vec<_> = ["synergy-rev-2859-r2", "synergy-impl-2859"].iter().map(|n| json!({"name": n, "agent_status": "idle", "pane_id": format!("w1:{n}"), "cwd": "/x"})).collect();
+    let r = Fake::default().reply("herdr agent list", &json!({"result": {"agents": list}}).to_string()).reply("herdr workspace list", "{}").reply("herdr pane read", "");
+    let page = String::from_utf8_lossy(&Server::new(&c, &r, None).respond("GET /?tab=lanes HTTP/1.1\r\nHost: 127.0.0.1:7777\r\n\r\n", NOW)).into_owned();
+    let reason = format!("waiting on your answer ({id})");
+    assert_eq!(reason.len(), 120);
+    assert!(page.contains(&format!("<span class=\"nw el\">synergy-impl-2859</span><span class=\"nw r\">idle 10m</span><span class=\"why r\">{reason}</span>")), "{page}");
+    assert!(page.contains("<span class=\"nw el\">synergy-rev-2859-r2</span><span class=\"nw m\">idle 33m</span><span class=\"why m\">superseded by synergy-impl-2859</span>"), "{page}");
+    assert_eq!(page.matches(&format!("{reason}</span>")).count(), 1, "the older lane does not repeat it; no `(10m)` suffix in the row");
 }
