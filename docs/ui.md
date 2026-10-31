@@ -48,11 +48,11 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
    `inset`) with a px value outside the token block, a font size that is not a `--fs` token, a control
    `height` that is not `--ctl`, or an inline `style=` with px in the rendered page fails (`file:line value`).
 2. **Browser audit** — the `ui` CI job: headless Chrome opens the exported demo at 390×844, DPR 3,
-   on Queue, Queue with a row open, Lanes, a Lanes sheet, the sheet dragged, Host, Events, Herd page 1 and page 2.
+   on Queue, Queue with a row open, Lanes, a Lanes sheet, the sheet dragged, Host, Events, Herd page 1 and page 2 (by day), Herd at night and at night in a storm.
    `assets/ui-audit.js` (only in the `--demo` export, `?audit=<view>&check=1`) fails on a control
    not 28 px tall (a choice: over 4 lines), text not 11/13 px (inputs 16), a tap area under 44 px, sideways scroll
    (on Herd pages too: no box past the page's sides), a name over 2 lines, text overflowing its box without an
-   ellipsis, a Herd strip/`[×]` not 28 px, a lane horse not 132±1 px wide or a queued one not 53±1 (#65), or
+   ellipsis, a Herd strip/`[A]`/`[×]` not 28 px or `[A]` not inside the strip left of `[×]` (#71), a lane horse not 132±1 px wide or a queued one not 53±1 (#65), or
    text under the weather caption or the demo's weather switcher with the page scrolled to its end, or ellipsised
    strip text, also with a fixture of the owner's counts (13 queued, 11 done, 5 idle, 3 working) (#65 A).
    Two more views (#65) prove updates never move the scroll: `herd-scroll` scrolls Herd page 1 to 400 px and
@@ -62,6 +62,9 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
    `sheet-drag` (#70): the sheet's handle is ≥ 56 px; a synthetic −200 px pointer drag moves the sheet mid-drag,
    release lands on a detent (50 %, 78 %, full), and a close leaves it shown and sliding off-screen for a frame
    before `hidden`. Virtual time runs no frames, so there rAF is a 16 ms timer and the slide is read as its target.
+   `herd-night` (#71) checks Auto at 06:59/07:00/18:59/19:00 (night/day/day/night), taps `[A]` through
+   day → night → auto → day → night (label, icon, stored value, scene each time), then loads the page again in an
+   iframe (virtual time runs no reload) and fails unless it comes back at night.
    `toast` (#66) submits a ▲ form through the page's fetch path with a fixture redirect and fails unless the
    one-line toast showed, is gone 5 s later, and `location.search` has no `msg`.
    #68: on every view, a box whose content is wider than it (`scrollWidth > clientWidth + 1`, tap rings off)

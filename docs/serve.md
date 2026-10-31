@@ -137,6 +137,14 @@ bar at the bottom shows `load 0.39 · mem normal · swap 0`, and the page is pad
 `/?weather=calm|gusty|storm|fog` forces the host values on a loopback `Host` only (ignored
 elsewhere); `/?fps=1` adds an fps reading to the caption.
 
+**Ranch light (#71)**, Corral's Herd environment: `[A]`/`[☀]`/`[☾]` in the strip, left of `[×]`, cycles
+Auto → Day → Night, kept on this phone (`localStorage` `herd-light`, default Auto). Auto is the phone's clock:
+Day 07:00–19:00, re-checked every minute and on resume. Night is Corral's night scene: every fill takes its
+`color(day, dark)` dark pair (`#herd.night` swaps the custom properties), a dark sky, the seeded star field and
+Milky Way drifting as one at 0.7 pt/s, the moon fixed at (306, 56) (above the strip's crop on a short screen),
+clouds at 0.055 opacity, and the cast light from the moon's side. Storm and fog compose with it. Debug:
+`/?light=auto|day|night`.
+
 ## Alerts (web push)
 
 The Host tab's **Enable alerts** button shows only in the Home Screen app (iOS allows web push

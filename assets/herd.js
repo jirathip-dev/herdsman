@@ -19,55 +19,72 @@ const rect = (x, y, w, h, fill, op = 1) => `<rect x="${f1(x)}" y="${f1(y)}" widt
 
 // The scene (390 × 320 of Corral's 390 × 640 world: sky to the rear fence and its grass). The sky is
 // the page's CSS gradient (storm darkens it); clouds are their own blurred layer that only translates.
+// #71: every fill is a custom property (herd.css: Corral's color(day, dark) pairs), so `#herd.night` repaints it.
 function clouds() {
   let s = '';
   for (const copy of [0, 780]) for (let i = 0; i < 6; i++) {
     const x = i * 130 + 45 + copy, y = 36 + noise(i, 30) * 86;
-    for (let j = 0; j < 5; j++) s += ell(x + j * 12, y - noise(j, i) * 9, 18, 5 + noise(j, 2) * 5, '#e3f1e9', 0.2);
+    for (let j = 0; j < 5; j++) s += ell(x + j * 12, y - noise(j, i) * 9, 18, 5 + noise(j, 2) * 5, 'var(--cl)');
   }
   return `<svg viewBox="0 0 1560 320" aria-hidden=true>${s}</svg>`;
 }
-function scene() {
+// #71 night sky (RanchPainter.sky, night): the Milky Way and the seeded stars ride one slow drift (RanchSky.celestialSpeed,
+// `.cel`, a 390 tile with its neighbours: a star keeps its identity, only moves), under the hills; the moon stays put.
+function night() {
   let s = '';
-  ['#a9c9bf', '#9fb9a5', '#8aab88', '#79966d'].forEach((fill, r) => {
+  for (const k of [-390, 0, 390]) {
+    for (let b = 0; b < 6; b++) s += `<path d="M${k - 60} 220Q${k + 60} 74 ${k + 220} 3Q${k + 275} -20 ${k + 335} -32" stroke-width=${66 - b * 8}/>`;
+  }
+  s = `<g class=mw filter="url(#hmw)">${s}</g>`;
+  for (let i = 0; i < 130; i++) for (const k of [-390, 0, 390]) {
+    const r = 0.35 + noise(i, 7) * 0.7;
+    s += ell(k + i * 3 + noise(i, 8) * 3, noise(i, 3) * 225, r, r, '#e7e5f4', f1((0.3 + 0.45 * noise(i, 9) + 0.08 * Math.sin(i)) * 100) / 100);
+  }
+  return `<g class=sky-night><g class=cel>${s}</g>${ell(306, 56, 16, 16, '#d3dfeb', 0.84)}${ell(301, 51, 15, 15, '#1d2841')}</g>`;
+}
+function scene() {
+  let s = night();
+  ['var(--h0)', 'var(--h1)', 'var(--h2)', 'var(--h3)'].forEach((fill, r) => {
     let d = 'M-85 330';
     for (let i = -4; i <= 14; i++) d += `L${i * 35} ${f1(147 + r * 30 + noise(i, r + 17) * 36)}`;
     s += `<path d="${d}L475 330Z" fill="${fill}"/>`;
   });
-  s += '<path d="M-60 258Q165 228 450 268L450 330L-60 330Z" fill="url(#hgr)"/>';
+  s += '<path class=gd d="M-60 258Q165 228 450 268L450 330L-60 330Z"/>';
   for (let i = -1; i <= 2; i++) {
     const x = i * 160;
-    s += `<path d="M${x + 130} 258Q${x + 40} 430 ${x + 180} 640L${x + 226} 640Q${x + 62} 438 ${x + 145} 258Z" fill="#d2c48c" opacity=".18"/>`;
-    s += `<path d="M${x} 277Q${x - 35} 395 ${x + 130} 520L${x + 55} 566Q${x - 55} 389 ${x - 30} 290Z" fill="#334c2e" opacity=".12"/>`;
+    s += `<path d="M${x + 130} 258Q${x + 40} 430 ${x + 180} 640L${x + 226} 640Q${x + 62} 438 ${x + 145} 258Z" fill="var(--lw)" opacity=".18"/>`;
+    s += `<path d="M${x} 277Q${x - 35} 395 ${x + 130} 520L${x + 55} 566Q${x - 55} 389 ${x - 30} 290Z" fill="var(--sh)" opacity=".12"/>`;
   }
   for (let i = -152; i <= 1650; i++) {
     const y = 270 + noise(i, 19) * 370;
-    if (y < 330) s += ell(Math.floor(i / 19) * 5 + noise(i, 8) * 5, y, 0.3 + noise(i, 2) * 0.7, 0.3, '#e8e3b3', 0.13);
+    if (y < 330) s += ell(Math.floor(i / 19) * 5 + noise(i, 8) * 5, y, 0.3 + noise(i, 2) * 0.7, 0.3, 'var(--st)', 0.13);
   }
   // Barn, door, trim and lit window; then the trees (tile ±1 too, where it reaches the frame).
-  s += '<path d="M153 243L180 219L210 242L210 279L153 279Z" fill="#a86e52"/><path d="M148 245L180 215L216 243L209 246L180 224L155 248Z" fill="#536456"/>';
-  s += rect(175, 252, 14, 27, '#344635') + rect(175, 235, 9, 9, '#e5dfb8', 0.8);
+  s += '<path d="M153 243L180 219L210 242L210 279L153 279Z" fill="var(--bn)"/><path d="M148 245L180 215L216 243L209 246L180 224L155 248Z" fill="var(--rf)"/>';
+  s += rect(175, 252, 14, 27, 'var(--dr)') + rect(175, 235, 9, 9, 'var(--wn)', 0.8);
   for (const tile of [-1, 0, 1]) for (const [tx, ty, sc] of [[7, 225, 1], [365, 228, 1.1], [238, 258, 0.5], [326, 262, 0.38]]) {
     const x = tile * 390 + tx;
     if (x < -60 || x > 450) continue;
     // The trunk stays put; leaf clusters sway in 4 groups on the shared phase, upper ones further.
-    s += rect(x - 2 * sc, ty - 8 * sc, 4 * sc, 45 * sc, '#776745');
+    s += rect(x - 2 * sc, ty - 8 * sc, 4 * sc, 45 * sc, 'var(--tk)');
     const g = ['', '', '', ''], lift = [0, 0, 0, 0];
     for (let i = 0; i < 22; i++) {
       const dx = (noise(i, 20) - 0.5) * 48 * sc, dy = (noise(i, 7) - 0.5) * 35 * sc;
-      g[i % 4] += ell(x + dx, ty + dy, 9 * sc, 11 * sc, i % 3 === 0 ? '#859b5c' : '#66874f', 0.9) + ell(x + dx - 2 * sc, ty + dy - 3 * sc, 5 * sc, 4 * sc, '#b0b67b', 0.1);
+      g[i % 4] += ell(x + dx, ty + dy, 9 * sc, 11 * sc, i % 3 === 0 ? 'var(--l1)' : 'var(--l2)', 0.9) + ell(x + dx - 2 * sc, ty + dy - 3 * sc, 5 * sc, 4 * sc, 'var(--lh)', 0.1);
       lift[i % 4] += (1.1 - (dy / (35 * sc)) * 0.35) / 6;
     }
     g.forEach((c, k) => { s += `<g class=cn data-a="${f1(anchor(x) + k * 0.5 + 0.35)}" data-l="${f1(sc * lift[k] * 100) / 100}">${c}</g>`; });
   }
-  for (let i = -2; i <= 9; i++) s += rect(i * 52, 249, 6, 44, '#9c916a') + rect(i * 52 + 1, 249, 1.4, 44, '#e2d7ac', 0.5);
-  for (const dy of [4, 22]) s += rect(-60, 256 + dy, 510, 5, '#8b825d') + rect(-60, 256 + dy, 510, 1.3, '#d6c99f', 0.8);
+  for (let i = -2; i <= 9; i++) s += rect(i * 52, 249, 6, 44, 'var(--fp)') + rect(i * 52 + 1, 249, 1.4, 44, 'var(--fh)', 0.5);
+  for (const dy of [4, 22]) s += rect(-60, 256 + dy, 510, 5, 'var(--fr)') + rect(-60, 256 + dy, 510, 1.3, 'var(--fl)', 0.8);
   for (let i = -5; i <= 48; i++) {
     const x = i * 9, y = 298 + noise(i, 43) * 24;
     let b = '';
     for (let k = 0; k < 3; k++) b += `M${x + 2 * k} ${f1(y)}Q${x + 2 * k - 1} ${f1(y - 5)} ${x + 2 * k - 3} ${f1(y - 8 - noise(i, 4) * 4)}`;
     s += `<path class=gt data-x=${x} data-y="${f1(y)}" d="${b}"/>`;
   }
+  // Sun / moon direction: the cast light starts at the sun's side by day, the moon's (mirrored, x 390) at night.
+  s += '<rect class=wa width="390" height="320"/>';
   return `<svg class=rs viewBox="0 0 390 320" preserveAspectRatio="xMidYMax slice" aria-hidden=true>${s}</svg>`;
 }
 
@@ -75,7 +92,11 @@ function scene() {
 // avatars: legs rotate by the inherited `--g` (gait), manes skew by `--mane` (storm), so instances need no per-leaf DOM.
 const defs = document.createElementNS(NS, 'svg');
 defs.setAttribute('class', 'hdefs');
-defs.innerHTML = '<defs><linearGradient id=hgr gradientUnits=userSpaceOnUse x1=0 y1=250 x2=0 y2=640><stop offset=0 stop-color="#bcc17b"/><stop offset=".5" stop-color="#8e9c58"/><stop offset=1 stop-color="#485e3b"/></linearGradient></defs>';
+defs.innerHTML = '<defs><linearGradient id=hgr gradientUnits=userSpaceOnUse x1=0 y1=250 x2=0 y2=640><stop offset=0 stop-color="#bcc17b"/><stop offset=".5" stop-color="#8e9c58"/><stop offset=1 stop-color="#485e3b"/></linearGradient>' +
+  '<linearGradient id=hgrn gradientUnits=userSpaceOnUse x1=0 y1=250 x2=0 y2=640><stop offset=0 stop-color="#63746a"/><stop offset=".5" stop-color="#415d55"/><stop offset=1 stop-color="#273f3e"/></linearGradient>' +
+  '<linearGradient id=hwd gradientUnits=userSpaceOnUse x1=0 y1=0 x2=195 y2=500><stop offset=0 stop-color="#ffeeab" stop-opacity=".03"/><stop offset=1 stop-color="#ffeeab" stop-opacity="0"/></linearGradient>' +
+  '<linearGradient id=hwn gradientUnits=userSpaceOnUse x1=390 y1=0 x2=195 y2=500><stop offset=0 stop-color="#bbcfe4" stop-opacity=".03"/><stop offset=1 stop-color="#bbcfe4" stop-opacity="0"/></linearGradient>' +
+  '<filter id=hmw x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation=6 /></filter></defs>';
 fetch(document.currentScript.src.replace(/herd\.js$/, 'horses.svg')).then(r => r.text()).then(t => {
 const src = document.createElementNS(NS, 'svg');
 src.innerHTML = t;
@@ -95,7 +116,7 @@ B.classList.add('hz');
 }).catch(() => {});
 
 B.insertAdjacentHTML('beforeend', `<div id=herd hidden><div class=hpages></div><div class=hrain></div><div class=hflash></div>
-<button type=button class=hx aria-label="close herd mode">×</button><p class=hcap></p><div class=hq hidden></div></div>`);
+<button type=button class=hlt></button><button type=button class=hx aria-label="close herd mode">×</button><p class=hcap></p><div class=hq hidden></div></div>`);
 const H = $('#herd'), PG = H.querySelector('.hpages'), cap = $('.hcap'), info = $('.hq'), rain = $('.hrain'), flash = $('.hflash');
 B.prepend(defs);
 // #58: the header's Herd button is our horse (the default coat), not an emoji.
@@ -169,6 +190,7 @@ function page(key) {
   p.innerHTML = `<div class=hs><p><b></b> <span class=n></span> <span class=dots></span></p><p class=sum></p></div><div class=hn></div>
 <div class=hr><div class=hc>${clouds()}</div>${scene()}<div class=fog></div></div><div class=hb></div>`;
   p._trees = [...p.querySelectorAll('.cn')].map(g => [g, +g.dataset.a, +g.dataset.l]);
+  p._cel = p.querySelector('.cel');
   p._grass = [...p.querySelectorAll('.gt')].map(g => [g, +g.dataset.x, +g.dataset.y]);
   p._key = key;
   return p;
@@ -259,16 +281,18 @@ const here = () => [...pages.values()][Math.round(PG.scrollLeft / Math.max(1, PG
 function herdPage() { return H.hidden ? null : here(); }
 PG.addEventListener('scroll', () => { const p = here(); if (p && p._key !== saved) { saved = p._key; put('herdp', saved); } }, { passive: true });
 
-let raf = 0, lastT = 0, drift = 0, flashAt = -99, nextFlash = 0, frames = 0, fpsAt = 0;
+let raf = 0, lastT = 0, drift = 0, cel = 0, flashAt = -99, nextFlash = 0, frames = 0, fpsAt = 0;
 function frame(ms) {
   raf = 0;
   if (H.hidden || document.hidden || still.matches) return;
   const t = ms / 1000, dt = Math.min(0.1, t - (lastT || t)), m = 1 + 2 * wind, p = here();
   lastT = t;
   drift = (drift + dt * 2.4 * m) % 780;
+  cel = (cel + dt * 0.7) % 390;
   if (p) {
     for (const [g, a, l] of p._trees) g.setAttribute('transform', `translate(${f1(sway(t, a, WIND.canopy * l * m))} ${f1(sway(t, a + 1.9, 0.5 * l * m))})`);
     for (const [g, x, y] of p._grass) { const b = bend(t, x, WIND.grass * m) / 10; g.setAttribute('transform', `matrix(1 0 ${-b.toFixed(3)} 1 ${(b * y).toFixed(2)} 0)`); }
+    if (H.classList.contains('night')) p._cel.setAttribute('transform', `translate(${cel.toFixed(2)} 0)`);
     p.querySelector('.hc').style.transform = `translateX(${((drift - 780) * (p._k || 1)).toFixed(1)}px)`;
     // Working horses trot (diagonal leg pairs, Corral's 0.4 s stride) and roam a little.
     p._walk.forEach((s, i) => {
@@ -313,6 +337,21 @@ function herd(on) {
 }
 $('#herd-on').onclick = () => herd(true);
 $('.hx').onclick = () => herd(false);
+// #71 ranch light, Corral's Auto/Day/Night: [A]/[☀]/[☾] left of [×] cycles them, remembered on this phone (`?light=` overrides
+// for a demo). Auto is the phone clock, Day 07:00–19:00, re-checked every minute and on resume.
+const LIGHTS = ['auto', 'day', 'night'], ICON = { auto: 'A', day: '☀', night: '☾' }, lb = $('.hlt');
+const nightAt = (l, d) => l === 'night' || (l === 'auto' && (d.getHours() < 7 || d.getHours() >= 19));
+let light = [DBG.get('light'), get('herd-light')].find(l => LIGHTS.includes(l)) || 'auto';
+function ranch() {
+  const n = nightAt(light, new Date());
+  H.classList.toggle('night', n);
+  lb.textContent = ICON[light];
+  lb.setAttribute('aria-label', `ranch light: ${light}${light === 'auto' ? ` (${n ? 'night' : 'day'} now)` : ''}`);
+}
+lb.onclick = () => { light = LIGHTS[(LIGHTS.indexOf(light) + 1) % 3]; put('herd-light', light); ranch(); };
+ranch();
+setInterval(ranch, 60000);
+document.addEventListener('visibilitychange', ranch);
 // #39 demo: a weather switcher sets the host values client-side, as `/herd.json?weather=` does on loopback.
 const WX = { calm: [0.1, 'normal'], gusty: [0.7, 'normal'], storm: [1.3, 'normal'], fog: [0.3, 'warn'] };
 if (DEMO) H.insertAdjacentHTML('beforeend', `<p class=hwx>${Object.keys(WX).map(w => `<button type=button value=${w}>${w}</button>`).join('')}</p>`);

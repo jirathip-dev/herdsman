@@ -86,8 +86,36 @@
       if (!DBG.get('check')) { $('#needs').hidden = true; scrollTo(0, 0); }
     },
     events: () => tab('events'),
-    herd1: () => herd(true),
-    herd2: () => herd(true),
+    herd1: () => { herd(true); light = 'day'; ranch(); }, // #71: day shots, whatever the runner's clock says
+    herd2: () => { herd(true); light = 'day'; ranch(); },
+    // #71: Auto is night before 07:00 and from 19:00; [A] cycles auto → day → night, each stored; a fresh load of the
+    // page on this phone (an iframe: virtual time runs no reload) comes back at the last tap, night: the night shot.
+    'herd-night': async () => {
+      herd(true);
+      const at = (h, m) => new Date(2026, 10, 1, h, m);
+      for (const [h, m, n] of [[6, 59, true], [7, 0, false], [18, 59, false], [19, 0, true]]) if (nightAt('auto', at(h, m)) !== n) early.push(`auto at ${h}:${m}: not ${n ? 'night' : 'day'}`);
+      if (light !== 'auto') early.push(`a new phone starts at ${light}, not auto`);
+      for (const want of ['day', 'night', 'auto', 'day', 'night']) {
+        lb.click();
+        const n = nightAt(want, new Date()), label = 'ranch light: ' + want + (want === 'auto' ? ` (${n ? 'night' : 'day'} now)` : '');
+        if (lb.getAttribute('aria-label') !== label || lb.textContent !== ICON[want] || get('herd-light') !== want || H.classList.contains('night') !== n) early.push(`tap to ${want}: [${lb.textContent}] "${lb.getAttribute('aria-label')}", stored ${get('herd-light')}, night ${H.classList.contains('night')}`);
+      }
+      const f = Object.assign(document.createElement('iframe'), { src: 'index.html', hidden: true });
+      await new Promise(r => { f.onload = r; B.append(f); });
+      await wait();
+      const d = f.contentDocument, b = d.querySelector('.hlt');
+      if (!b || b.textContent !== '☾' || !d.querySelector('#herd.night')) early.push(`after a reload: [${b && b.textContent}], #herd "${(d.querySelector('#herd') || {}).className}": the choice is lost`);
+      f.remove();
+    },
+    'herd-night-storm': async () => { // the demo's [storm] at night: darker sky, rain on
+      herd(true);
+      light = 'night';
+      ranch();
+      await wait();
+      await wait();
+      $('.hwx button[value=storm]').click();
+      if (!H.matches('.night.storm')) early.push(`#herd is "${H.className}", not night and storm`);
+    },
     'herd-scroll': () => herd(true),
     'queue-scroll': () => { tab('queue'); $$('#queue details.q').forEach(d => { d.open = true; }); },
     toast: () => { // #66: a fixture ▲ POST (the redirect a live server sends), through the page's fetch-submit path
@@ -102,7 +130,8 @@
   };
   let toasted = null;
   const dragged = [];
-  const ROOTS = { sheet: () => [$('#sheet')], herd1: () => [hp(0), $('.hx'), $('.hwx')], herd2: () => [hp(1), $('.hx'), $('.hwx')] };
+  const HP = { herd1: 0, herd2: 1, 'herd-night': 0, 'herd-night-storm': 0 }; // the views measuring one Herd page
+  const ROOTS = { sheet: () => [$('#sheet')], ...Object.fromEntries(Object.entries(HP).map(([v, n]) => [v, () => [hp(n), $('.hlt'), $('.hx'), $('.hwx')]])) };
   const CTL = 'button:not(.lr,.hh,.hqh), .pk, [role=button]', ROW = 'summary, .lr, .hh, .hqh', NAME = '.nw, .hl b';
   const CHOICE = '.ask button[name=choice], .ask .pick'; // amendment A: wraps, ≤ 4 lines, instead of 28 px
   // A closed <details> keeps its content's boxes (content-visibility), so ask the browser what is shown.
@@ -172,9 +201,15 @@
     }
     const se = document.scrollingElement;
     if (se.scrollWidth > se.clientWidth) bad.push(`page scrolls sideways: ${se.scrollWidth}>${se.clientWidth}`);
-    if (V.startsWith('herd')) {
-      const p = hp(+V.slice(4) - 1), pr = p.getBoundingClientRect();
-      for (const e of [p.querySelector('.hs'), $('.hx')]) if (e.offsetHeight !== 28) bad.push(`${e.className}: Herd strip/[×] ${e.offsetHeight}px, not 28`);
+    if (V in HP) {
+      const p = hp(HP[V]), pr = p.getBoundingClientRect();
+      for (const e of [p.querySelector('.hs'), $('.hlt'), $('.hx')]) if (e.offsetHeight !== 28) bad.push(`${e.className}: Herd strip/[A]/[×] ${e.offsetHeight}px, not 28`);
+      // #71: the ranch-light button sits inside the strip, left of [×] (the tap checks above scrolled the page, and
+      // in a storm #herd itself: the rain tile overflows it, which only scrollIntoView can scroll).
+      p.scrollTo({ top: 0, behavior: 'instant' });
+      H.scrollTop = 0;
+      const lt = $('.hlt').getBoundingClientRect(), xr = $('.hx').getBoundingClientRect(), sr = p.querySelector('.hs').getBoundingClientRect();
+      if (lt.top < sr.top || lt.bottom > sr.bottom || lt.right > xr.left) bad.push(`[${$('.hlt').textContent}] at ${lt.left | 0}..${lt.right | 0} × ${lt.top | 0}..${lt.bottom | 0}: not in the strip (${sr.top | 0}..${sr.bottom | 0}) left of [×] (${xr.left | 0})`);
       // #65: Corral's size: lane horses 132 px wide, queued ones 53 (40 %).
       for (const [sel, w] of [['.hh svg', 132], ['.hqh svg', 53]]) {
         for (const e of p.querySelectorAll(sel)) { const x = e.getBoundingClientRect().width; if (Math.abs(x - w) > 1) bad.push(`${label(e.parentNode)}: ${sel} ${x.toFixed(1)}px wide, not ${w}`); }
