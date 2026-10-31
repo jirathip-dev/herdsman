@@ -495,7 +495,8 @@ impl<'a> Server<'a> {
         let screen = self.cached(ctx.now, 5, "herdr", &["pane", "read", l.pane.as_deref()?, "--source", "recent", "--lines", &want])?;
         let all = lanes::tail(&screen, before + lines);
         let page = &all[..all.len().saturating_sub(before)];
-        let more = all.len() == before + lines;
+        // `recent` is herdr's whole window: a short read (or the 2000 clamp) means nothing older.
+        let more = all.len() == before + lines && before + lines <= 2000;
         Some(serde_json::json!({"harness": l.harness, "turns": lanes::turns(page), "before": before + page.len(), "more": more}).to_string())
     }
 

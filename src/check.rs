@@ -318,9 +318,17 @@ pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
         let skip: Vec<String> = OWN_FILES.iter().map(|f| format!(":(exclude){f}")).collect();
         git(&[&["add", "-A", "--", "."][..], &skip.iter().map(String::as_str).collect::<Vec<_>>()].concat())?;
         let diff = git(&["diff", "--cached"])? + &git(&["log", "-p", "--format=", "HEAD", "--not", "--remotes"])?;
-        // Added lines only, lockfile checksums aside (`checksum = "…"`, `"integrity": "sha…"`): no hash false positives.
-        let lock = |l: &str| l.starts_with("checksum = \"") || l.starts_with("\"integrity\": \"sha");
-        let diff: String = diff.lines().filter_map(|l| l.strip_prefix('+')).filter(|l| !l.starts_with("++ b/") && !lock(l.trim_start())).collect::<Vec<_>>().join("\n");
+        // Added hunk lines only (a file header runs `diff --git` → `@@`), minus hash-shaped lockfile checksums.
+        let hash = |l: &str| {
+            let l = l.trim().trim_end_matches(',');
+            if let Some(h) = l.strip_prefix("checksum = \"").and_then(|v| v.strip_suffix('"')) {
+                return h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+            }
+            let Some((alg, b)) = l.strip_prefix("\"integrity\": \"sha").and_then(|v| v.strip_suffix('"')?.split_once('-')) else { return false };
+            [("256", 44), ("384", 64), ("512", 88)].contains(&(alg, b.len())) && b.bytes().all(|c| c.is_ascii_alphanumeric() || b"+/=".contains(&c))
+        };
+        let mut head = false;
+        let diff: String = diff.lines().filter(|l| { head = (head || l.starts_with("diff --git ")) && !l.starts_with("@@"); !head }).filter_map(|l| l.strip_prefix('+')).filter(|l| !hash(l)).collect::<Vec<_>>().join("\n");
         if crate::lanes::mask(&diff) != diff {
             let _ = git(&["reset", "-q"]);
             return crate::gate::refused("SECRET_IN_WIP", format!("{agent}'s unpushed diff has a secret-looking value; nothing pushed, pane kept"));

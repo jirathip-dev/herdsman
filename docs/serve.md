@@ -29,7 +29,9 @@ its details card and a transcript: `/lane?agent=&lines=200&before=<n>` returns u
 pane lines (the cap is server-side) grouped per turn (a typed prompt opens one); tool calls
 (Claude `⏺ Bash(…)`/`Read(…)` plus their indented output, Hermes `┊` runs) collapse to one line
 that taps open, long lines wrap. Refreshed every 5 s; **Load more** at the top reads older lines
-(`herdr pane read --source recent --lines <before+200>`, herdr has no separate scrollback source).
+(`herdr pane read --source recent --lines <before+200>`; herdr 0.9 has no scrollback source, only
+visible|recent|recent-unwrapped|detection, so history ends where herdr's recent window does, at most
+2,000 lines back: once a read comes back short the reply says `more: false` and the button goes).
 Paired devices only, same Host/Origin checks; an unpaired phone sees "Pair this phone to see the
 conversation" with the code entry.
 

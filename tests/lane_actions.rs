@@ -83,16 +83,32 @@ fn kill_refuses_a_secret_in_the_wip_diff() {
     assert_eq!(kinds(&c, "lane-killed"), 0);
 }
 
-/// Lockfile checksums and removed lines are not secrets; a real token beside them still is.
+/// Hash-shaped lockfile checksums, headers and removed lines are not secrets; a token anywhere else is, even on a lockfile line.
 #[test]
 fn kill_skips_lockfile_checksums_but_not_secrets() {
+    let head = "diff --git a/Cargo.lock b/Cargo.lock\n--- a/Cargo.lock\n+++ b/Cargo.lock\n@@ -1,3 +1,3 @@\n";
+    let lock = format!("{head}+checksum = \"{}\"\n+  \"integrity\": \"sha512-{}==\",\n-OLD_TOKEN=ghp_abcdefghijklmnopqrstu1234\n", "ab".repeat(32), "Qx".repeat(43));
     let (c, wt) = lane("kill-lock");
-    let lock = format!("+++ b/Cargo.lock\n+checksum = \"{}\"\n+  \"integrity\": \"sha512-{}==\",\n-OLD_TOKEN=ghp_abcdefghijklmnopqrstu1234\n", "ab".repeat(32), "Qx".repeat(40));
     let r = git(&wt, "", "1\n", &lock);
     assert_eq!(run(&c, &r, &["kill", LANE, "--yes"]).0, 0);
-    let (c, wt) = lane("kill-lock-secret");
-    let r = git(&wt, "", "1\n", &format!("{lock}+API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456\n"));
-    assert!(run(&c, &r, &["kill", LANE, "--yes"]).1.contains("REFUSED SECRET_IN_WIP"));
+    assert!(r.called(&format!("git -C {wt} push origin HEAD:refs/heads/wip/")));
+    let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc";
+    for (i, bad) in [
+        "+checksum = \"ghp_abcdefghijklmnopqrstu1234\"".to_string(),
+        "+checksum = \"sk-abcdefghijklmnopqrstuvwxyz123456\"".into(),
+        format!("+  \"integrity\": \"{jwt}\","),
+        "+++ b/token.txt ghp_abcdefghijklmnopqrstu1234".into(),
+        "diff --git a/.env b/.env\n+++ b/.env\n@@ -0,0 +1 @@\n+API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456".into(),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let (c, wt) = lane(&format!("kill-lock-secret-{i}"));
+        let r = git(&wt, "", "1\n", &format!("{lock}{bad}\n"));
+        let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
+        assert!(code == 3 && out.contains("REFUSED SECRET_IN_WIP"), "{bad}: {out}");
+        assert!(!r.called(&format!("git -C {wt} push")) && !r.called("herdr pane close"), "{bad}");
+    }
 }
 
 #[test]
