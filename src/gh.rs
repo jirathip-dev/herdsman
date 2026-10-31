@@ -1,5 +1,4 @@
-//! Cached GitHub reads: the issue spec (re-fetched only when `updatedAt` moved) and
-//! one PR/CI view per issue, fresh for 60 s, shared by `pr`, `wait`, `merge`, `check`.
+//! Cached GitHub reads: the issue spec (re-fetched when `updatedAt` moved) and PR/CI views fresh for 60 s.
 use crate::config::Fleet;
 use crate::runner::{argv, json, Runner};
 use crate::Ctx;
@@ -19,6 +18,12 @@ fn load(p: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }
 
+/// A `{"ts": …}` cache entry younger than `PR_TTL` at `now`.
+fn fresh(c: &Value, now: u64) -> bool {
+    let ts = c["ts"].as_u64().unwrap_or(0);
+    now >= ts && now - ts < PR_TTL
+}
+
 fn store(p: &Path, v: &Value) -> Result<()> {
     std::fs::create_dir_all(p.parent().unwrap_or(p))?;
     let tmp = p.with_extension("tmp");
@@ -32,8 +37,7 @@ pub fn cached_spec(ctx: &Ctx, fleet: &str, issue: u64) -> Option<Value> {
     load(&cache_path(ctx, "issue", fleet, issue))
 }
 
-/// The issue's `{title, body, updatedAt}`. With `refresh`, one small `updatedAt` read
-/// decides whether the body is fetched again; without it, the cache is trusted.
+/// The issue's `{title, body, updatedAt}`; `refresh` re-reads `updatedAt` first, else the cache is trusted.
 pub fn spec(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, issue: u64, refresh: bool) -> Result<Value> {
     let p = cache_path(ctx, "issue", fleet, issue);
     let n = issue.to_string();
@@ -54,11 +58,8 @@ pub fn spec(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, issue: u64, refre
 /// The PR for `branch` as of `now`: one `gh pr view` per 60 s. Null when there is none.
 pub fn pr(ctx: &Ctx, r: &dyn Runner, f: &Fleet, (fleet, issue): (&str, u64), branch: &str, now: u64) -> Result<Value> {
     let p = cache_path(ctx, "pr", fleet, issue);
-    if let Some(c) = load(&p) {
-        let ts = c["ts"].as_u64().unwrap_or(0);
-        if c["branch"] == branch && now >= ts && now - ts < PR_TTL {
-            return Ok(c["pr"].clone());
-        }
+    if let Some(c) = load(&p).filter(|c| c["branch"] == branch && fresh(c, now)) {
+        return Ok(c["pr"].clone());
     }
     let o = r.run("gh", &argv(&["pr", "view", branch, "-R", &f.repo, "--json", PR_FIELDS]))?;
     let pr = if o.code == 0 { serde_json::from_str(&o.stdout).unwrap_or(Value::Null) } else { Value::Null };
@@ -74,11 +75,8 @@ pub fn cached_pr(ctx: &Ctx, fleet: &str, issue: u64) -> Value {
 /// Numbers of the fleet's closed issues: one `gh issue list` per fleet, fresh for 60 s.
 pub fn closed(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, now: u64) -> Result<Vec<u64>> {
     let p = cache_path(ctx, "closed", fleet, 0);
-    if let Some(c) = load(&p) {
-        let ts = c["ts"].as_u64().unwrap_or(0);
-        if now >= ts && now - ts < PR_TTL {
-            return Ok(c["closed"].as_array().into_iter().flatten().filter_map(Value::as_u64).collect());
-        }
+    if let Some(c) = load(&p).filter(|c| fresh(c, now)) {
+        return Ok(c["closed"].as_array().into_iter().flatten().filter_map(Value::as_u64).collect());
     }
     let v = json(r, "gh", &["issue", "list", "-R", &f.repo, "--state", "closed", "--limit", "1000", "--json", "number"])?;
     let closed: Vec<u64> = v.as_array().into_iter().flatten().filter_map(|i| i["number"].as_u64()).collect();
@@ -125,8 +123,7 @@ fn check_name(c: &Value) -> &str {
     c["name"].as_str().or(c["context"].as_str()).unwrap_or("?")
 }
 
-/// The rollup narrowed to `required` names: the latest run (by `startedAt`) of each,
-/// or a `MISSING` placeholder. Empty `required` = the whole rollup.
+/// The rollup narrowed to the latest run (by `startedAt`) of each `required` name or a `MISSING` stub; empty = all.
 pub fn required(rollup: &Value, required: &[String]) -> Value {
     if required.is_empty() {
         return rollup.clone();
@@ -173,7 +170,7 @@ pub fn summary(pr: &Value, branch: &str, req: &[String]) -> String {
     )
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, clap::ValueEnum)]
 pub enum Until {
     CiDone,
     CiGreen,
@@ -203,19 +200,9 @@ fn decided(pr: &Value, until: Until, req: &[String]) -> Option<i32> {
     }
 }
 
-/// `herdsman wait`: poll the cached read with backoff (30 s doubling to 5 min).
-/// Returns 0 reached, 1 failed/closed, 124 timed out.
+/// `herdsman wait`: poll the cached read, 30 s doubling to 5 min; 0 reached, 1 failed/closed, 124 timed out.
 #[allow(clippy::too_many_arguments)]
-pub fn wait(
-    ctx: &Ctx,
-    r: &dyn Runner,
-    out: &mut dyn Write,
-    f: &Fleet,
-    lane: (&str, u64),
-    branch: &str,
-    until: Until,
-    timeout: u64,
-) -> Result<i32> {
+pub fn wait(ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, f: &Fleet, lane: (&str, u64), branch: &str, until: Until, timeout: u64) -> Result<i32> {
     let (mut t, mut delay) = (0, 30);
     loop {
         let pr = pr(ctx, r, f, lane, branch, ctx.now + t)?;

@@ -1,5 +1,4 @@
-//! Hermes: the `hooks:` key (pre_tool_call hook) + its consent in the role's existing
-//! profile; boots idle, so the kick is typed once the `❯` prompt is up.
+//! Hermes: the `hooks:` key + its consent in the role's existing profile; the kick is typed at the `❯` prompt.
 use super::{agent_start, hook_command, wait_working, Harness};
 use crate::runner::{argv, Runner};
 use crate::spawn::Plan;
@@ -35,9 +34,7 @@ impl Harness for Hermes {
         agent_start(p, "hermes", pane, a)
     }
 
-    /// Hermes boots idle and drops a prompt sent before its input is ready: wait for
-    /// the `❯` prompt, prompt + Enter, then confirm by `working` or by the screen
-    /// leaving `ctx --`.
+    /// Wait for `❯` (an early prompt is dropped), prompt + Enter, confirm by `working` or the screen leaving `ctx --`.
     fn kick_cmds(&self, p: &Plan, pane: &str) -> Vec<Vec<String>> {
         vec![
             argv(&["pane", "wait-output", pane, "--match", "❯", "--source", "visible", "--timeout", "60000"]),
@@ -69,9 +66,7 @@ impl Harness for Hermes {
     }
 }
 
-/// Record Hermes' consent for the fleet `pre_tool_call` hook, as its first-use
-/// prompt would: unconsented hooks never register on non-TTY runs. Other
-/// approvals are kept; an existing identical approval leaves the file untouched.
+/// Record Hermes' first-use consent for the hook (unconsented hooks never register on non-TTY runs), keeping others.
 fn approve_hook(path: &Path, cmd: &str) -> Result<()> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let mut data: Value = serde_json::from_str(&text).ok().filter(Value::is_object).unwrap_or_else(|| json!({}));
@@ -86,8 +81,7 @@ fn approve_hook(path: &Path, cmd: &str) -> Result<()> {
     crate::config::write_atomic(path, &serde_json::to_string_pretty(&data)?)
 }
 
-/// Write only the role's MCP servers under the fleet profile's `mcp_servers:`
-/// (removed when there are none). Profiles that do not exist are left alone.
+/// Set an existing profile's `mcp_servers:` to only the role's servers (removed when there are none).
 pub fn set_mcp(ctx: &Ctx, profile: &str, servers: &serde_json::Map<String, Value>) -> Result<()> {
     let yaml = ctx.hermes.join(profile).join("config.yaml");
     let Ok(text) = std::fs::read_to_string(&yaml) else { return Ok(()) };
@@ -101,14 +95,12 @@ pub fn set_mcp(ctx: &Ctx, profile: &str, servers: &serde_json::Map<String, Value
     Ok(())
 }
 
-/// Replace the top-level `hooks:` block of a Hermes config.yaml with `block`, in
-/// place (appended when absent); every other line is kept byte for byte.
+/// Replace config.yaml's top-level `hooks:` block in place, as `set_block` does.
 pub fn set_hooks(text: &str, block: &str) -> String {
     set_block(text, "hooks:", block)
 }
 
-/// Replace the top-level block starting with `key` by `block` (appended when absent;
-/// an empty `block` removes it).
+/// Replace the top-level `key` block by `block` (appended when absent, removed when empty); other bytes kept.
 fn set_block(text: &str, key: &str, block: &str) -> String {
     let (mut out, mut skip, mut done) = (String::new(), false, false);
     for line in text.split_inclusive('\n') {
@@ -132,9 +124,7 @@ fn set_block(text: &str, key: &str, block: &str) -> String {
     out
 }
 
-/// Drop `agent.reasoning_effort` (the role's effort now comes from fleet.toml): only
-/// the direct child of the top-level `agent:` block; nested keys and every other line
-/// are kept byte for byte.
+/// Drop the direct child `agent.reasoning_effort` (fleet.toml owns effort); every other byte is kept.
 pub fn drop_reasoning_effort(text: &str) -> String {
     let (mut out, mut in_agent, mut child) = (String::new(), false, None);
     for line in text.split_inclusive('\n') {

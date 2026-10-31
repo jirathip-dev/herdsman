@@ -1,11 +1,11 @@
-//! The page's Lanes tab: every herdr agent joined with the herdsman log, grouped by state
-//! then fleet (agents in unregistered dirs go to Others), plus a masked activity line
-//! and transcript taken from the agent's visible pane text.
+//! The page's Lanes tab (docs/serve.md): herdr agents joined with the log, grouped, plus masked pane text.
 use crate::config::Config;
 use crate::events::{Event, IssueState};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+
+type States = BTreeMap<(String, u64), IssueState>;
 
 #[derive(Debug, Default, Clone)]
 pub struct Lane {
@@ -30,14 +30,7 @@ pub struct Lane {
 }
 
 /// Join `herdr agent list` rows with the log. `ws` maps workspace id -> label.
-pub fn join(
-    cfg: &Config,
-    worktrees: &Path,
-    events: &[Event],
-    st: &BTreeMap<(String, u64), IssueState>,
-    agents: &[Value],
-    ws: &BTreeMap<String, String>,
-) -> Vec<Lane> {
+pub fn join(cfg: &Config, worktrees: &Path, events: &[Event], st: &States, agents: &[Value], ws: &BTreeMap<String, String>) -> Vec<Lane> {
     let spawns: Vec<&Event> = events.iter().rev().filter(|e| e.kind == "spawn").collect();
     let (mut out, mut seen) = (vec![], BTreeSet::new());
     for a in agents {
@@ -76,17 +69,8 @@ pub fn join(
 
 fn from_spawn(e: &Event, l: Lane) -> Lane {
     let s = |k: &str| e.str(k).map(String::from);
-    Lane {
-        fleet: Some(e.fleet.clone()),
-        issue: e.issue,
-        role: s("role").unwrap_or_default(),
-        harness: s("harness").unwrap_or_default(),
-        model: s("model"),
-        effort: s("effort"),
-        account: s("account"),
-        since: e.ts,
-        ..l
-    }
+    let (role, harness) = (s("role").unwrap_or_default(), s("harness").unwrap_or_default());
+    Lane { fleet: Some(e.fleet.clone()), issue: e.issue, role, harness, model: s("model"), effort: s("effort"), account: s("account"), since: e.ts, ..l }
 }
 
 /// Section order on the page; any other herdr state (unknown) counts as idle.
@@ -94,8 +78,7 @@ pub const SECTIONS: [&str; 5] = ["blocked", "working", "idle", "done", "dead"];
 
 pub type Groups<'a> = Vec<(&'static str, Vec<(String, Vec<&'a Lane>)>)>;
 
-/// State sections in [`SECTIONS`] order, each split by fleet (alphabetical, Others last),
-/// newest `changed` first inside; empty sections are left out.
+/// Non-empty [`SECTIONS`], each split by fleet (alphabetical, Others last), newest `changed` first.
 pub fn group<'a>(all: &'a [Lane], changed: impl Fn(&Lane) -> u64) -> Groups<'a> {
     let section = |l: &Lane| SECTIONS.iter().position(|s| *s == l.state).unwrap_or(2);
     let mut v: Vec<&Lane> = all.iter().collect();
@@ -118,8 +101,7 @@ pub fn group<'a>(all: &'a [Lane], changed: impl Fn(&Lane) -> u64) -> Groups<'a> 
 const HIDE: &str = "•••";
 const PREFIXES: [&str; 8] = ["sk-", "ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "xox", "xapp-"];
 
-/// Mask anything that looks like a secret: `sk-…`, `ghp_…`, `gho_…`, `xox…` tokens,
-/// JWTs, hex/base64 runs of 32+ chars, and the values of `*KEY=` / `*TOKEN=` / `*SECRET=`.
+/// Mask secret-looking runs: `PREFIXES` tokens, JWTs, 32+ char hex/base64, `*KEY=`/`*TOKEN=`/`*SECRET=` values.
 pub fn mask(s: &str) -> String {
     let tok = |c: char| c.is_ascii_alphanumeric() || "-_+/=.".contains(c);
     let (mut out, mut rest, mut hide_next) = (String::new(), s, false);
@@ -148,9 +130,7 @@ fn word(w: &str) -> (String, bool) {
         return (format!("{p}{HIDE}"), false);
     }
     let jwt = w.starts_with("eyJ") && w.matches('.').count() >= 2;
-    let long = |seg: &str| {
-        seg.len() >= 32 && seg.chars().any(|c| c.is_ascii_digit()) && seg.chars().any(|c| c.is_ascii_alphabetic())
-    };
+    let long = |seg: &str| seg.len() >= 32 && seg.chars().any(|c| c.is_ascii_digit()) && seg.chars().any(|c| c.is_ascii_alphabetic());
     if jwt || w.split(['.', '/', '-']).any(long) {
         return (HIDE.into(), false);
     }
@@ -162,8 +142,7 @@ fn chrome(l: &str) -> bool {
     l.chars().all(|c| "─━│┃╭╮╰╯┌┐└┘═╌┄▔▁ ".contains(c)) || l.starts_with(['❯', '⏵', '>', '›'])
 }
 
-/// The agent's latest action from its visible pane, masked, cut to 60 chars: Claude
-/// Code's last `⏺` line, Hermes's last tool line (`💻` / `┊`), else the last non-chrome line.
+/// The latest action on screen (Claude `⏺`, Hermes `💻`/`┊`, else non-chrome), masked, ≤ 60 chars.
 pub fn activity(harness: &str, screen: &str) -> String {
     let lines: Vec<&str> = screen.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
     let line = match harness {

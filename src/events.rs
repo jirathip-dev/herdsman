@@ -33,20 +33,19 @@ impl Event {
     pub fn str(&self, k: &str) -> Option<&str> {
         self.data.get(k).and_then(Value::as_str)
     }
+    /// A `kind` event about `fleet` #`issue`.
+    pub fn is(&self, kind: &str, fleet: &str, issue: u64) -> bool {
+        self.kind == kind && self.fleet == fleet && self.issue == Some(issue)
+    }
 }
 
-/// Append one line and fsync. If a previous writer died mid-line, the torn
-/// tail is terminated first so it can never merge with this record.
+/// Append one line and fsync, terminating a torn tail (a writer died mid-line) first.
 pub fn append(path: &Path, ev: &Event) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let mut f = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .read(true)
-        .open(path)
-        .with_context(|| format!("cannot open event log {}", path.display()))?;
+    let f = OpenOptions::new().create(true).append(true).read(true).open(path);
+    let mut f = f.with_context(|| format!("cannot open event log {}", path.display()))?;
     let mut line = serde_json::to_string(ev)?;
     line.push('\n');
     let len = f.metadata()?.len();
@@ -64,8 +63,7 @@ pub fn append(path: &Path, ev: &Event) -> Result<()> {
     Ok(())
 }
 
-/// Read every complete record. A torn last line (writer killed mid-append) is
-/// skipped silently; any other unparsable non-empty line is skipped with a warning.
+/// Every complete record: a torn last line is skipped silently, any other bad line with a warning.
 pub fn read(path: &Path) -> Result<Vec<Event>> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
@@ -91,14 +89,8 @@ pub fn emit(state: &Path, cfg: &Config, ev: Event) -> Result<()> {
         let payload = if n.format.as_deref() == Some("json") { serde_json::to_string(&ev)? } else { plain(&ev) + "\n" };
         if let Err(e) = run_notifier(&n.cmd, &payload) {
             eprintln!("herdsman: notifier `{}` failed: {e:#}", n.cmd);
-            let fail = Event::new(
-                ev.ts,
-                &ev.fleet,
-                ev.issue,
-                "notify-failed",
-                serde_json::json!({"cmd": n.cmd, "event": ev.kind, "error": format!("{e:#}")}),
-            );
-            let _ = append(state, &fail);
+            let d = serde_json::json!({"cmd": n.cmd, "event": ev.kind, "error": format!("{e:#}")});
+            let _ = append(state, &Event::new(ev.ts, &ev.fleet, ev.issue, "notify-failed", d));
         }
     }
     Ok(())
@@ -128,20 +120,14 @@ pub fn plain(ev: &Event) -> String {
     }
 }
 
-/// Runs with the caller's environment minus Hermes-owned vars (`HERMES_*`, `_HERMES_*`):
-/// a lane's Hermes profile must not leak into the notifier's own `hermes send`.
+/// Runs without `HERMES_*` / `_HERMES_*`: a lane's Hermes profile must not leak into the notifier's `hermes send`.
 fn run_notifier(cmd: &str, payload: &str) -> Result<()> {
     let mut c = Command::new("sh");
     let hermes = |k: &std::ffi::OsString| k.to_string_lossy().trim_start_matches('_').starts_with("HERMES_");
     for (k, _) in std::env::vars_os().filter(|(k, _)| hermes(k)) {
         c.env_remove(k);
     }
-    let mut child = c
-        .args(["-c", cmd])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+    let mut child = c.args(["-c", cmd]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
     // A sink that exits without reading stdin must not fail the write.
     let _ = child.stdin.take().unwrap().write_all(payload.as_bytes());
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -176,21 +162,21 @@ pub struct IssueState {
     pub verdicts: Vec<(String, String)>,
 }
 
+/// The newest `spawn` of `agent`.
+pub fn last_spawn<'a>(events: &'a [Event], agent: &str) -> Option<&'a Event> {
+    events.iter().rev().find(|e| e.kind == "spawn" && e.str("agent") == Some(agent))
+}
+
 /// Events `herdsman check` and notifiers write about an issue; they are not activity.
 pub const PASSIVE: [&str; 5] = ["stall", "lane-dead", "ready-unmerged", "notify-failed", "account-capped"];
 
-/// Current per-issue state: queued → impl → review(n) → fix(n) → ready → merged,
-/// plus blocked / needs-human.
+/// Current per-issue state (`crate::STATES`).
 pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
     let mut m: BTreeMap<(String, u64), IssueState> = BTreeMap::new();
     for e in events {
         let Some(n) = e.issue else { continue };
-        let s = m.entry((e.fleet.clone(), n)).or_insert_with(|| IssueState {
-            fleet: e.fleet.clone(),
-            issue: n,
-            state: "queued".into(),
-            ..Default::default()
-        });
+        let new = || IssueState { fleet: e.fleet.clone(), issue: n, state: "queued".into(), ..Default::default() };
+        let s = m.entry((e.fleet.clone(), n)).or_insert_with(new);
         // A merged issue never leaves `merged`, whatever is logged after it.
         if PASSIVE.contains(&e.kind.as_str()) || s.state == "merged" {
             continue;
@@ -243,8 +229,7 @@ impl IssueState {
         self.verdicts.iter().any(|(s, _)| s.eq_ignore_ascii_case(sha))
     }
 
-    /// The lane that should be doing work now: impl while implementing or fixing,
-    /// rev while a review round is open; none once ready, blocked or merged.
+    /// The lane that should be working now: impl in impl/fix, rev in review; none once ready, blocked or merged.
     pub fn active_lane(&self) -> Option<(&str, &str)> {
         let role = if self.state.starts_with("review") {
             "rev"
@@ -275,12 +260,6 @@ pub fn age(secs: u64) -> String {
 }
 
 pub fn status_line(s: &IssueState, now: u64) -> String {
-    format!(
-        "{:<12} #{:<5} {:<12} {:<24} {}",
-        s.fleet,
-        s.issue,
-        s.state,
-        s.lane.as_deref().unwrap_or("-"),
-        age(now.saturating_sub(s.last_ts))
-    )
+    let lane = s.lane.as_deref().unwrap_or("-");
+    format!("{:<12} #{:<5} {:<12} {lane:<24} {}", s.fleet, s.issue, s.state, age(now.saturating_sub(s.last_ts)))
 }

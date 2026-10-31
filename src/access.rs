@@ -1,9 +1,7 @@
-//! What a lane may use: the Anthropic account a Claude lane runs on (an ordered
-//! fallback list that skips capped accounts) and the MCP servers it is given.
-//! Tokens stay in the env file: herdsman checks they exist, never reads them out.
+//! What a lane may use: its Claude account (first uncapped of an ordered list; tokens never read out) and MCP servers.
 use crate::config::{expand, Config, Fleet, Role};
-use crate::events::{emit, fold, read, Event};
-use crate::gate::refuse;
+use crate::events::{emit, fold, last_spawn, read, Event};
+use crate::gate::refused;
 use crate::runner::{argv, Runner};
 use crate::Ctx;
 use anyhow::{anyhow, bail, Context, Result};
@@ -24,9 +22,7 @@ pub fn capped_until(cfg: &Config, events: &[Event], name: &str, now: u64) -> Opt
     (last.kind == "account-capped" && until > now).then_some(until)
 }
 
-/// The role's first uncapped account and the pane-shell assignment that exports its
-/// token (`CLAUDE_CODE_OAUTH_TOKEN="$(. '<env file>' && printf %s "$VAR")"`), so the
-/// value goes from the env file straight into the lane's env. None: the role names no account.
+/// The role's first uncapped account and the pane-shell assignment that exports its token straight from the env file.
 pub fn pick(cfg: &Config, events: &[Event], role: &Role, now: u64) -> Result<Option<(String, String)>> {
     let names = role.account_list();
     if names.is_empty() {
@@ -66,10 +62,8 @@ pub fn list(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Res
             on.insert(a, e.str("account").unwrap_or_default());
         }
     }
-    let open = |a: &str| {
-        let e = events.iter().rev().find(|e| e.kind == "spawn" && e.str("agent") == Some(a));
-        e.is_some_and(|e| e.issue.is_none_or(|n| states.get(&(e.fleet.clone(), n)).is_none_or(|s| s.state != "merged")))
-    };
+    let merged = |e: &Event| e.issue.is_some_and(|n| states.get(&(e.fleet.clone(), n)).is_some_and(|s| s.state == "merged"));
+    let open = |a: &str| last_spawn(&events, a).is_some_and(|e| !merged(e));
     if cfg.accounts.names.is_empty() {
         writeln!(out, "no [accounts] configured")?;
     }
@@ -124,12 +118,11 @@ fn glob(pat: &str, s: &str) -> bool {
     true
 }
 
-/// The role's MCP servers, copied by name from the repo's `.mcp.json`. Refuses
-/// `MCP_FORBIDDEN` when a name matches `mcp_deny`.
+/// The role's MCP servers, copied by name from the repo's `.mcp.json` (`MCP_FORBIDDEN` if one matches `mcp_deny`).
 pub fn mcp_servers(cfg: &Config, f: &Fleet, role: &Role) -> Result<Map<String, Value>> {
     for n in &role.mcp {
         if let Some(d) = cfg.mcp_deny.iter().find(|d| glob(d, n)) {
-            return Err(refuse("MCP_FORBIDDEN", format!("MCP server `{n}` matches mcp_deny `{d}`; lanes never get it")).into());
+            return refused("MCP_FORBIDDEN", format!("MCP server `{n}` matches mcp_deny `{d}`; lanes never get it"));
         }
     }
     if role.mcp.is_empty() {

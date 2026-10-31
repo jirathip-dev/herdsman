@@ -1,6 +1,4 @@
-//! Harness adapters: what differs between the agent CLIs a lane runs — profile and
-//! hook install, launch argv, settle + kick. A new harness is one file here plus its
-//! name in `NAMES` (fleet.toml validation and `herdsman set --harness` follow).
+//! Harness adapters (profile + hook install, launch argv, kick): a new harness is one file plus its `NAMES` entry.
 mod claude;
 mod dsh;
 mod hermes;
@@ -19,8 +17,7 @@ pub const NAMES: [&str; 3] = ["claude", "hermes", "dsh"];
 /// Effort levels a role may set (`effort = "…"`).
 pub const EFFORTS: [&str; 5] = ["none", "low", "medium", "high", "xhigh"];
 
-/// The levels `harness` can be launched with: Claude `--effort` (`none` omits it),
-/// Hermes `--reasoning`; dsh has no effort setting yet (herdsman-archive#22).
+/// The levels `harness` takes: Claude `--effort` (`none` omits it), Hermes `--reasoning`; dsh none yet.
 pub fn efforts(harness: &str) -> &'static [&'static str] {
     match harness {
         "dsh" => &["none"],

@@ -1,6 +1,4 @@
-//! Claude Code PreToolUse / Hermes pre_tool_call hook: hard-blocks merges, GitHub
-//! comments, pushes to protected branches, edits of protected config and reviewer
-//! writes, pointing agents at `herdsman`.
+//! Claude PreToolUse / Hermes pre_tool_call hook: the tool guard of `herdsman help --agent`.
 use serde_json::{json, Value};
 
 pub struct Policy {
@@ -17,8 +15,7 @@ const EDIT_TOOLS: [&str; 6] = ["Edit", "Write", "MultiEdit", "NotebookEdit", "pa
 const GIT_WRITES: [&str; 8] = ["commit", "push", "merge", "rebase", "cherry-pick", "revert", "am", "reset"];
 const WRITERS: [&str; 9] = ["rm", "mv", "cp", "tee", "truncate", "chmod", "ln", "install", "dd"];
 
-/// Returns Some(reason) to deny. `cur_branch` resolves HEAD for a bare `git push`.
-/// Takes Claude's payload (`Bash`, `tool_input`) and Hermes' (`terminal`, `tool_input` or `args`).
+/// Some(reason) denies Claude's (`Bash`) or Hermes' (`terminal`, `args`) call; `cur_branch` resolves HEAD.
 pub fn decide(input: &Value, p: &Policy, cur_branch: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     let tool = input["tool_name"].as_str().unwrap_or_default();
     let ti = if input["tool_input"].is_object() { &input["tool_input"] } else { &input["args"] };
@@ -48,11 +45,7 @@ fn protected_path<'a>(s: &str, p: &'a Policy) -> Option<&'a str> {
 fn bash(cmd: &str, cwd: &str, p: &Policy, cur_branch: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     let seg_breaks: &[char] = &[';', '|', '&', '\n', '(', ')', '`'];
     for seg in cmd.split(seg_breaks) {
-        let toks: Vec<String> = seg
-            .split_whitespace()
-            .map(|t| t.trim_matches(|c| c == '"' || c == '\'').to_string())
-            .filter(|t| !t.is_empty())
-            .collect();
+        let toks: Vec<String> = seg.split_whitespace().map(|t| t.trim_matches(['"', '\'']).to_string()).filter(|t| !t.is_empty()).collect();
         let t: Vec<&str> = toks.iter().map(String::as_str).collect();
         let found = gh(&t).or_else(|| git_push(&t, cwd, p, cur_branch)).or_else(|| reviewer_git(&t, p));
         if let Some(r) = found.or_else(|| design_spawn(&t)) {
@@ -99,14 +92,12 @@ fn api_writes(rest: &[&str]) -> bool {
             _ => w.strip_prefix("--method=").or(w.strip_prefix("-X").filter(|m| !m.is_empty())),
         };
         method.is_some_and(|m| !m.eq_ignore_ascii_case("GET"))
-            || w.starts_with("-f")
-            || w.starts_with("-F")
+            || w.starts_with("-f") || w.starts_with("-F")
             || ["--field", "--raw-field", "--input"].iter().any(|f| w.split('=').next() == Some(f))
     })
 }
 
-/// Index of the git subcommand and the repo dir, past git's global options
-/// (-C <dir>, -c <k=v>, --git-dir=...).
+/// Index of the git subcommand and the repo dir, past global options (`-C <dir>`, `-c <k=v>`, `--git-dir=…`).
 fn git_sub(t: &[&str], cwd: &str) -> Option<(usize, String)> {
     let g = t.iter().position(|w| *w == "git")?;
     let mut dir = cwd.to_string();
@@ -122,9 +113,7 @@ fn git_sub(t: &[&str], cwd: &str) -> Option<(usize, String)> {
 
 fn reviewer_git(t: &[&str], p: &Policy) -> Option<String> {
     let (i, _) = git_sub(t, ".").filter(|_| p.reviewer)?;
-    GIT_WRITES
-        .contains(&t[i])
-        .then(|| format!("reviewers are read-only: no `git {}`; write verdict.md and report in your pane", t[i]))
+    GIT_WRITES.contains(&t[i]).then(|| format!("reviewers are read-only: no `git {}`; write verdict.md and report in your pane", t[i]))
 }
 
 fn git_push(t: &[&str], cwd: &str, p: &Policy, cur_branch: &dyn Fn(&str) -> Option<String>) -> Option<String> {
@@ -173,9 +162,6 @@ pub fn deny_json(input: &Value, reason: &str) -> Value {
     if input["hook_event_name"] == "pre_tool_call" || input.get("args").is_some() {
         return json!({"action": "block", "message": format!("herdsman: {reason}")});
     }
-    json!({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "deny",
-        "permissionDecisionReason": format!("herdsman: {reason}"),
-    }})
+    let reason = format!("herdsman: {reason}");
+    json!({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}})
 }

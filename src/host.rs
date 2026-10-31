@@ -1,6 +1,4 @@
-//! Host-load gate for `herdsman spawn` and the live-agent view `check`/`clean` use.
-//! Signals are sampled through the Runner; an unreadable signal admits (fail-open:
-//! the gate protects performance, not correctness).
+//! Host-load gate for `herdsman spawn` (an unreadable signal admits) and the live-agent view.
 use crate::config::Limits;
 use crate::runner::{argv, json, Runner};
 use anyhow::Result;
@@ -53,8 +51,7 @@ pub fn sample(r: &dyn Runner) -> Host {
         r.sleep(2);
         swapouts(r).map(|b| (b - a).max(0.0))
     });
-    let load = stdout(r, "sysctl", &["-n", "vm.loadavg"])
-        .and_then(|s| s.split_whitespace().find_map(|w| w.parse::<f64>().ok()));
+    let load = stdout(r, "sysctl", &["-n", "vm.loadavg"]).and_then(|s| s.split_whitespace().find_map(|w| w.parse::<f64>().ok()));
     let ncpu = stdout(r, "sysctl", &["-n", "hw.ncpu"]).and_then(|s| s.trim().parse::<f64>().ok());
     let load_per_cpu = load.zip(ncpu.filter(|n| *n > 0.0)).map(|(l, n)| l / n);
     Host { pressure, swapout, load_per_cpu }

@@ -1,6 +1,6 @@
 //! Claude Code: per-role settings.json (PreToolUse hook) + role.md; the kick goes in as argv.
 use super::{agent_start, hook_command, wait_working, Harness};
-use crate::runner::Runner;
+use crate::runner::{argv, Runner};
 use crate::spawn::{profile_dir, role_prompt, Plan};
 use crate::Ctx;
 use anyhow::{bail, Result};
@@ -38,13 +38,8 @@ impl Harness for Claude {
 
     fn start_cmd(&self, ctx: &Ctx, p: &Plan, pane: &str) -> Vec<String> {
         let dir = profile_dir(ctx, &p.profile);
-        let mut a = vec![
-            "--dangerously-skip-permissions".to_string(),
-            "--settings".into(),
-            dir.join("settings.json").to_string_lossy().into(),
-            "--append-system-prompt-file".into(),
-            dir.join("role.md").to_string_lossy().into(),
-        ];
+        let (settings, role) = (dir.join("settings.json"), dir.join("role.md"));
+        let mut a = argv(&["--dangerously-skip-permissions", "--settings", &settings.to_string_lossy(), "--append-system-prompt-file", &role.to_string_lossy()]);
         if let Some(m) = &p.model {
             a.extend(["--model".into(), m.clone()]);
         }

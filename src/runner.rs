@@ -22,15 +22,9 @@ pub struct Real;
 
 impl Runner for Real {
     fn run(&self, prog: &str, args: &[String]) -> Result<Out> {
-        let o = Command::new(prog)
-            .args(args)
-            .output()
-            .with_context(|| format!("cannot run {prog}"))?;
-        Ok(Out {
-            code: o.status.code().unwrap_or(-1),
-            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-        })
+        let o = Command::new(prog).args(args).output().with_context(|| format!("cannot run {prog}"))?;
+        let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        Ok(Out { code: o.status.code().unwrap_or(-1), stdout: text(&o.stdout), stderr: text(&o.stderr) })
     }
 }
 
@@ -39,15 +33,16 @@ pub fn argv(args: &[&str]) -> Vec<String> {
 }
 
 /// Run and fail on a non-zero exit; returns stdout.
-pub fn ok(r: &dyn Runner, prog: &str, args: &[&str]) -> Result<String> {
-    let o = r.run(prog, &argv(args))?;
+pub fn ok<S: AsRef<str>>(r: &dyn Runner, prog: &str, args: &[S]) -> Result<String> {
+    let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
+    let o = r.run(prog, &argv(&args))?;
     if o.code != 0 {
         bail!("{prog} {} failed ({}): {}", args.join(" "), o.code, o.stderr.trim());
     }
     Ok(o.stdout)
 }
 
-pub fn json(r: &dyn Runner, prog: &str, args: &[&str]) -> Result<Value> {
+pub fn json<S: AsRef<str>>(r: &dyn Runner, prog: &str, args: &[S]) -> Result<Value> {
     let s = ok(r, prog, args)?;
-    serde_json::from_str(&s).with_context(|| format!("{prog} {}: not JSON", args.join(" ")))
+    serde_json::from_str(&s).with_context(|| format!("{prog} {}: not JSON", args.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(" ")))
 }

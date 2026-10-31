@@ -1,9 +1,8 @@
-//! `herdsman spawn` (worktree + herdr pane + harness launch + verified kick) and
-//! `herdsman profiles sync` (each harness's per-role profile files; see `harness`).
+//! `herdsman spawn`, `adopt` and `profiles sync` (docs/lanes.md); per-harness parts live in `harness`.
 use crate::access;
-use crate::config::{Config, Fleet};
+use crate::config::{Config, Fleet, Role};
 use crate::events::{emit, fold, read, Event};
-use crate::gate::refuse;
+use crate::gate::refused;
 use crate::harness::{self, hook_command};
 use crate::host;
 use crate::runner::{argv, json, ok, Runner};
@@ -26,44 +25,37 @@ pub fn profile_dir(ctx: &Ctx, profile: &str) -> PathBuf {
     ctx.claude_dir().join(profile)
 }
 
-/// Write every harness's files for every role of every fleet (Claude settings +
-/// role prompt, the Hermes profile's `hooks:` key, the DSH patch), so a role's
-/// harness can be switched with `herdsman set` alone.
-pub fn profiles_sync(ctx: &Ctx, cfg: &Config, usage: &str, out: &mut dyn Write) -> Result<()> {
+/// Each profile once, at its first (fleet, role) in fleet.toml order.
+fn profiles(cfg: &Config) -> Vec<(&str, &Fleet, &str, &Role, String)> {
     let mut done = std::collections::BTreeSet::new();
-    for f in cfg.fleet.values() {
-        for (role, r) in &f.role {
-            let profile = r.profile_or(role);
-            if !done.insert(profile.clone()) {
-                continue;
-            }
-            for h in harness::NAMES {
-                harness::get(h).sync(ctx, role, &profile, usage, out)?;
-            }
-            harness::set_mcp(ctx, &profile, &access::mcp_servers(cfg, f, r)?)?;
+    let all = cfg.fleet.iter().flat_map(|(name, f)| f.role.iter().map(move |(role, r)| (name.as_str(), f, role.as_str(), r, r.profile_or(role))));
+    all.filter(|p| done.insert(p.4.clone())).collect()
+}
+
+/// Write every harness's files for every role's profile, so `herdsman set` alone can switch a role's harness.
+pub fn profiles_sync(ctx: &Ctx, cfg: &Config, usage: &str, out: &mut dyn Write) -> Result<()> {
+    for (_, f, role, r, profile) in profiles(cfg) {
+        for h in harness::NAMES {
+            harness::get(h).sync(ctx, role, &profile, usage, out)?;
         }
+        harness::set_mcp(ctx, &profile, &access::mcp_servers(cfg, f, r)?)?;
     }
     Ok(())
 }
 
-/// `herdsman profiles sync --check`: each fleet Hermes profile must list its herdsman hook
-/// as `✓ allowed` in `hermes -p <profile> hooks list`, run with `HERDSMAN_LANE` set as
-/// in a fleet lane. False otherwise.
+/// `profiles sync --check`: each Hermes profile's `hooks list` (run as in a lane) shows its hook `✓ allowed`.
 pub fn profiles_check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Result<bool> {
-    let (mut good, mut done) = (true, std::collections::BTreeSet::new());
-    for (name, f) in &cfg.fleet {
-        for (role, rc) in &f.role {
-            let profile = rc.profile_or(role);
-            if !done.insert(profile.clone()) || !ctx.hermes.join(&profile).join("config.yaml").exists() {
-                continue;
-            }
-            let lane = format!("HERDSMAN_LANE={name}:-:{role}");
-            let o = r.run("env", &argv(&[&lane, "hermes", "-p", &profile, "hooks", "list"]))?;
-            let cmd = hook_command(ctx, role);
-            let allowed = o.code == 0 && o.stdout.lines().any(|l| l.contains(&cmd) && l.contains("✓ allowed"));
-            writeln!(out, "{} {profile} ({role})", if allowed { "✓ allowed" } else { "✗ not allowed" })?;
-            good &= allowed;
+    let mut good = true;
+    for (name, _, role, _, profile) in profiles(cfg) {
+        if !ctx.hermes.join(&profile).join("config.yaml").exists() {
+            continue;
         }
+        let lane = format!("HERDSMAN_LANE={name}:-:{role}");
+        let o = r.run("env", &argv(&[&lane, "hermes", "-p", &profile, "hooks", "list"]))?;
+        let cmd = hook_command(ctx, role);
+        let allowed = o.code == 0 && o.stdout.lines().any(|l| l.contains(&cmd) && l.contains("✓ allowed"));
+        writeln!(out, "{} {profile} ({role})", if allowed { "✓ allowed" } else { "✗ not allowed" })?;
+        good &= allowed;
     }
     Ok(good)
 }
@@ -93,8 +85,7 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Exports `HERDSMAN_LANE` in the pane's shell, so the harness and its hooks inherit it.
-    /// Claude lanes with an account also export `CLAUDE_CODE_OAUTH_TOKEN` there.
+    /// Exports `HERDSMAN_LANE` (and an account's `CLAUDE_CODE_OAUTH_TOKEN`) in the pane's shell for the harness.
     pub fn lane_cmd(&self, pane: &str) -> Vec<String> {
         let mut c = argv(&["pane", "run", pane, "export", &format!("HERDSMAN_LANE='{}'", self.lane)]);
         c.extend(self.account.iter().map(|a| a.1.clone()));
@@ -118,8 +109,7 @@ impl Plan {
 /// Longest lane title, in chars.
 const TITLE_MAX: usize = 60;
 
-/// `<head> · <short issue title>`, ≤ 60 chars: conventional-commit / `P0:` prefixes
-/// stripped, cut at a word boundary with `…`. Counts chars, so Thai stays intact.
+/// `<head> · <short issue title>`, ≤ 60 chars (not bytes): `feat:`/`P0:` prefixes dropped, cut at a word with `…`.
 pub fn lane_title(head: &str, issue_title: &str) -> String {
     let mut t = issue_title.trim();
     // `feat(x)!:`, `spawn:`, `P0:` — one ASCII token, an optional scope, then a colon.
@@ -162,7 +152,7 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
             anyhow::ensure!(role != "orch", "the orch lane takes no issue: `herdsman spawn {fleet} - orch`");
             let st = fold(&read(&ctx.state)?).remove(&(fleet.to_string(), issue));
             if st.as_ref().is_some_and(|s| s.state == "merged") {
-                return Err(refuse("MERGED", format!("{fleet}#{issue} is merged; a merged issue never reopens")).into());
+                return refused("MERGED", format!("{fleet}#{issue} is merged; a merged issue never reopens"));
             }
             let impl_branch = st.as_ref().and_then(|s| s.branch.clone()).unwrap_or_else(|| format!("issue-{issue}"));
             let (agent, branch, base, head) = if role == "rev" {
@@ -257,21 +247,21 @@ fn orch_brief(f: &Fleet, fleet: &str, p: &Plan) -> String {
     )
 }
 
+/// The herdr argv that creates the lane's workspace (orch) or worktree.
+fn create_argv(local: &str, p: &Plan) -> Vec<String> {
+    let wt = p.worktree.to_string_lossy();
+    match p.role.as_str() {
+        "orch" => argv(&["workspace", "create", "--cwd", local, "--label", &p.agent, "--no-focus"]),
+        _ => argv(&["worktree", "create", "--cwd", local, "--branch", &p.branch, "--base", &p.base, "--path", &wt, "--label", &p.agent, "--no-focus"]),
+    }
+}
+
 fn plan_json(ctx: &Ctx, f: &Fleet, p: &Plan) -> Value {
     let local = f.local_path().to_string_lossy().into_owned();
-    let wt = p.worktree.to_string_lossy();
-    let mut cmds = if p.role == "orch" {
-        vec![argv(&["herdr", "workspace", "create", "--cwd", &local, "--label", &p.agent, "--no-focus"])]
-    } else {
-        vec![
-            argv(&["git", "-C", &local, "fetch", "origin", p.base.trim_start_matches("origin/")]),
-            argv(&["herdr", "worktree", "create", "--cwd", &local, "--branch", &p.branch, "--base", &p.base])
-                .into_iter()
-                .chain(argv(&["--path", &wt, "--label", &p.agent, "--no-focus"]))
-                .collect(),
-        ]
-    };
+    let fetch = argv(&["git", "-C", &local, "fetch", "origin", p.base.trim_start_matches("origin/")]);
     let herdr = |c: Vec<String>| std::iter::once("herdr".to_string()).chain(c).collect::<Vec<_>>();
+    let mut cmds = if p.role == "orch" { vec![] } else { vec![fetch] };
+    cmds.push(herdr(create_argv(&local, p)));
     cmds.push(herdr(p.lane_cmd("<pane>")));
     cmds.push(herdr(p.start_cmd(ctx, "<pane>")));
     cmds.extend(p.kick_cmds("<pane>").into_iter().map(herdr));
@@ -298,8 +288,7 @@ fn free_pane(r: &dyn Runner, ws: &str, wt: &Path) -> Result<String> {
 /// Untracked files fleet itself writes into a worktree.
 pub const OWN_FILES: [&str; 4] = [".brief.md", "verdict.md", ".role-prompt.md", ".mcp.lane.json"];
 
-/// Why a worktree must not be reused or removed: uncommitted changes (fleet's own
-/// `OWN_FILES` aside) or commits that are on no remote.
+/// Why a worktree must not be reused or removed: uncommitted changes (`OWN_FILES` aside) or unpushed commits.
 pub fn dirty(r: &dyn Runner, wt: &Path) -> Option<String> {
     let wt = wt.to_string_lossy();
     let st = match ok(r, "git", &["-C", &wt, "status", "--porcelain"]) {
@@ -327,17 +316,10 @@ pub struct Opts {
     pub supersede: bool,
 }
 
-pub fn spawn(
-    ctx: &Ctx,
-    cfg: &Config,
-    r: &dyn Runner,
-    out: &mut dyn Write,
-    (fleet, issue, role): (&str, Option<u64>, &str),
-    o: &Opts,
-) -> Result<bool> {
+pub fn spawn(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (fleet, issue, role): (&str, Option<u64>, &str), o: &Opts) -> Result<bool> {
     let f = cfg.fleet(fleet)?;
     if f.paused && matches!(role, "impl" | "rev") {
-        return Err(refuse("PAUSED", format!("{fleet} is paused; `herdsman resume {fleet}` first")).into());
+        return refused("PAUSED", format!("{fleet} is paused; `herdsman resume {fleet}` first"));
     }
     let mut p = plan(ctx, cfg, fleet, issue, role)?;
     let mut pj = plan_json(ctx, f, &p);
@@ -372,7 +354,7 @@ pub fn spawn(
         }
     }
     if let Some((code, msg)) = dup.first().filter(|_| !o.supersede) {
-        return Err(refuse(code, format!("{msg}; `--supersede` replaces it")).into());
+        return refused(code, format!("{msg}; `--supersede` replaces it"));
     }
 
     if let Some(n) = issue {
@@ -382,7 +364,7 @@ pub fn spawn(
     // Host-load gate, before anything is created.
     if let Err(why) = host::admit(&host::sample(r), &cfg.limits) {
         if !o.force {
-            return Err(refuse("HOST_BUSY", format!("{why}; retry later or pass --force")).into());
+            return refused("HOST_BUSY", format!("{why}; retry later or pass --force"));
         }
         event("override", json!({"code": "HOST_BUSY", "reason": why, "role": role, "agent": p.agent}))?;
     }
@@ -398,24 +380,16 @@ pub fn spawn(
 
     let local = f.local_path().to_string_lossy().into_owned();
     let (created, brief_text) = match issue {
-        None => {
-            let ws = json(r, "herdr", &["workspace", "create", "--cwd", &local, "--label", &p.agent, "--no-focus"])?;
-            (ws, orch_brief(f, fleet, &p))
-        }
+        None => (json(r, "herdr", &create_argv(&local, &p))?, orch_brief(f, fleet, &p)),
         Some(n) => {
             let iss = crate::gh::spec(ctx, r, f, fleet, n, true)?;
             ok(r, "git", &["-C", &local, "fetch", "origin", p.base.trim_start_matches("origin/")])?;
-            let created = if p.worktree.exists() {
-                json(r, "herdr", &["worktree", "open", "--cwd", &local, "--path", &wt])?
-            } else {
-                let a = ["worktree", "create", "--cwd", &local, "--branch", &p.branch, "--base", &p.base];
-                let tail = ["--path", &wt, "--label", &p.agent, "--no-focus"];
-                json(r, "herdr", &[&a[..], &tail[..]].concat())?
-            };
+            let open = argv(&["worktree", "open", "--cwd", &local, "--path", &wt]);
+            let created = json(r, "herdr", &if p.worktree.exists() { open } else { create_argv(&local, &p) })?;
             let (title, body) = (iss["title"].as_str().unwrap_or(""), iss["body"].as_str().unwrap_or(""));
             p.set_title(title);
             // A fix round's brief carries the findings of the latest verdict if it was FAIL.
-            let last = events.iter().rev().find(|e| e.kind == "verdict" && e.fleet == fleet && e.issue == Some(n));
+            let last = events.iter().rev().find(|e| e.is("verdict", fleet, n));
             let fix = last.filter(|e| role == "impl" && e.str("verdict") == Some("FAIL")).and_then(|e| e.str("body"));
             (created, brief(f, n, &p, title, body, fix))
         }
@@ -428,8 +402,7 @@ pub fn spawn(
     h.prepare(ctx, r, &p)?;
     let pane = free_pane(r, ws, &p.worktree)?;
     pj = plan_json(ctx, f, &p);
-    let lane = p.lane_cmd(&pane);
-    ok(r, "herdr", &lane.iter().map(String::as_str).collect::<Vec<_>>())?;
+    ok(r, "herdr", &p.lane_cmd(&pane))?;
     let start = r.run("herdr", &p.start_cmd(ctx, &pane))?;
     if start.code != 0 {
         // Under load herdr can time out while the harness still comes up: keep it as the lane.
@@ -455,8 +428,7 @@ pub fn spawn(
     Ok(confirmed)
 }
 
-/// SERIAL_BUSY: a `--serial` impl waits while another serial issue is in flight.
-/// CAP: the fleet's optional `max_impl` / `max_rev` concurrent-lane caps.
+/// SERIAL_BUSY (another `--serial` issue in flight) and CAP (`max_impl` / `max_rev`).
 fn lane_admit(f: &Fleet, events: &[Event], fleet: &str, issue: u64, role: &str) -> Result<()> {
     let st = fold(events);
     let others: Vec<_> = st.values().filter(|s| s.fleet == fleet && s.issue != issue).collect();
@@ -468,7 +440,7 @@ fn lane_admit(f: &Fleet, events: &[Event], fleet: &str, issue: u64, role: &str) 
                 serial.contains(&s.issue) && (building(&s.state) || s.state.starts_with("review") || s.state == "ready")
             });
             if let Some(s) = busy {
-                return Err(refuse("SERIAL_BUSY", format!("serial #{} is unmerged ({}); retry after it merges", s.issue, s.state)).into());
+                return refused("SERIAL_BUSY", format!("serial #{} is unmerged ({}); retry after it merges", s.issue, s.state));
             }
         }
     }
@@ -478,7 +450,7 @@ fn lane_admit(f: &Fleet, events: &[Event], fleet: &str, issue: u64, role: &str) 
         _ => (None, 0),
     };
     if let Some(cap) = cap.filter(|&c| n >= c) {
-        return Err(refuse("CAP", format!("{n} {role} lane(s) open in {fleet}, max_{role} = {cap}")).into());
+        return refused("CAP", format!("{n} {role} lane(s) open in {fleet}, max_{role} = {cap}"));
     }
     Ok(())
 }
@@ -495,16 +467,8 @@ fn lane_data(p: &Plan, pane: &str, ws: &str) -> Value {
         "pane": pane, "workspace": ws, "worktree": p.worktree, "branch": p.branch, "account": p.account.as_ref().map(|a| &a.0)})
 }
 
-/// `herdsman adopt`: record a lane already running in `pane` (a spawn that never got
-/// logged), naming its agent as planned. Nothing is started or kicked.
-pub fn adopt(
-    ctx: &Ctx,
-    cfg: &Config,
-    r: &dyn Runner,
-    out: &mut dyn Write,
-    (fleet, issue, role): (&str, Option<u64>, &str),
-    pane: &str,
-) -> Result<()> {
+/// `herdsman adopt`: log the lane running in `pane` and name its agent as planned; nothing is started.
+pub fn adopt(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (fleet, issue, role): (&str, Option<u64>, &str), pane: &str) -> Result<()> {
     let p = plan(ctx, cfg, fleet, issue, role)?;
     let info = harness_in(r, pane).with_context(|| format!("no harness running in pane {pane}"))?;
     ok(r, "herdr", &["agent", "rename", pane, &p.agent])?;
