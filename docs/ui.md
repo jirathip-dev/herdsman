@@ -71,7 +71,7 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
    one-line toast showed, is gone 5 s later, and `location.search` has no `msg`.
    `sheet-parked` (#83) opens the demo's parked lane (no pane, its work on an open PR) and fails unless the card
    has its `parked · work on PR #n` line, `[clean]` is disabled with its reason in `p.st`, `[stop]` and `[kill]`
-   are hidden, and nothing in the sheet is in the red (danger) colour.
+   are hidden, the chat says there is no pane, and nothing in the sheet is in the red (danger) colour.
    #68: on every view, a box whose content is wider than it (`scrollWidth > clientWidth + 1`, tap rings off)
    fails unless it ellipsises or scrolls by design, and so does any box past the screen's right edge. `host` and
    `sheet` run each inline control's failure path with a canned long reply (Alerts: an error, then the old 401

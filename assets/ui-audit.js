@@ -51,6 +51,7 @@
       if (!$('.top').textContent.includes('parked · work on PR #15')) early.push('the card has no `parked · work on PR #15` line');
       for (const op of ['stop', 'kill']) if (seen($(`[data-op=${op}]`))) early.push(`[${op}] shown on a lane with no pane`);
       if (!$('[data-op=clean]').disabled) early.push('[clean] enabled before merge');
+      if ($('.now').textContent !== 'no pane: the transcript closed with it') early.push(`chat reads "${$('.now').textContent.slice(0, 40)}"`);
       for (const e of [S, ...S.querySelectorAll('*')].filter(seen)) if (e.matches('.r') || getComputedStyle(e).color === red) early.push(`red in the sheet: ${e.outerHTML.slice(0, 60)}`);
     },
     // #70: the handle is ≥ 56 px; a −200 px pointer drag moves the sheet mid-drag, release snaps to a detent,

@@ -203,7 +203,7 @@ B.insertAdjacentHTML('beforeend', `<div id=sheet hidden><div class=bd></div><div
 <p class=st></p></div></div>`);
 if (DEMO) sync();
 const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st'), now = $('.now'), old = $('.old'), more = $('.more');
-let agent = null, timer = 0, cur = 0, y = 0;
+let agent = null, timer = 0, cur = 0, y = 0, nopane = false;
 // The Lanes row of `agent` (its sheet card), from the needs-you cards and the herd.
 const laneOf = agent => [...$$('.lane')].find(l => l.dataset.agent === agent);
 const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text || '' });
@@ -247,6 +247,8 @@ const render = turns => turns.map(t => {
 });
 const lane = q => fetch(DEMO ? 'lane/' + encodeURIComponent(agent) + '.json' : R + 'lane?agent=' + encodeURIComponent(agent) + '&lines=200' + q);
 async function poll() {
+  // #83: a lane with no pane has no transcript to read.
+  if (nopane) return now.replaceChildren(el('p', 'm', 'no pane: the transcript closed with it'));
   try {
     const r = await lane('');
     // Unpaired (401): say so, with the Pair button; never a silent one-liner.
@@ -310,7 +312,8 @@ function open(e) {
   $('.reply').hidden = !!B.dataset.ro || rev;
   $('.acts').hidden = !!B.dataset.ro;
   // #83: a lane with no pane has nothing to stop or kill.
-  $$('[data-op=stop], [data-op=kill]').forEach(b => b.hidden = 'gone' in e.dataset);
+  nopane = 'gone' in e.dataset;
+  $$('[data-op=stop], [data-op=kill]').forEach(b => b.hidden = nopane);
   $$('.pairf, .cf, .cmds').forEach(x => x.hidden = true);
   now.replaceChildren();
   old.replaceChildren();
