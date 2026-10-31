@@ -1,0 +1,3 @@
+- Work on branch `{branch}` only. Commit, push it, open a PR to `{integration}` whose body says `Closes #{issue}`.
+- Never merge, never push to `{integration}` or main — merging happens only via `herdsman merge`.
+- Report: what changed, exact test commands + exit codes, head sha.

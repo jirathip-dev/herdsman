@@ -29,7 +29,7 @@ merge. A merged issue stays `merged`; `spawn` and `adopt` on it are refused with
 | `~/.config/herdsman/claude/<profile>/` | `settings.json` (PreToolUse hook), `role.md`, `fleet.md` |
 | `~/.hermes/profiles/<profile>/config.yaml` (`FLEET_HERMES_PROFILES`) | sync rewrites its `hooks:` key and drops `agent.reasoning_effort` (fleet.toml `effort` owns it) |
 | `~/.config/herdsman/dsh/<profile>.patch.yml` | DSH patch layer for `harness = "dsh"` lanes ([dsh.md](dsh.md)) |
-| `roles/`, `hooks/` | role prompts and hook settings, compiled into the binary |
+| `roles/`, `hooks/` | role prompts, the tail of `help --agent` (`usage-tail.md`) and hook settings, compiled into the binary |
 
 A path variable that is set but empty counts as unset.
 

@@ -2,7 +2,7 @@
 use crate::config::{Config, Fleet};
 use crate::events::{emit, fold, read, Event, IssueState};
 use crate::gh;
-use crate::runner::{json, ok, Runner};
+use crate::runner::{argv, json, ok, Runner};
 use crate::Ctx;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
@@ -25,30 +25,10 @@ pub fn refuse(code: &'static str, msg: impl Into<String>) -> Refusal {
     Refusal { code, msg: msg.into() }
 }
 
-/// Every refusal code, for `herdsman help --agent`.
-pub const CODES: &[(&str, &str)] = &[
-    ("MAIN_TARGET", "integration or PR base is main/master; fleet never merges to main"),
-    ("NO_PR", "no open PR for the issue branch"),
-    ("BASE_MISMATCH", "PR base is not the fleet's integration branch"),
-    ("NO_VERDICT", "no review verdict recorded"),
-    ("STALE_VERDICT", "verdicts exist, but none for the PR's current head sha"),
-    ("VERDICT_FAIL", "latest verdict for the head sha is FAIL"),
-    ("ROUND_LIMIT", "review rounds exceed [limits].review_rounds (→ needs-human)"),
-    ("CI_NOT_GREEN", "a check at the head sha is missing, pending or failed"),
-    ("BAD_SHA", "verdict --sha is not 40 hex chars"),
-    ("STALE_SHA", "verdict --sha is not the branch head"),
-    ("HOST_BUSY", "spawn: memory pressure, swap-out or load/cpu over [limits]; --force overrides (logged)"),
-    ("LANE_LIVE", "spawn: a herdr agent is live in the worktree, or the log has an unfinished lane for it; --supersede"),
-    ("WORKTREE_DIRTY", "spawn: the worktree has unpushed or uncommitted work from no known lane; --supersede"),
-    ("MERGED", "spawn/adopt: the issue is merged; a merged issue never reopens"),
-    ("SERIAL_BUSY", "spawn: a `--serial` impl waits while another serial issue has a live impl/fix lane or sits at review/ready"),
-    ("SERIAL_UNMARKED", "merge: the PR touches the fleet's serial_paths but the issue was not queued `--serial`"),
-    ("CAP", "spawn: the fleet's optional max_impl / max_rev lane cap is reached (unset = no cap)"),
-    ("PAUSED", "spawn: the fleet is paused (`herdsman resume <fleet>`); impl/rev lanes wait, live lanes are untouched"),
-    ("BAD_VALUE", "set: a value is empty or has a quote/backslash/control char, or the model is not in `models`"),
-    ("STALE", "serve: fleet.toml changed since the page was rendered; reload and retry"),
-    ("MCP_FORBIDDEN", "spawn/profiles sync: a role's `mcp` names a server matching `mcp_deny` (default `*prod*`)"),
-];
+/// `refuse` as an `anyhow` error.
+pub fn refused<T>(code: &'static str, msg: impl Into<String>) -> Result<T> {
+    Err(refuse(code, msg).into())
+}
 
 fn is_main(b: &str) -> bool {
     b == "main" || b == "master"
@@ -58,8 +38,8 @@ pub fn issue_state(ctx: &Ctx, fleet: &str, issue: u64) -> Result<Option<IssueSta
     Ok(fold(&read(&ctx.state)?).remove(&(fleet.to_string(), issue)))
 }
 
-pub fn branch_of(st: &Option<IssueState>, issue: u64) -> String {
-    st.as_ref().and_then(|s| s.branch.clone()).unwrap_or_else(|| format!("issue-{issue}"))
+pub fn branch_of(st: Option<&IssueState>, issue: u64) -> String {
+    st.and_then(|s| s.branch.clone()).unwrap_or_else(|| format!("issue-{issue}"))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -75,16 +55,16 @@ pub fn verdict(
 ) -> Result<()> {
     let f = cfg.fleet(fleet)?;
     if sha.len() != 40 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(refuse("BAD_SHA", format!("--sha {sha} must be a full 40-hex commit sha")).into());
+        return refused("BAD_SHA", format!("--sha {sha} must be a full 40-hex commit sha"));
     }
     let body = std::fs::read_to_string(file).with_context(|| format!("cannot read verdict file {file}"))?;
     anyhow::ensure!(!body.trim().is_empty(), "verdict file {file} is empty");
     let st = issue_state(ctx, fleet, issue)?;
-    let branch = branch_of(&st, issue);
+    let branch = branch_of(st.as_ref(), issue);
     let api = format!("repos/{}/branches/{}", f.repo, branch);
     let head = ok(r, "gh", &["api", &api, "--jq", ".commit.sha"])?.trim().to_string();
     if !head.eq_ignore_ascii_case(sha) {
-        return Err(refuse("STALE_SHA", format!("{branch} head is {head}, not {sha}")).into());
+        return refused("STALE_SHA", format!("{branch} head is {head}, not {sha}"));
     }
     let v = if pass { "PASS" } else { "FAIL" };
     let round = st.as_ref().map_or(1, |s| s.rounds + u32::from(!s.reviewed(&head)));
@@ -100,7 +80,8 @@ pub fn verdict(
     Ok(())
 }
 
-fn ci_green(rollup: &Value, required: &[String]) -> Result<(), String> {
+#[doc(hidden)]
+pub fn ci_green(rollup: &Value, required: &[String]) -> Result<(), String> {
     rollup.as_array().filter(|a| !a.is_empty() || !required.is_empty()).ok_or("no checks reported")?;
     let prefix = if required.is_empty() { "" } else { "required " };
     gh::not_green(&gh::required(rollup, required)).map_or(Ok(()), |m| Err(format!("{prefix}{m}")))
@@ -141,12 +122,12 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
     let st = fold(&events).remove(&(fleet.to_string(), issue));
     // A retry after a merge is a no-op: no PR lookup, no event, no alert.
     if st.as_ref().is_some_and(|s| s.state == "merged") {
-        let m = events.iter().find(|e| e.kind == "merged" && e.fleet == fleet && e.issue == Some(issue));
+        let m = events.iter().find(|e| e.is("merged", fleet, issue));
         let s = |k| m.and_then(|e| e.str(k)).unwrap_or("?");
         writeln!(out, "already merged → {} (PR #{})", s("merge_sha"), s("pr"))?;
         return Ok(());
     }
-    let branch = branch_of(&st, issue);
+    let branch = branch_of(st.as_ref(), issue);
     let pr = if is_main(&f.integration) {
         json!({"baseRefName": f.integration})
     } else {
@@ -188,8 +169,7 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
     let d = json!({"pr": num, "merge_sha": merge_sha, "verdict_sha": head, "into": f.integration});
     emit(&ctx.state, cfg, Event::new(ctx.now, fleet, Some(issue), "merged", d))?;
     // The one GitHub comment fleet writes: ≤ 5 lines, merge sha + verdict sha.
-    let evidence =
-        format!("Merged via `herdsman merge`: PR #{num} → `{}` @ `{merge_sha}`\nPinned PASS verdict sha: `{head}`", f.integration);
+    let evidence = format!("Merged via `herdsman merge`: PR #{num} → `{}` @ `{merge_sha}`\nPinned PASS verdict sha: `{head}`", f.integration);
     let n = issue.to_string();
     writeln!(out, "{evidence}")?;
     let comment = ["issue", "comment", &n, "-R", &f.repo, "--body", &evidence];
@@ -199,7 +179,7 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
         bail!("{reason}; issue #{issue} left open");
     }
     // Already closed by `Closes #N` is fine.
-    let _ = r.run("gh", &crate::runner::argv(&["issue", "close", &n, "-R", &f.repo, "--reason", "completed"]));
+    let _ = r.run("gh", &argv(&["issue", "close", &n, "-R", &f.repo, "--reason", "completed"]));
     // The merge stands either way; a teardown problem is reported, not fatal.
     if let Err(e) = crate::check::teardown(ctx, cfg, r, out, fleet, issue) {
         writeln!(out, "teardown: {e:#}")?;
@@ -211,56 +191,4 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
         writeln!(out, "cargo install --path {} --locked --root {} --force", f.local_path().display(), root.display())?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ci_green;
-    use serde_json::{json, Value};
-
-    fn run(name: &str, conclusion: &str, started: &str) -> Value {
-        json!({"__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": conclusion, "startedAt": started})
-    }
-    fn req() -> Vec<String> {
-        vec!["quality".into()]
-    }
-
-    #[test]
-    fn required_quality_ignores_narrowed_failure() {
-        let r = json!([run("quality", "SUCCESS", "2026-10-31T10:00:00Z"), run("quality-narrowed", "FAILURE", "2026-10-31T09:00:00Z")]);
-        assert_eq!(ci_green(&r, &req()), Ok(()));
-    }
-
-    #[test]
-    fn required_quality_missing_is_refused() {
-        let r = json!([run("quality-narrowed", "SUCCESS", "2026-10-31T09:00:00Z")]);
-        assert_eq!(ci_green(&r, &req()), Err("required check `quality` is missing".into()));
-        assert_eq!(ci_green(&json!([]), &req()), Err("required check `quality` is missing".into()));
-    }
-
-    #[test]
-    fn newer_success_supersedes_older_failure() {
-        let r = json!([run("quality", "SUCCESS", "2026-10-31T10:00:00Z"), run("quality", "CANCELLED", "2026-10-31T09:00:00Z")]);
-        assert_eq!(ci_green(&r, &req()), Ok(()));
-    }
-
-    #[test]
-    fn newer_failure_is_refused() {
-        let r = json!([run("quality", "SUCCESS", "2026-10-31T09:00:00Z"), run("quality", "FAILURE", "2026-10-31T10:00:00Z")]);
-        assert_eq!(ci_green(&r, &req()), Err("required check `quality` is failed".into()));
-    }
-
-    #[test]
-    fn pending_required_is_refused() {
-        let r = json!([{"__typename": "CheckRun", "name": "quality", "status": "IN_PROGRESS", "startedAt": "2026-10-31T10:00:00Z"}]);
-        assert_eq!(ci_green(&r, &req()), Err("required check `quality` is pending".into()));
-    }
-
-    #[test]
-    fn unset_checks_every_check() {
-        let r = json!([run("quality", "SUCCESS", "2026-10-31T10:00:00Z"), run("quality-narrowed", "FAILURE", "2026-10-31T09:00:00Z")]);
-        assert_eq!(ci_green(&r, &[]), Err("check `quality-narrowed` is failed".into()));
-        assert_eq!(ci_green(&json!([run("quality", "SUCCESS", "")]), &[]), Ok(()));
-        assert_eq!(ci_green(&json!([]), &[]), Err("no checks reported".into()));
-    }
 }

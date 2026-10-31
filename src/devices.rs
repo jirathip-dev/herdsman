@@ -1,6 +1,4 @@
-//! Paired phones for the page's reply box. `herdsman serve pair` prints a one-time 6-digit
-//! code (5 min); the device that sends it gets a random 32-byte token cookie. Only the
-//! token's SHA-256 is kept, with a label and created/used times, in `<state>/serve/devices.json`.
+//! Paired phones for the page's reply box (docs/serve.md): only each token's SHA-256 is kept.
 use crate::Ctx;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

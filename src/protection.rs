@@ -1,14 +1,11 @@
-//! `herdsman protection`: read-only check that GitHub branch protection is on for
-//! main, staging and the integration branch of every fleet repo. It only reads
-//! `gh api .../protection`; enabling protection is the owner's job (docs/dsh.md).
+//! `herdsman protection`: read-only `gh api …/protection` check; enabling it is the owner's job (docs/dsh.md).
 use crate::config::Config;
 use crate::runner::{argv, Runner};
 use anyhow::Result;
 use serde_json::Value;
 use std::io::Write;
 
-/// One branch's verdict: `Some(true)` protected with required checks and reviews,
-/// `Some(false)` not (or unknown), `None` the branch does not exist. Extra lines are warnings.
+/// Some(true) fully protected, Some(false) not (or unknown), None no such branch; plus report lines.
 fn branch(r: &dyn Runner, repo: &str, b: &str) -> (Option<bool>, Vec<String>) {
     let o = match r.run("gh", &argv(&["api", &format!("repos/{repo}/branches/{b}/protection")])) {
         Ok(o) => o,
@@ -46,8 +43,7 @@ fn branch(r: &dyn Runner, repo: &str, b: &str) -> (Option<bool>, Vec<String>) {
     }
 }
 
-/// Prints one line per fleet repo/branch (plus warnings); exit 0 only when every existing
-/// branch is fully protected and each repo has at least one branch verified.
+/// One line per repo/branch; exit 0 only if every existing branch is protected and each repo has one.
 pub fn protection(cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Result<i32> {
     let mut code = 0;
     for f in cfg.fleet.values() {

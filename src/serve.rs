@@ -1,10 +1,7 @@
-//! `herdsman serve`: the phone page, an installable PWA with Queue · Lanes · Host · Events
-//! tabs, and a few POST buttons that run the CLI's own write paths (queue mv, pause,
-//! set), plus a paired-device reply box that prompts an agent. std `TcpListener`, one
-//! request at a time; log and config are re-read per request.
+//! `herdsman serve`, the phone page (docs/serve.md): std `TcpListener`, one request at a time.
 use crate::config::{Config, Role};
 use crate::events::{age, append, fold, plain, read, Event, IssueState};
-use crate::gate::{refuse, Refusal};
+use crate::gate::{refused, Refusal};
 use crate::host::{self, Host};
 use crate::runner::{argv, Runner};
 use crate::{devices, gh, lanes, queue, Ctx};
@@ -88,6 +85,11 @@ fn mtime(ctx: &Ctx) -> String {
     t.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(String::new(), |d| d.as_nanos().to_string())
 }
 
+/// An error as the page shows it: `REFUSED <CODE>: …` or `error: …`.
+fn shown(e: &anyhow::Error) -> String {
+    e.downcast_ref::<Refusal>().map_or_else(|| format!("error: {e:#}"), |r| r.to_string())
+}
+
 /// `v` is `name`, or `name:<port>`.
 fn names(name: &str, v: &str) -> bool {
     v == name || v.rsplit_once(':').is_some_and(|(n, p)| n == name && p.chars().all(|c| c.is_ascii_digit()))
@@ -102,9 +104,14 @@ fn tone(state: &str) -> &'static str {
     }
 }
 
-/// One narrow 3-field row (`a`, state, age) that expands to the stacked card `card` (HTML lines).
-fn row(class: &str, lead: &str, a: &str, state: &str, age: &str, card: &[String]) -> String {
-    let card: String = card.iter().filter(|l| !l.is_empty()).map(|l| format!("<p>{l}</p>")).collect();
+/// The non-empty HTML lines, one `<p>` each.
+fn card(lines: &[String]) -> String {
+    lines.iter().filter(|l| !l.is_empty()).map(|l| format!("<p>{l}</p>")).collect()
+}
+
+/// One narrow 3-field row (`a`, state, age) that expands to the stacked card `lines`.
+fn row(class: &str, lead: &str, a: &str, state: &str, age: &str, lines: &[String]) -> String {
+    let card = card(lines);
     format!(
         "<details class=\"{class}\"><summary>{lead}<span>{}</span><span class={}>{}</span><span class=m>{}</span></summary>{card}</details>",
         esc(a),
@@ -135,8 +142,7 @@ const COATS: [(&str, &str, &str, bool); 8] = [
     ("96685a", "77524a", "4a342c", false), ("bd8f4e", "96703a", "241a10", true),
 ];
 
-/// The state as an avatar in all three modes; CSS shows the one `body[data-mode]` picks.
-/// The horse's coat is stable per agent name.
+/// The state as an avatar in all three modes (CSS shows `body[data-mode]`'s); coat stable per name.
 pub fn avatar(name: &str, state: &str) -> String {
     let (pose, glyph, art) = match state {
         "working" => (1, "▶", format!("<i class=\"asc run\"><b>{}</b><b>{}</b></i>", GALLOP[0], GALLOP[1])),
@@ -222,7 +228,7 @@ impl<'a> Server<'a> {
                 ("401 Unauthorized", "text/plain", text("only a paired device may remove devices\n"))
             }
             ("POST", "/") => {
-                let msg = self.post(ctx, &form(body.trim()));
+                let msg = self.write(ctx, &form(body.trim())).unwrap_or_else(|e| shown(&e));
                 let loc = format!("/?msg={}", enc(&msg));
                 return format!("HTTP/1.1 303 See Other\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes();
             }
@@ -278,7 +284,7 @@ impl<'a> Server<'a> {
         times.push(ctx.now);
         match self.prompt(ctx, &dev, f) {
             Ok(msg) => ("200 OK", msg),
-            Err(e) => ("409 Conflict", e.downcast_ref::<Refusal>().map_or_else(|| format!("error: {e:#}"), |r| r.to_string())),
+            Err(e) => ("409 Conflict", shown(&e)),
         }
     }
 
@@ -291,17 +297,17 @@ impl<'a> Server<'a> {
         let l = all.iter().find(|l| l.name == agent).with_context(|| format!("no agent `{agent}`"))?;
         let (Some(fleet), Some(pane)) = (&l.fleet, &l.pane) else { bail!("`{agent}` is not a live fleet lane") };
         if cfg.fleet.get(fleet).is_some_and(|f| f.paused) {
-            return Err(refuse("PAUSED", format!("{fleet} is paused (`herdsman resume {fleet}`)")).into());
+            return refused("PAUSED", format!("{fleet} is paused (`herdsman resume {fleet}`)"));
         }
         if l.role == "rev" {
-            return Err(refuse("REV_READONLY", "reviewer lanes are not steered mid-review").into());
+            return refused("REV_READONLY", "reviewer lanes are not steered mid-review");
         }
         let n = text.chars().count();
         if text.trim().is_empty() || n > 2000 {
-            return Err(refuse("BAD_VALUE", format!("a message is 1 to 2000 chars, not {n}")).into());
+            return refused("BAD_VALUE", format!("a message is 1 to 2000 chars, not {n}"));
         }
         if text.chars().any(|c| (c < ' ' && c != '\n') || c == '\x7f') {
-            return Err(refuse("BAD_VALUE", "a message has no control characters (newlines are fine)").into());
+            return refused("BAD_VALUE", "a message has no control characters (newlines are fine)");
         }
         // No `--`: herdr 0.9 reads the 2nd positional as literal text (even `-x`), and a `--` there would be sent as text.
         let first = if l.harness == "dsh" { argv(&["pane", "send-text", pane, text]) } else { argv(&["agent", "prompt", agent, text]) };
@@ -324,18 +330,11 @@ impl<'a> Server<'a> {
         Some(serde_json::json!({"harness": l.harness, "lines": lanes::tail(&screen, 40)}).to_string())
     }
 
-    /// Run one form write; the line shown on the page (CLI output, or `REFUSED <CODE>: …`).
-    fn post(&self, ctx: &Ctx, f: &BTreeMap<String, String>) -> String {
-        match self.write(ctx, f) {
-            Ok(s) => s,
-            Err(e) => e.downcast_ref::<Refusal>().map_or_else(|| format!("error: {e:#}"), |r| r.to_string()),
-        }
-    }
-
+    /// Run one form write; the line shown on the page (CLI output, or `REFUSED <CODE>: …` via `shown`).
     fn write(&self, ctx: &Ctx, f: &BTreeMap<String, String>) -> Result<String> {
         let g = |k: &str| f.get(k).map_or("", String::as_str);
         if g("mtime") != mtime(ctx) {
-            return Err(refuse("STALE", "fleet.toml changed since the page was rendered; reload and retry").into());
+            return refused("STALE", "fleet.toml changed since the page was rendered; reload and retry");
         }
         let (fleet, mut out) = (g("fleet"), vec![]);
         match g("op") {
@@ -343,9 +342,7 @@ impl<'a> Server<'a> {
                 let n = |k: &str| g(k).parse::<u64>().ok();
                 let issue = n("issue").context("no issue")?;
                 let d = queue::op("mv", &[issue], false, n("before"), n("after"), None);
-                let q = crate::queue_change(ctx, &Config::load(&ctx.config)?, fleet, d, Some("web"))?;
-                let order: Vec<String> = q.iter().map(|i| format!("#{}", i.issue)).collect();
-                writeln!(out, "{fleet} queue: {}", order.join(" "))?;
+                writeln!(out, "{}", crate::queue_change(ctx, &Config::load(&ctx.config)?, fleet, d, Some("web"))?)?;
             }
             op @ ("pause" | "resume") => crate::pause(ctx, &mut out, fleet, op == "pause", Some("web"))?,
             "set" => {
@@ -391,14 +388,18 @@ impl<'a> Server<'a> {
         ))
     }
 
+    /// `herdr <args>` JSON, read at most every 10 s (None when herdr cannot be read).
+    fn herdr_json(&self, now: u64, args: &[&str]) -> Option<serde_json::Value> {
+        serde_json::from_str(&self.cached(now, 10, "herdr", args)?).ok()
+    }
+
     /// Names of the live herdr agents (None when herdr cannot be read).
     fn live(&self, now: u64) -> Option<BTreeSet<String>> {
-        let v: serde_json::Value = serde_json::from_str(&self.cached(now, 10, "herdr", &["agent", "list"])?).ok()?;
+        let v = self.herdr_json(now, &["agent", "list"])?;
         Some(v["result"]["agents"].as_array()?.iter().filter_map(|a| a["name"].as_str().map(String::from)).collect())
     }
 
-    /// Per fleet in fleet.toml (log-only fleets are retired): open work in queue order, then
-    /// other open issues, then `done today`. A paused fleet collapses to one line.
+    /// Per configured fleet: open work in queue order, other open issues, `done today`; paused = one line.
     fn queue_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States) -> String {
         let (now, mt, rw) = (ctx.now, mtime(ctx), self.addr.is_some());
         let Some(cfg) = cfg else { return "<p class=r>cannot read fleet.toml</p>".into() };
@@ -445,7 +446,7 @@ impl<'a> Server<'a> {
             done.sort_by_key(|s| std::cmp::Reverse(s.last_ts));
             if !done.is_empty() {
                 let rows: String = done.iter().take(5).map(|s| {
-                    let pr = events.iter().rev().find(|e| e.kind == "merged" && e.fleet == *f && e.issue == Some(s.issue)).and_then(|e| e.str("pr"));
+                    let pr = events.iter().rev().find(|e| e.is("merged", f, s.issue)).and_then(|e| e.str("pr"));
                     let link = pr.map_or(String::new(), |p| format!(" <a href=\"https://github.com/{}/pull/{}\">PR #{}</a>", esc(&fc.repo), esc(p), esc(p)));
                     format!("<p>#{} <span class=g>merged</span> {}{link}</p>", s.issue, age(now.saturating_sub(s.last_ts)))
                 }).collect();
@@ -485,18 +486,16 @@ impl<'a> Server<'a> {
 
     /// herdr's agents joined with the log (None when herdr cannot be read).
     fn lanes(&self, now: u64, cfg: &Config, events: &[Event], st: &States) -> Option<Vec<lanes::Lane>> {
-        let parse = |s: Option<String>| s.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
-        let list = parse(self.cached(now, 10, "herdr", &["agent", "list"]))?;
+        let list = self.herdr_json(now, &["agent", "list"])?;
         let agents = list["result"]["agents"].as_array().cloned().unwrap_or_default();
-        let wsl = parse(self.cached(now, 10, "herdr", &["workspace", "list"])).unwrap_or_default();
+        let wsl = self.herdr_json(now, &["workspace", "list"]).unwrap_or_default();
         let ws: BTreeMap<String, String> = wsl["result"]["workspaces"].as_array().into_iter().flatten()
             .filter_map(|w| Some((w["workspace_id"].as_str()?.into(), w["label"].as_str()?.into())))
             .collect();
         Some(lanes::join(cfg, &self.ctx.worktrees, events, st, &agents, &ws))
     }
 
-    /// State sections (blocked → working → idle → done → dead), fleet subgroups inside;
-    /// a row opens the bottom sheet (serve.js) with its hidden card.
+    /// State sections, fleet subgroups inside; a row opens the bottom sheet (serve.js) with its hidden card.
     fn lanes_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States) -> String {
         let Some(cfg) = cfg else { return "<p class=m>no fleet.toml</p>".into() };
         let Some(all) = self.lanes(ctx.now, cfg, events, st) else { return "<p class=r>herdr agent list failed</p>".into() };
@@ -529,7 +528,7 @@ impl<'a> Server<'a> {
         if l.mismatch {
             card.push("<span class=r>⚠ log/pane mismatch: the log has this lane open, herdr has no pane</span>".into());
         }
-        let card: String = card.iter().filter(|c| !c.is_empty()).map(|c| format!("<p>{c}</p>")).collect();
+        let card = self::card(&card);
         let act = esc(&lanes::activity(&l.harness, &screen.unwrap_or_default()));
         format!(
             "<div class=lane data-agent=\"{}\" data-role={}><button type=button class=lr>{}<span>{}</span><span class={}>{}</span>\

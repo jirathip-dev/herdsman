@@ -1,35 +1,32 @@
-//! `herdsman check` (stall / lane-dead / ready-unmerged alerts, each once per state)
-//! and `herdsman clean` (reclaim worktrees and panes of merged or closed lanes).
+//! `herdsman check` (alerts, each once per state) and `herdsman clean` (reclaim merged or closed lanes).
 use crate::access;
 use crate::config::Config;
-use crate::events::{age, emit, fold, plain, read, Event, IssueState};
+use crate::events::{age, emit, fold, last_spawn, plain, read, Event, IssueState};
 use crate::gate::gate;
 use crate::gh;
 use crate::host;
-use crate::runner::{ok, Runner};
+use crate::runner::{argv, ok, Runner};
 use crate::spawn::{dirty, OWN_FILES};
 use crate::Ctx;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
 
 /// Head sha of an open PR that passes every merge gate, if any.
 fn mergeable(ctx: &Ctx, r: &dyn Runner, cfg: &Config, s: &IssueState) -> Option<String> {
     let f = cfg.fleet(&s.fleet).ok()?;
-    let branch = s.branch.clone().unwrap_or_else(|| format!("issue-{}", s.issue));
+    let branch = crate::gate::branch_of(Some(s), s.issue);
     let pr = gh::pr(ctx, r, f, (&s.fleet, s.issue), &branch, ctx.now).ok()?;
     (pr["state"] == "OPEN").then_some(())?;
     gate(f, &pr, Some(s), cfg.limits.review_rounds).ok()
 }
 
-/// Each alert carries a dedup key built from the issue's last activity, so it
-/// fires once per state and again only after something changes.
+/// Each alert's dedup key is built from the issue's last activity: once per state, again after a change.
 pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Result<()> {
     let events = read(&ctx.state)?;
-    let agents = host::agents(r)
-        .map_err(|e| eprintln!("herdsman check: herdr agent list failed ({e:#}); skipping lane checks"))
-        .ok();
+    let agents = host::agents(r).map_err(|e| eprintln!("herdsman check: herdr agent list failed ({e:#}); skipping lane checks")).ok();
     let stall = cfg.limits.stall_minutes * 60;
     for s in fold(&events).values().filter(|s| s.state != "merged") {
         let idle = ctx.now.saturating_sub(s.last_ts);
@@ -37,7 +34,7 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
         let mut capped = None;
         if let (Some(agents), Some((role, lane))) = (&agents, s.active_lane()) {
             // Agents that report their own state (dsh-TUI) can lose the name: match the lane's pane.
-            let spawned = events.iter().rev().find(|e| e.kind == "spawn" && e.str("agent") == Some(lane));
+            let spawned = last_spawn(&events, lane);
             let pane = spawned.and_then(|e| e.str("pane"));
             let unnamed = |a: &&serde_json::Value| a["name"].as_str().is_none_or(str::is_empty) && a["pane_id"].as_str() == pane;
             let agent = agents.iter().find(|a| a["name"] == lane).or_else(|| agents.iter().find(unnamed));
@@ -68,8 +65,7 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
             }
         }
         for (kind, key, reason) in hits {
-            let same = |e: &&Event| e.fleet == s.fleet && e.issue == Some(s.issue) && e.kind == kind;
-            if events.iter().filter(same).any(|e| e.str("key") == Some(&key)) {
+            if events.iter().any(|e| e.is(kind, &s.fleet, s.issue) && e.str("key") == Some(&key)) {
                 continue;
             }
             let mut d = json!({"key": key, "reason": reason});
@@ -84,21 +80,18 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
     Ok(())
 }
 
-/// After `herdsman merge`: close the issue's lane panes whose worktree has no
-/// uncommitted or unpushed work, then reclaim them as `herdsman clean --yes` does.
+/// After `herdsman merge`: close the issue's clean lane panes, then `herdsman clean --yes` them.
 pub fn teardown(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &str, issue: u64) -> Result<()> {
     let events = read(&ctx.state)?;
     let mut seen = std::collections::BTreeSet::new();
-    for e in events.iter().rev().filter(|e| e.kind == "spawn" && e.fleet == fleet && e.issue == Some(issue)) {
+    for e in events.iter().rev().filter(|e| e.is("spawn", fleet, issue)) {
         let (Some(wt), Some(pane)) = (e.str("worktree"), e.str("pane")) else { continue };
         if e.str("role") == Some("design") || !seen.insert(wt) || !Path::new(wt).exists() {
             continue;
         }
         match dirty(r, Path::new(wt)) {
             Some(why) => writeln!(out, "keep pane {pane} ({wt}): {why}")?,
-            None => {
-                let _ = r.run("herdr", &crate::runner::argv(&["pane", "close", pane]));
-            }
+            None => drop(r.run("herdr", &argv(&["pane", "close", pane]))),
         }
     }
     if seen.is_empty() {
@@ -108,21 +101,13 @@ pub fn teardown(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fl
 }
 
 /// Remove worktree + pane of lanes whose issue is merged (or closed on GitHub). Dry run unless `yes`.
-pub fn clean(
-    ctx: &Ctx,
-    cfg: &Config,
-    r: &dyn Runner,
-    out: &mut dyn Write,
-    fleet: Option<&str>,
-    issue: Option<u64>,
-    yes: bool,
-) -> Result<()> {
+pub fn clean(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: Option<&str>, issue: Option<u64>, yes: bool) -> Result<()> {
     let events = read(&ctx.state)?;
     let states = fold(&events);
     let agents = host::agents(r).context("cannot list herdr agents; refusing to clean blind")?;
     let mut seen = std::collections::BTreeSet::new();
     let mut failed = 0;
-    let mut closed = std::collections::BTreeMap::new();
+    let mut closed = BTreeMap::new();
     // Newest spawn per worktree wins (it has the current pane).
     for e in events.iter().rev().filter(|e| e.kind == "spawn" && fleet.is_none_or(|f| f == e.fleet)) {
         let (Some(n), Some(wt)) = (e.issue, e.str("worktree")) else { continue };
@@ -161,7 +146,7 @@ pub fn clean(
             continue;
         }
         if !pane.is_empty() {
-            let _ = r.run("herdr", &crate::runner::argv(&["pane", "close", pane]));
+            let _ = r.run("herdr", &argv(&["pane", "close", pane]));
         }
         writeln!(out, "removed {wt} ({}#{n} {why})", e.fleet)?;
         emit(&ctx.state, cfg, Event::new(ctx.now, &e.fleet, Some(n), "clean", json!({"worktree": wt, "pane": pane})))?;
@@ -175,14 +160,13 @@ pub fn clean(
     Ok(())
 }
 
-/// The fleet's closed issue numbers, read once per fleet per run; a failed read
-/// is reported and counts as none closed.
+/// The fleet's closed issue numbers, read once per fleet per run; a failed read is reported and counts as none.
 fn closed_issues<'a>(
     ctx: &Ctx,
     cfg: &Config,
     r: &dyn Runner,
     out: &mut dyn Write,
-    memo: &'a mut std::collections::BTreeMap<String, Vec<u64>>,
+    memo: &'a mut BTreeMap<String, Vec<u64>>,
     fleet: &str,
 ) -> &'a Vec<u64> {
     if !memo.contains_key(fleet) {
@@ -196,10 +180,9 @@ fn closed_issues<'a>(
     &memo[fleet]
 }
 
-/// herdr first; else plain `git worktree remove` (never `--force`) after dropping
-/// fleet's own files, re-checked clean right before.
+/// herdr first; else `git worktree remove` (never `--force`) of the re-checked tree minus `OWN_FILES`.
 fn remove(r: &dyn Runner, cfg: &Config, fleet: &str, wt: &str, ws: &str) -> Result<()> {
-    if !ws.is_empty() && r.run("herdr", &crate::runner::argv(&["worktree", "remove", "--workspace", ws]))?.code == 0 {
+    if !ws.is_empty() && r.run("herdr", &argv(&["worktree", "remove", "--workspace", ws]))?.code == 0 {
         return Ok(());
     }
     if let Some(why) = dirty(r, Path::new(wt)) {

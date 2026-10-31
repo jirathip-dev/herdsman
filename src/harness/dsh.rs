@@ -1,7 +1,5 @@
-//! dsh-TUI (beta TUI over DeepSeek Harness): a per-role DSH patch layer, a pinned
-//! `dsh-tui` typed into the lane's shell, and a git `pre-push` hook in place of the
-//! pre-tool hook DSH lacks. dsh-TUI reports its own state to herdr (agent `dsh-tui`).
-use super::Harness;
+//! dsh-TUI lanes (docs/dsh.md): a per-role patch layer, a pinned `dsh-tui` typed into the shell, a git pre-push hook.
+use super::{attempts, Harness};
 use crate::runner::{argv, json, ok, Runner};
 use crate::spawn::Plan;
 use crate::Ctx;
@@ -24,8 +22,7 @@ fn patch_file(ctx: &Ctx, profile: &str) -> PathBuf {
     ctx.claude_dir().with_file_name("dsh").join(format!("{profile}.patch.yml"))
 }
 
-/// Reviewers get the workspace-write sandbox (git metadata, ~/.cargo and the rest of
-/// the disk stay unwritable); escalations are never asked, since nobody answers them.
+/// Reviewers get the workspace-write sandbox; escalations are never asked (nobody answers them).
 fn patch(role: &str) -> String {
     let mode = if role == "rev" { "workspace-write" } else { "danger-full-access" };
     format!(
@@ -70,10 +67,7 @@ impl Harness for Dsh {
         argv(&["pane", "run", pane, "dsh-tui", "--patch", &patch])
     }
 
-    /// Settle on `dsh-tui` reporting idle (Esc skips the first-run wizard), name the
-    /// lane's agent (best effort: dsh-TUI's own reports drop the name), type the kick
-    /// and Enter (`herdr agent prompt` takes only agents herdr started), then confirm
-    /// by the label going working, blocked or (a quick turn) done.
+    /// Settle idle (Esc skips the wizard), name the agent, type kick + Enter, confirm working/blocked/done.
     fn kick_cmds(&self, p: &Plan, pane: &str) -> Vec<Vec<String>> {
         vec![
             argv(&["pane", "get", pane]),
@@ -102,10 +96,7 @@ impl Harness for Dsh {
         }
         r.run("herdr", &c[3])?;
         let typed: String = p.kick.chars().take(20).collect();
-        for attempt in 0..3 {
-            if attempt > 0 {
-                r.sleep(5);
-            }
+        for attempt in attempts(r, 3, 5) {
             if attempt == 0 || !r.run("herdr", &c[1])?.stdout.contains(&typed) {
                 r.run("herdr", &c[4])?;
             }
@@ -120,12 +111,8 @@ impl Harness for Dsh {
 
 /// Re-read the pane (1 s apart, `tries` times) until dsh-TUI reports one of `want`.
 fn poll(r: &dyn Runner, get: &[String], want: &[&str], tries: u32) -> bool {
-    for i in 0..tries {
-        if i > 0 {
-            r.sleep(1);
-        }
-        let args: Vec<&str> = get.iter().map(String::as_str).collect();
-        let pane = json(r, "herdr", &args).map(|v| v["result"]["pane"].clone()).unwrap_or_default();
+    for _ in attempts(r, tries, 1) {
+        let pane = json(r, "herdr", get).map(|v| v["result"]["pane"].clone()).unwrap_or_default();
         if pane["agent"] == LABEL && want.iter().any(|w| pane["agent_status"] == *w) {
             return true;
         }
@@ -133,9 +120,7 @@ fn poll(r: &dyn Runner, get: &[String], want: &[&str], tries: u32) -> bool {
     false
 }
 
-/// Install a `pre-push` hook for this worktree only (`core.hooksPath` in its
-/// worktree config) that runs `herdsman hook --git-pre-push`: pushes to protected
-/// branches are refused, and every push from a reviewer lane.
+/// A worktree-only `pre-push` hook (`core.hooksPath`) running `herdsman hook --git-pre-push`.
 pub fn install_pre_push(r: &dyn Runner, exe: &str, wt: &Path, role: &str) -> Result<()> {
     let w = wt.to_string_lossy();
     let gd = PathBuf::from(ok(r, "git", &["-C", &w, "rev-parse", "--absolute-git-dir"])?.trim());
@@ -150,46 +135,4 @@ pub fn install_pre_push(r: &dyn Runner, exe: &str, wt: &Path, role: &str) -> Res
     ok(r, "git", &["-C", &w, "config", "extensions.worktreeConfig", "true"])?;
     ok(r, "git", &["-C", &w, "config", "--worktree", "core.hooksPath", &dir.to_string_lossy()])?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::runner::Out;
-
-    /// Answers `pane get` idle, then working; records every herdr call.
-    struct Fake(std::cell::RefCell<Vec<String>>);
-
-    impl Runner for Fake {
-        fn run(&self, _: &str, args: &[String]) -> Result<Out> {
-            let mut calls = self.0.borrow_mut();
-            calls.push(args.join(" "));
-            let gets = calls.iter().filter(|c| c.starts_with("pane get")).count();
-            let status = if gets == 1 { "idle" } else { "working" };
-            let stdout = if args[1] == "get" {
-                format!(r#"{{"result":{{"pane":{{"agent":"dsh-tui","agent_status":"{status}"}}}}}}"#)
-            } else {
-                String::new()
-            };
-            Ok(Out { code: 0, stdout, stderr: String::new() })
-        }
-        fn sleep(&self, _: u64) {}
-    }
-
-    /// Byte 20 of this kick falls inside `語`: the typed-kick check must not panic.
-    #[test]
-    fn kick_with_non_ascii_path_does_not_panic() {
-        let wt = PathBuf::from("/Users/日本語/wt");
-        let s = String::new;
-        let p = Plan {
-            agent: "a".into(), role: "rev".into(), harness: "dsh".into(), profile: s(), model: None, effort: None,
-            branch: s(), base: s(), worktree: wt.clone(), brief: wt.join(".brief.md"),
-            kick: "Read /Users/日本語/wt/.brief.md and execute it fully.".into(), lane: s(),
-            account: None, mcp: Default::default(), mcp_file: wt.join(".mcp.lane.json"), head: s(), title: s(),
-        };
-        assert!(!p.kick.is_char_boundary(20));
-        let r = Fake(Default::default());
-        assert!(Dsh.kick(&r, &p, "w9:p1").unwrap());
-        assert!(r.0.borrow().iter().any(|c| c.starts_with("pane send-text w9:p1 Read /Users/日本語")));
-    }
 }

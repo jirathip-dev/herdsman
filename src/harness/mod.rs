@@ -1,6 +1,4 @@
-//! Harness adapters: what differs between the agent CLIs a lane runs — profile and
-//! hook install, launch argv, settle + kick. A new harness is one file here plus its
-//! name in `NAMES` (fleet.toml validation and `herdsman set --harness` follow).
+//! Harness adapters (profile + hook install, launch argv, kick): a new harness is one file plus its `NAMES` entry.
 mod claude;
 mod dsh;
 mod hermes;
@@ -12,15 +10,14 @@ use anyhow::Result;
 use std::io::Write;
 
 pub use dsh::{install_pre_push, DSH_TUI_VERSION};
-pub use hermes::{set_hooks, set_mcp};
+pub use hermes::set_mcp;
 
 pub const NAMES: [&str; 3] = ["claude", "hermes", "dsh"];
 
 /// Effort levels a role may set (`effort = "…"`).
 pub const EFFORTS: [&str; 5] = ["none", "low", "medium", "high", "xhigh"];
 
-/// The levels `harness` can be launched with: Claude `--effort` (`none` omits it),
-/// Hermes `--reasoning`; dsh has no effort setting yet (herdsman-archive#22).
+/// The levels `harness` takes: Claude `--effort` (`none` omits it), Hermes `--reasoning`; dsh none yet.
 pub fn efforts(harness: &str) -> &'static [&'static str] {
     match harness {
         "dsh" => &["none"],
@@ -66,6 +63,11 @@ fn agent_start(p: &Plan, kind: &str, pane: &str, args: Vec<String>) -> Vec<Strin
     c.extend(argv(&["--timeout", "90000", "--"]));
     c.extend(args);
     c
+}
+
+/// Try numbers `0..n`, sleeping `secs` before every try but the first.
+fn attempts(r: &dyn Runner, n: u32, secs: u64) -> impl Iterator<Item = u32> + '_ {
+    (0..n).inspect(move |&i| if i > 0 { r.sleep(secs) })
 }
 
 /// `herdr agent wait` until the kick shows as working or blocked.
