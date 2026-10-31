@@ -52,6 +52,7 @@
       if (!$('#push').disabled || st() !== 'pair this phone first') early.push(`unpaired: [enable alerts] disabled ${$('#push').disabled}, p.st "${st()}"`);
       $('#push').hidden = false;
       $('#push').scrollIntoView({ block: 'center', behavior: 'instant' });
+      setTimeout(() => { const p = $('#push'), c = getComputedStyle(p), g = p.getBoundingClientRect(); early.push(`DIAG ${p.outerHTML} ws=${c.whiteSpace} w=${c.width} mw=${c.maxWidth} sw=${p.scrollWidth} cw=${p.clientWidth} sh=${p.scrollHeight} ch=${p.clientHeight} rect=${g.left|0},${g.right|0} font=${c.fontFamily}/${c.fontSize} iw=${innerWidth} vis=${p.checkVisibility({ visibilityProperty: true })}`); }, 2500);
     },
     events: () => tab('events'),
     herd1: () => herd(true),
