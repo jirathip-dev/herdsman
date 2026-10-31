@@ -129,7 +129,9 @@ fn role_dropdowns_set_like_herdsman_set() {
     let (cli, web) = pair("set");
     let r = Fake::default();
     let s = Server::new(&web, &r, Some(ADDR.into()));
-    let page = get(&s, "/");
+    // #60: a fleet's role forms load when its row is opened.
+    assert!(get(&s, "/").contains("<details class=roles data-src=\"frag?id=roles&amp;fleet=sendmeter\"><summary><span>roles</span></summary></details>"));
+    let page = get(&s, "/frag?id=roles&fleet=sendmeter");
     assert!(page.contains("<option selected>opus</option><option>sonnet</option>"), "only `models`");
     assert!(page.contains("<select name=effort aria-label=effort><option value=\"\" selected>default (none)</option><option>none</option>"));
     assert_eq!(run(&cli, &Fake::default(), &["set", "sendmeter", "impl", "--model", "sonnet", "--effort", "high"]).0, 0);
@@ -452,7 +454,8 @@ fn queue_shows_open_work_only_and_folds_paused_retired_and_noise() {
     assert!(queue.contains("<span>#17</span><span class=a>impl</span>"), "live lane stays impl");
     assert!(queue.contains("stall check: #17 in"), "paused fleet's lane is not counted");
     // Events: noise folded into one count, `?all=1` unfolds it.
-    assert!(section("events").contains("4 × clean / notify-failed"));
+    assert_eq!(section("events"), "<section id=events>", "#60: Events loads on tab open");
+    assert!(get(&s, "/frag?id=events").contains("4 × clean / notify-failed"));
     let all = get(&s, "/?all=1");
     assert!(!all.contains("× clean") && all.matches("<p class=ev>").count() > 50);
 }

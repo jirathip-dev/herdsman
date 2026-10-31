@@ -11,7 +11,21 @@ function tab(t) {
   $$('main>section').forEach(s => s.hidden = s.id !== t);
   $$('nav a').forEach(a => a.classList.toggle('on', a.hash === '#' + t));
   put('tab', t);
+  // #60: the live page leaves the Events body out; it loads when the tab opens.
+  if (t === 'events' && !$('#events').childElementCount) part('frag?id=events').then(h => h && frag('events', h));
 }
+// #60: a part of the page read on demand (null when it cannot be read).
+const part = src => fetch(R + src, { cache: 'no-store' }).then(r => r.ok ? r.text() : null).catch(() => null);
+// A `details[data-src]` row (a fleet's role forms) loads its body when opened, and again on each refresh.
+async function load(d) {
+  const h = await part(d.dataset.src);
+  if (h === null) return;
+  d.querySelectorAll(':scope>:not(summary)').forEach(n => n.remove());
+  d.insertAdjacentHTML('beforeend', h);
+  d.dataset.on = 1;
+  tidy(d);
+}
+document.addEventListener('toggle', e => { if (e.target.matches('details[data-src]') && e.target.open) load(e.target); }, true);
 $$('nav a').forEach(a => a.onclick = e => { e.preventDefault(); tab(a.hash.slice(1)); });
 // A tapped alert opens `/?issue=N#tab`: that tab, the issue's row open.
 const t0 = location.hash.slice(1) || get('tab'), DBG = new URLSearchParams(location.search), want = DBG.get('issue');
@@ -46,8 +60,9 @@ const rk = n => n.nodeType === 1 && n.matches('details,.lane') ? key(n) : '';
 function morph(a, b) {
   if (a.nodeType !== 1) { if (a.data !== b.data) a.data = b.data; return; }
   if (a.isEqualNode(b)) return;
-  for (const { name } of [...a.attributes]) if (!b.hasAttribute(name) && name !== 'open') a.removeAttribute(name);
+  for (const { name } of [...a.attributes]) if (!b.hasAttribute(name) && name !== 'open' && name !== 'data-on') a.removeAttribute(name);
   for (const { name, value } of b.attributes) if (a.getAttribute(name) !== value) a.setAttribute(name, value);
+  if (a.dataset.on) return; // a loaded part keeps its body; refresh() re-reads it
   const rows = new Map(), rest = [], kids = [...b.childNodes];
   for (const c of a.childNodes) { const k = rk(c); if (k && !rows.has(k)) rows.set(k, c); else if (!k) rest.push(c); }
   kids.forEach((n, i) => {
@@ -116,6 +131,7 @@ async function refresh() {
   try {
     const j = await (await fetch(R + 'frags', { cache: 'no-store' })).json();
     for (const id in j) frag(id, j[id]);
+    $$('details[data-src][open]').forEach(load);
     herdPull();
     busy = false;
     sync(live() ? 'g' : 'a');

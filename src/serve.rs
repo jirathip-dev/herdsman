@@ -110,6 +110,14 @@ pub struct Server<'a> {
     export: Option<bool>,
 }
 
+const JSON: &str = "application/json; charset=utf-8";
+const HTML: &str = "text/html; charset=utf-8";
+
+/// A `303 See Other` to `loc`.
+fn see(loc: &str) -> Vec<u8> {
+    format!("HTTP/1.1 303 See Other\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes()
+}
+
 fn header<'h>(head: &'h str, name: &str) -> Option<&'h str> {
     head.lines().skip(1).find_map(|l| l.split_once(':').filter(|(k, _)| k.trim().eq_ignore_ascii_case(name)).map(|(_, v)| v.trim()))
 }
@@ -347,56 +355,47 @@ impl<'a> Server<'a> {
         let (path, query) = target.split_once('?').unwrap_or((target, ""));
         let ctx = &Ctx { now, ..self.ctx.clone() };
         let text = |s: &str| s.as_bytes().to_vec();
+        let fail = |e: anyhow::Error| ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes());
         let (mut extra, mut cache) = (String::new(), "no-store");
         // #67: a fetch-only read never becomes the page; `fetch()` sends neither header.
         let nav = header(head, "sec-fetch-mode") == Some("navigate") || header(head, "sec-fetch-dest") == Some("document") || header(head, "accept").is_some_and(|a| a.starts_with("text/html"));
         let frags = path == "/frags" || path == "/" && query == "frag=all"; // `?frag=all`: old cached JS, one release
-        if method == "GET" && nav && (frags || ["/herd.json", "/lane"].contains(&path)) {
-            return b"HTTP/1.1 303 See Other\r\nLocation: /\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec();
+        if method == "GET" && nav && (frags || ["/herd.json", "/lane", "/frag"].contains(&path)) {
+            return see("/");
         }
+        // Host/Origin-checked: the live stream, transcripts, Herd's data and every write.
+        let guarded = method == "GET" && ["/live", "/lane", "/herd.json"].contains(&path) || method == "POST" && self.addr.is_some();
         let (status, ctype, body) = match (method, path) {
-            ("GET", _) if frags => match self.frags(ctx, false, self.device(ctx, head).is_some()) {
-                Ok(f) => ("200 OK", "application/json; charset=utf-8", serde_json::to_vec(&f.into_iter().collect::<BTreeMap<_, _>>()).unwrap_or_default()),
-                Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
-            },
-            ("GET", "/live") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
+            ("GET", _) if frags => self.frags(ctx, false, self.device(ctx, head).is_some()).map_or_else(fail, |f| {
+                ("200 OK", JSON, serde_json::to_vec(&f.into_iter().collect::<BTreeMap<_, _>>()).unwrap_or_default())
+            }),
+            ("POST", _) if self.addr.is_none() => ("405 Method Not Allowed", "text/plain", text("read-only: GET only\n")),
+            _ if guarded && !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("GET", "/live") => ("503 Service Unavailable", "text/plain", text("8 live clients already: the page polls instead\n")),
-            ("GET", "/") => match self.page(ctx, &form(query), self.device(ctx, head).is_some()) {
-                Ok(b) => ("200 OK", "text/html; charset=utf-8", b.into_bytes()),
-                Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
-            },
-            ("GET", "/lane") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
+            ("GET", "/") => self.page(ctx, &form(query), self.device(ctx, head).is_some()).map_or_else(fail, |b| ("200 OK", HTML, b.into_bytes())),
+            ("GET", "/frag") => self.part(ctx, &form(query)).map_or(("404 Not Found", "text/plain", text("no such part\n")), |h| ("200 OK", HTML, h.into_bytes())),
             ("GET", "/lane") if self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("pair this device to read transcripts\n")),
             ("GET", "/lane") => match self.transcript(ctx, &form(query)) {
-                Some(j) => ("200 OK", "application/json; charset=utf-8", j.into_bytes()),
+                Some(j) => ("200 OK", JSON, j.into_bytes()),
                 None => ("404 Not Found", "text/plain", text("no such agent pane\n")),
             },
-            ("GET", "/herd.json") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("GET", "/herd.json") => {
                 let loopback = header(head, "host").is_some_and(|h| ["127.0.0.1", "localhost", "[::1]"].iter().any(|l| names(l, h)));
-                match self.herd(ctx, form(query).get("weather").filter(|_| loopback).map(String::as_str)) {
-                    Ok(j) => ("200 OK", "application/json; charset=utf-8", j.to_string().into_bytes()),
-                    Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
-                }
+                let weather = form(query).get("weather").filter(|_| loopback).cloned();
+                self.herd(ctx, weather.as_deref()).map_or_else(fail, |j| ("200 OK", JSON, j.to_string().into_bytes()))
             }
             ("GET", "/sw.js") => ("200 OK", "text/javascript", text(&SW.replace("@V", &format!("{VER:08x}")))),
             ("GET", p) => {
                 let a = ASSETS.iter().find(|a| p == format!("/a/{VER:08x}/{}", a.0)).inspect(|_| cache = "public, max-age=31536000, immutable");
                 a.or_else(|| FILES.iter().find(|f| p.strip_prefix('/') == Some(f.0)).inspect(|_| cache = "public, max-age=86400")).map_or(("404 Not Found", "text/plain", text("not found\n")), |f| ("200 OK", f.1, f.2.to_vec()))
             }
-            ("POST", _) if self.addr.is_none() => ("405 Method Not Allowed", "text/plain", text("read-only: GET only\n")),
-            ("POST", _) if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("POST", "/") if form(body.trim()).get("op").is_some_and(|o| o == "unpair" || o == "answer") && self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("only a paired device may remove devices or answer asks\n")),
-            ("POST", "/") => {
-                let msg = self.write(ctx, &form(body.trim())).unwrap_or_else(|e| shown(&e));
-                let loc = format!("/?msg={}", enc(&msg));
-                return format!("HTTP/1.1 303 See Other\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes();
-            }
+            ("POST", "/") => return see(&format!("/?msg={}", enc(&self.write(ctx, &form(body.trim())).unwrap_or_else(|e| shown(&e))))),
             // #59: the request's `hd=` token (10 min) works once `serve approve` clears its code; `/pair/claim` then keeps it a year.
             ("POST", "/pair/request") => match devices::request(ctx, &kind(head), header(head, "x-peer").unwrap_or_default()) {
                 Ok(Some((code, t))) => (extra = format!("Set-Cookie: hd={t}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Strict\r\n"), ("200 OK", "text/plain", format!("{code}\n").into_bytes())).1,
                 Ok(None) => ("429 Too Many Requests", "text/plain", text("3 pairing requests open (2 per address), or a code clash: approve one, tap Pair again or wait 10 min\n")),
-                Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
+                Err(e) => fail(e),
             },
             ("POST", "/pair/claim") => match self.device(ctx, head) {
                 Some(d) => (extra = format!("Set-Cookie: {}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict\r\n", header(head, "cookie").unwrap_or_default().split(';').map(str::trim).find(|c| c.starts_with("hd=")).unwrap_or_default()), ("200 OK", "text/plain", format!("paired as {}\n", d.label).into_bytes())).1,
@@ -409,8 +408,7 @@ impl<'a> Server<'a> {
             },
             ("POST", "/push/unsubscribe") => {
                 let id = form(body.trim()).get("id").cloned().unwrap_or_default();
-                let msg = crate::webpush::remove(&ctx.state, &[id]).map_or_else(|e| shown(&e), |n| format!("{n} alert device removed"));
-                return format!("HTTP/1.1 303 See Other\r\nLocation: /?msg={}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", enc(&msg)).into_bytes();
+                return see(&format!("/?msg={}", enc(&crate::webpush::remove(&ctx.state, &[id]).map_or_else(|e| shown(&e), |n| format!("{n} alert device removed")))));
             }
             ("POST", p @ ("/send" | "/answer" | "/act")) => {
                 let (status, msg) = self.send(ctx, head, &form(body.trim()), p);
@@ -617,8 +615,26 @@ impl<'a> Server<'a> {
         ])
     }
 
+    /// #60: a part the page loads on demand: a fleet's role forms (`id=roles&fleet=`), the Events tab (`id=events`).
+    fn part(&self, ctx: &Ctx, q: &BTreeMap<String, String>) -> Option<String> {
+        let (events, cfg) = (read(&ctx.state).ok()?, Config::load(&ctx.config).ok());
+        match q.get("id")?.as_str() {
+            "events" => Some(events_tab(ctx, cfg.as_ref(), &events, &fold(&events), false)),
+            "roles" => {
+                let (c, f) = (cfg?, q.get("fleet")?);
+                Some(roles(&c, f, c.fleet.get(f)?, self.addr.is_some(), &mtime(ctx)))
+            }
+            _ => None,
+        }
+    }
+
     fn page(&self, ctx: &Ctx, q: &BTreeMap<String, String>, paired: bool) -> Result<String> {
-        let f = self.frags(ctx, q.get("all").is_some_and(|v| v == "1"), paired)?;
+        let all = q.get("all").is_some_and(|v| v == "1");
+        let mut f = self.frags(ctx, all, paired)?;
+        // #60: the Events tab body loads when the tab opens (`/frag?id=events`), unless `?all=1` asked for it.
+        if self.export.is_none() && !all {
+            f[4].1.clear();
+        }
         let msg = q.get("msg").map_or(String::new(), |m| {
             let bad = m.starts_with("REFUSED") || m.starts_with("error");
             format!("<p class=\"msg {}\">{}</p>", if bad { "r" } else { "g" }, esc(m))
@@ -746,8 +762,11 @@ impl<'a> Server<'a> {
                 }).collect();
                 body += &format!("<details class=done><summary><span>done today: {}</span></summary>{rows}</details>", done.len());
             }
-            body += &format!("<details class=roles><summary><span>roles</span></summary>{}</details>",
-                fc.role.iter().map(|(name, r)| role_form(cfg, f, name, r, rw, &mt)).collect::<String>());
+            // #60: the live page loads a fleet's role forms when the row is opened (`/frag`); an export inlines them.
+            body += &match self.export {
+                Some(_) => format!("<details class=roles><summary><span>roles</span></summary>{}</details>", roles(cfg, f, fc, rw, &mt)),
+                None => format!("<details class=roles data-src=\"frag?id=roles&amp;fleet={}\"><summary><span>roles</span></summary></details>", enc(f)),
+            };
             let button = |op: &str, label: &str| if rw { format!("<form method=post>{}<button>{label}</button></form>", hidden(op, f, &mt)) } else { String::new() };
             if fc.paused {
                 let lanes: Vec<&&IssueState> = mine.iter().filter(|s| s.active_lane().is_some()).collect();
@@ -1043,6 +1062,11 @@ fn titles(ctx: &Ctx, fleet: &str, issue: u64) -> Option<String> {
     }
     let cut: String = t.chars().take(51).collect();
     Some(format!("{} …", cut.rsplit_once(' ').map_or(cut.as_str(), |c| c.0).trim_end_matches([' ', '·'])))
+}
+
+/// A fleet's role rows: the model/effort pickers (`rw`), else the settings as text.
+fn roles(cfg: &Config, fleet: &str, fc: &crate::config::Fleet, rw: bool, mt: &str) -> String {
+    fc.role.iter().map(|(name, r)| role_form(cfg, fleet, name, r, rw, mt)).collect()
 }
 
 fn role_form(cfg: &Config, fleet: &str, role: &str, r: &Role, rw: bool, mt: &str) -> String {
