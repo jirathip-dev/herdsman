@@ -515,3 +515,21 @@ fn fetch_only_reads_redirect_navigations_to_the_board() {
     let v = &v[v.find("/a/").unwrap()..][..11];
     assert!(send(&format!("{v}/serve.js"), "").contains("fetch(R + 'frags'"));
 }
+
+/// #60: `/frag` parts are fetch-only like `frags` (a navigation goes to the board); an unknown id or fleet is 404.
+#[test]
+fn frag_parts_redirect_navigations_and_404_unknown_ids() {
+    let (c, r) = (ctx(&tmpdir("frag-part"), &config()), Fake::default());
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    let send = |path: &str, extra: &str| String::from_utf8_lossy(&s.respond(&format!("GET {path} HTTP/1.1\r\nHost: {ADDR}\r\n{extra}\r\n"), 1_000_000)).into_owned();
+    for path in ["/frag?id=events", "/frag?id=roles&fleet=sendmeter"] {
+        assert!(send(path, "").starts_with("HTTP/1.1 200 OK"), "{path}");
+        for nav in ["Sec-Fetch-Mode: navigate\r\n", "Sec-Fetch-Dest: document\r\n", "Accept: text/html,application/xhtml+xml\r\n"] {
+            assert!(send(path, nav).starts_with("HTTP/1.1 303 See Other\r\nLocation: /\r\n"), "{path} {nav}");
+        }
+    }
+    for path in ["/frag?id=nope", "/frag", "/frag?id=roles", "/frag?id=roles&fleet=nope"] {
+        let res = send(path, "");
+        assert!(res.starts_with("HTTP/1.1 404 Not Found") && res.ends_with("no such part\n"), "{path}: {res}");
+    }
+}
