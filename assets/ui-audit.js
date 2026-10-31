@@ -79,6 +79,7 @@
   function check() {
     let res;
     try { res = (SCROLL[V] || measure)(); } catch (e) { res = { view: V, controls: 0, outliers: ['audit error: ' + e.message] }; }
+    if (innerWidth !== 390) res.outliers.push(`viewport ${innerWidth} px wide, not 390`); // #68: new-headless Chrome keeps windows ≥ 500 px
     const out = document.createElement('pre');
     out.id = 'audit';
     out.textContent = JSON.stringify(res);
@@ -87,7 +88,6 @@
   function measure() {
     $$('[inert]').forEach(e => { e.inert = false; });
     const roots = (ROOTS[V] || (() => [B]))(), bad = [];
-    if (innerWidth !== 390) bad.push(`viewport ${innerWidth} px wide, not 390`); // #68: new-headless Chrome keeps windows ≥ 500 px
     const all = sel => roots.flatMap(r => [...(r.matches(sel) ? [r] : []), ...r.querySelectorAll(sel)]).filter(seen);
     const ctl = all(CTL), rows = all(ROW);
     for (const e of ctl) {

@@ -48,8 +48,12 @@ jobs:
       - name: demo export
         run: HERDSMAN_HOME=demo FLEET_CONFIG=demo/fleet.toml FLEET_STATE=demo/events.jsonl ./target/release/herdsman serve --export site --demo
       # #68: Chrome's new headless never makes a window under 500 px wide; the headless shell honours 390.
+      # Pinned build (Google's Chrome-for-Testing), so layout never moves without a commit.
       - name: chrome-headless-shell
-        run: echo "CHROME=$(npx -y @puppeteer/browsers@2.6.1 install chrome-headless-shell@stable --path "$RUNNER_TEMP/chs" | tail -1 | cut -d' ' -f2-)" >> "$GITHUB_ENV"
+        run: |
+          c=$(npx -y @puppeteer/browsers@2.6.1 install chrome-headless-shell@156.0.8078.80 --path "$RUNNER_TEMP/chs" | tail -1 | cut -d' ' -f2-)
+          test -x "$c" || { echo "::error::chrome-headless-shell install gave no binary: '$c'"; exit 1; }
+          echo "CHROME=$c" >> "$GITHUB_ENV"
       - name: ui audit at 390 px (11 views)
         run: scripts/ui-audit.sh site ui-390
       - uses: actions/upload-artifact@v4
