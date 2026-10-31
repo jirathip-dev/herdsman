@@ -171,3 +171,28 @@ pub fn tail(screen: &str, n: usize) -> Vec<String> {
     let lines: Vec<&str> = screen.lines().filter(|l| !l.trim().is_empty()).collect();
     lines[lines.len().saturating_sub(n)..].iter().map(|l| mask(l.trim_end())).collect()
 }
+
+/// A blocked pane's pending prompt: the question and a Claude menu's options (a `❯`-marked run
+/// numbered 1, 2, …; wrapped lines skipped), or no options for a free-text question. None: no prompt seen.
+pub fn pending(screen: &str) -> Option<(String, Vec<String>)> {
+    let lines: Vec<&str> = screen.lines().map(|l| l.trim_matches(|c: char| c.is_whitespace() || c == '│')).filter(|l| !l.is_empty()).collect();
+    let opt = |l: &str| {
+        let (n, t) = l.trim_start_matches(['❯', '›']).trim_start().split_once(". ")?;
+        Some((n.parse::<usize>().ok()?, t.trim().to_string()))
+    };
+    let question = |ls: &[&str]| ls.iter().rev().take(6).find(|l| l.contains('?')).map(|q| q.to_string());
+    let (mut opts, mut i, mut gap) = (vec![], lines.iter().rposition(|l| opt(l).is_some()).map_or(0, |i| i + 1), 0);
+    while i > 0 && gap <= 2 && opts.last().is_none_or(|o: &(usize, String)| o.0 > 1) {
+        i -= 1;
+        match opt(lines[i]) {
+            Some(o) => (opts.push(o), gap = 0).1,
+            None => gap += 1,
+        }
+    }
+    opts.reverse();
+    let menu = opts.len() >= 2 && opts.iter().zip(1..).all(|(o, n)| o.0 == n) && lines[i..].iter().any(|l| l.starts_with('❯') && opt(l).is_some());
+    match menu {
+        true => Some((question(&lines[..i]).or(lines[..i].last().map(|l| l.to_string()))?, opts.into_iter().map(|o| o.1).collect())),
+        false => Some((question(&lines)?, vec![])),
+    }
+}
