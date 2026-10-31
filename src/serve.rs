@@ -302,9 +302,7 @@ impl<'a> Server<'a> {
         s.write_all(&self.respond(&req, crate::now()))
     }
 
-    /// Each 1 s tick: on a log change, a `herdr agent list` change (read every 2 s, uncached) or every
-    /// 15 s (ages; it keeps requests' cached reads warm), re-render the fragments per audience (paired or not) and push the changed ones.
-    /// A stream whose device was removed closes first (the page reconnects unpaired).
+    /// The watcher's 1 s tick (docs/serve.md): on a change, re-render per audience and push only the changed fragments.
     fn tick(&self) {
         let mut w = self.watch.borrow_mut();
         let now = crate::now();
@@ -321,8 +319,7 @@ impl<'a> Server<'a> {
             w.herdr = (now, hash(&out));
             lock(&self.cache).insert("herdr agent list".into(), (now, out));
         }
-        // #37: Herd's data rides the same stream, re-read every 10 s (host weather) while anyone listens;
-        // like a frag, pushed only on a change (the page reads `/herd.json` when Herd opens).
+        // #37: Herd's data rides the same stream, re-read every 10 s (host weather) while anyone listens; pushed on a change.
         if (changed || now >= w.herd.0 + 10) && !lock(&self.clients).is_empty() {
             let j = self.herd(&Ctx { now, ..self.ctx.clone() }, None).map(|v| v.to_string()).unwrap_or_default();
             if w.herd.0 > 0 && hash(&j) != w.herd.1 && !j.is_empty() {
@@ -818,8 +815,7 @@ impl<'a> Server<'a> {
         crate::waiting::scan(ctx, cfg, &self.cached(ctx.now, 30), events, &live, false).into_iter().map(|x| x.1).collect()
     }
 
-    /// #37: Herd mode's data (`/herd.json`, the `/live` `herd` event): per fleet the lanes as the unpaired Lanes rows
-    /// show them (no pane text) and the queued issues, Others, host. `weather` (loopback only) forces the host values.
+    /// #37: Herd mode's data (`/herd.json`, the `herd` event; docs/serve.md); `weather` (loopback only) forces the host values.
     fn herd(&self, ctx: &Ctx, weather: Option<&str>) -> Result<serde_json::Value> {
         let events = read(&ctx.state)?;
         let (cfg, st) = (Config::load(&ctx.config)?, fold(&events));
@@ -977,8 +973,7 @@ impl<'a> Server<'a> {
     }
 }
 
-/// `--demo`'s runner (#39): `runner.json` maps a command line's prefix to its stdout (the longest match
-/// wins); anything else exits 1. Nothing runs.
+/// `--demo`'s runner (#39): `runner.json`'s stdout for the longest matching command-line prefix, else exit 1.
 #[derive(Default)]
 struct Canned(BTreeMap<String, String>);
 
@@ -991,9 +986,7 @@ impl Runner for Canned {
     fn sleep(&self, _: u64) {}
 }
 
-/// `serve --export <dir> [--demo]` (#39): the page, `herd.json`, manifest, sw and icons as static files with
-/// relative URLs. `--demo`: `runner.json`'s canned reads (`r` is never called), "now" a minute after the log's
-/// last event, pane text shown, every form inert, plus each lane's `lane/<agent>.json` transcript.
+/// `serve --export <dir> [--demo]` (#39, docs/serve.md): the page and its files as static files with relative URLs.
 pub fn export(ctx: &Ctx, r: &dyn Runner, dir: &std::path::Path, demo: bool) -> Result<()> {
     let canned = if demo { Canned(serde_json::from_str(&std::fs::read_to_string(ctx.config.with_file_name("runner.json"))?)?) } else { Canned::default() };
     let (r, events): (&dyn Runner, _) = (if demo { &canned } else { r }, read(&ctx.state)?);
