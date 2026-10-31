@@ -83,6 +83,18 @@ fn kill_refuses_a_secret_in_the_wip_diff() {
     assert_eq!(kinds(&c, "lane-killed"), 0);
 }
 
+/// Lockfile checksums and removed lines are not secrets; a real token beside them still is.
+#[test]
+fn kill_skips_lockfile_checksums_but_not_secrets() {
+    let (c, wt) = lane("kill-lock");
+    let lock = format!("+++ b/Cargo.lock\n+checksum = \"{}\"\n+  \"integrity\": \"sha512-{}==\",\n-OLD_TOKEN=ghp_abcdefghijklmnopqrstu1234\n", "ab".repeat(32), "Qx".repeat(40));
+    let r = git(&wt, "", "1\n", &lock);
+    assert_eq!(run(&c, &r, &["kill", LANE, "--yes"]).0, 0);
+    let (c, wt) = lane("kill-lock-secret");
+    let r = git(&wt, "", "1\n", &format!("{lock}+API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456\n"));
+    assert!(run(&c, &r, &["kill", LANE, "--yes"]).1.contains("REFUSED SECRET_IN_WIP"));
+}
+
 #[test]
 fn stop_sends_escape() {
     let (c, wt) = lane("stop");

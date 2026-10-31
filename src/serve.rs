@@ -715,20 +715,22 @@ impl<'a> Server<'a> {
         let Some(cfg) = cfg else { return "<p class=m>no fleet.toml</p>".into() };
         let Some(all) = self.lanes(ctx.now, cfg, events, st) else { return "<p class=r>herdr agent list failed</p>".into() };
         let state = |l: &lanes::Lane| l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| st.get(&(f.clone(), n)));
+        let live: Vec<_> = all.iter().map(|l| serde_json::json!({"name": l.name, "agent_status": l.state})).collect();
+        let waits: Vec<_> = crate::waiting::scan(ctx, cfg, self.r, events, &live, false).into_iter().map(|x| x.1).collect();
         let mut h = String::new();
         for (sec, subs) in lanes::group(&all, |l| state(l).map_or(l.since, |s| s.last_ts.max(l.since))) {
             h += &format!("<h2><span class={}>{sec} ({})</span></h2>", tone(sec), subs.iter().map(|s| s.1.len()).sum::<usize>());
             for (repo, ls) in subs {
                 h += &format!("<h3>{} ({})</h3>", esc(&repo), ls.len());
                 for l in ls {
-                    h += &self.lane_row(ctx, cfg, l, state(l), paired);
+                    h += &self.lane_row(ctx, cfg, l, state(l), paired, &waits);
                 }
             }
         }
         if h.is_empty() { "<p class=m>no agents</p>".into() } else { h }
     }
 
-    fn lane_row(&self, ctx: &Ctx, cfg: &Config, l: &lanes::Lane, s: Option<&IssueState>, paired: bool) -> String {
+    fn lane_row(&self, ctx: &Ctx, cfg: &Config, l: &lanes::Lane, s: Option<&IssueState>, paired: bool, waits: &[crate::waiting::Waiting]) -> String {
         let screen = l.pane.as_ref().and_then(|p| self.cached(ctx.now, 30, "herdr", &["pane", "read", p, "--source", "visible"]));
         let a = if l.since > 0 { age(ctx.now.saturating_sub(l.since)) } else { String::new() };
         let title = l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| gh::cached_spec(ctx, f, n)).and_then(|v| v["title"].as_str().map(String::from));
@@ -743,6 +745,13 @@ impl<'a> Server<'a> {
         if l.mismatch {
             card.push("<span class=r>⚠ log/pane mismatch: the log has this lane open, herdr has no pane</span>".into());
         }
+        // #46: an idle lane shows what it waits on, coloured by who; a working one keeps its state.
+        let w = waits.iter().find(|w| w.lane == l.name).cloned().or_else(|| crate::waiting::orch(waits, l.fleet.as_deref()?).filter(|_| l.role == "orch"));
+        let (tone, shown) = match w.filter(|_| matches!(l.state.as_str(), "idle" | "done" | "unknown")) {
+            Some(w) => (w.tone(ctx.now), w.label(ctx.now)),
+            None => (tone(&l.state), l.state.clone()),
+        };
+        card.insert(1, esc(&shown));
         let card = self::card(&card) + &if l.state == "blocked" { self.blocked(ctx, l, paired) } else { String::new() };
         let act = esc(&lanes::activity(&l.harness, &screen.unwrap_or_default()));
         format!(
@@ -752,8 +761,8 @@ impl<'a> Server<'a> {
             esc(&l.role),
             avatar(&l.name, &l.state),
             esc(&l.name),
-            tone(&l.state),
-            esc(&l.state)
+            tone,
+            esc(&shown)
         )
     }
 
