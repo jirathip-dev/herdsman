@@ -6,11 +6,11 @@ use herdsman::spawn::Plan;
 use std::path::PathBuf;
 
 /// Answers `pane get` idle, then working; records every herdr call.
-struct Fake(std::cell::RefCell<Vec<String>>);
+struct Fake(std::sync::Mutex<Vec<String>>);
 
 impl Runner for Fake {
     fn run(&self, _: &str, args: &[String]) -> Result<Out> {
-        let mut calls = self.0.borrow_mut();
+        let mut calls = self.0.lock().unwrap();
         calls.push(args.join(" "));
         let gets = calls.iter().filter(|c| c.starts_with("pane get")).count();
         let status = if gets == 1 { "idle" } else { "working" };
@@ -38,5 +38,5 @@ fn kick_with_non_ascii_path_does_not_panic() {
     assert!(!p.kick.is_char_boundary(20));
     let r = Fake(Default::default());
     assert!(harness::get("dsh").kick(&r, &p, "w9:p1").unwrap());
-    assert!(r.0.borrow().iter().any(|c| c.starts_with("pane send-text w9:p1 Read /Users/日本語")));
+    assert!(r.0.lock().unwrap().iter().any(|c| c.starts_with("pane send-text w9:p1 Read /Users/日本語")));
 }

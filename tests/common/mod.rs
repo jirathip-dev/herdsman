@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use herdsman::runner::{Out, Runner};
 use herdsman::Ctx;
-use std::cell::RefCell;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -29,14 +29,39 @@ review_rounds = 3
 stall_minutes = 30
 "#;
 
+/// RefCell's API over an RwLock: runners are `Sync` (serve's watcher has its own thread).
+#[derive(Default)]
+pub struct Shared<T>(RwLock<T>);
+
+impl<T: Copy> Shared<T> {
+    pub fn new(v: T) -> Self {
+        Shared(RwLock::new(v))
+    }
+    pub fn get(&self) -> T {
+        *self.borrow()
+    }
+    pub fn set(&self, v: T) {
+        *self.borrow_mut() = v;
+    }
+}
+
+impl<T> Shared<T> {
+    pub fn borrow(&self) -> RwLockReadGuard<'_, T> {
+        self.0.read().unwrap()
+    }
+    pub fn borrow_mut(&self) -> RwLockWriteGuard<'_, T> {
+        self.0.write().unwrap()
+    }
+}
+
 /// Scripted fake: one-shot replies (`once`) are consumed first, in order; then the
 /// first reply whose prefix matches the command line wins; unscripted commands
 /// fail with exit 1. `sleep` is recorded as a `sleep <secs>` call and returns at once.
 #[derive(Default)]
 pub struct Fake {
-    pub calls: RefCell<Vec<String>>,
+    pub calls: Shared<Vec<String>>,
     pub replies: Vec<(String, Out)>,
-    pub onces: RefCell<Vec<(String, Out)>>,
+    pub onces: Shared<Vec<(String, Out)>>,
 }
 
 impl Fake {

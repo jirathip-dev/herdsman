@@ -1,4 +1,5 @@
-//! `herdsman serve`, the phone page (docs/serve.md): std `TcpListener`, one request at a time.
+//! `herdsman serve`, the phone page (docs/serve.md): std `TcpListener`, one request at a time;
+//! `/live` SSE clients get a thread each, fed by the 1 s watcher thread.
 use crate::config::{Config, Role};
 use crate::events::{age, append, fold, plain, read, Event, IssueState};
 use crate::gate::{refused, Refusal};
@@ -7,10 +8,15 @@ use crate::runner::{argv, Runner};
 use crate::{devices, gh, lanes, queue, Ctx};
 use anyhow::{bail, Context, Result};
 use std::cell::RefCell;
+use std::hash::{Hash, Hasher};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::time::Duration;
+use std::io::ErrorKind::{TimedOut, WouldBlock};
+use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 const CSS: &str = include_str!("../assets/serve.css");
 const JS: &str = include_str!("../assets/serve.js");
@@ -22,6 +28,7 @@ const ICON_512: &[u8] = include_bytes!("../assets/icon-512.png");
 const HORSES: &str = include_str!("../assets/horses.svg");
 
 type States = BTreeMap<(String, u64), IssueState>;
+type Clients = Arc<Mutex<Vec<(Sender<String>, Option<String>)>>>;
 
 pub fn serve(ctx: &Ctx, r: &dyn Runner, addr: &str, read_only: bool) -> Result<()> {
     let l = TcpListener::bind(addr)?;
@@ -32,10 +39,35 @@ pub fn serve(ctx: &Ctx, r: &dyn Runner, addr: &str, read_only: bool) -> Result<(
 
 pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> Result<()> {
     let s = Server::new(ctx, r, (!read_only).then(|| l.local_addr().map(|a| a.to_string())).transpose()?);
-    for st in l.incoming().flatten() {
-        let _ = s.handle(st);
-    }
+    let w = Server { clients: s.clients.clone(), kick: s.kick.clone(), ..Server::new(ctx, r, s.addr.clone()) };
+    std::thread::scope(|sc| {
+        sc.spawn(move || loop {
+            w.tick();
+            std::thread::sleep(Duration::from_secs(1));
+        });
+        l.incoming().flatten().for_each(|st| drop(s.handle(st)));
+    });
     Ok(())
+}
+
+fn hash(s: &impl Hash) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
+
+/// A menu as its card shows it (masked question and options): `/answer` refuses a tap on any other.
+fn seen(q: &str, opts: &[String]) -> u64 {
+    hash(&(lanes::mask(q), opts.iter().map(|o| lanes::mask(o)).collect::<Vec<_>>()))
+}
+
+/// The watcher's last look: the log's (size, mtime), the `herdr agent list` read (secs, hash), last render, per-(paired, fragment) hashes.
+#[derive(Default)]
+struct Watch {
+    log: Option<(u64, Option<std::time::SystemTime>)>,
+    herdr: (u64, u64),
+    rendered: u64,
+    frags: BTreeMap<(bool, &'static str), u64>,
 }
 
 pub struct Server<'a> {
@@ -48,6 +80,11 @@ pub struct Server<'a> {
     host: RefCell<Option<(u64, Host)>>,
     /// Reply-box send times per device hash (10 a minute).
     sent: RefCell<BTreeMap<String, Vec<u64>>>,
+    /// `/live` client threads (at most 8; the paired device's hash, shared with the watcher), the
+    /// watcher's state, and `kick`: an answer was tapped, the watcher re-reads panes and pushes now.
+    clients: Clients,
+    kick: Arc<AtomicBool>,
+    watch: RefCell<Watch>,
 }
 
 fn header<'h>(head: &'h str, name: &str) -> Option<&'h str> {
@@ -164,7 +201,7 @@ fn kind(head: &str) -> &'static str {
 
 impl<'a> Server<'a> {
     pub fn new(ctx: &'a Ctx, r: &'a dyn Runner, addr: Option<String>) -> Self {
-        Server { ctx, r, addr, cache: RefCell::default(), host: RefCell::default(), sent: RefCell::default() }
+        Server { ctx, r, addr, cache: RefCell::default(), host: RefCell::default(), sent: RefCell::default(), clients: Arc::default(), kick: Arc::default(), watch: RefCell::default() }
     }
 
     fn handle(&self, mut s: TcpStream) -> std::io::Result<()> {
@@ -182,7 +219,72 @@ impl<'a> Server<'a> {
                 n => buf.extend_from_slice(&chunk[..n]),
             }
         }
-        s.write_all(&self.respond(&String::from_utf8_lossy(&buf), crate::now()))
+        let req = String::from_utf8_lossy(&buf);
+        let mut clients = self.clients.lock().unwrap_or_else(|e| e.into_inner());
+        clients.retain(|c| c.0.send(String::new()).is_ok());
+        if req.starts_with("GET /live ") && self.allowed(self.ctx, &req) && clients.len() < 8 {
+            s.set_write_timeout(Some(Duration::from_secs(10)))?;
+            s.set_read_timeout(Some(Duration::from_millis(1)))?;
+            let (tx, rx) = channel::<String>();
+            clients.push((tx, self.device(&Ctx { now: crate::now(), ..self.ctx.clone() }, &req).map(|d| d.hash)));
+            let mut msg = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: ping\n\n".to_string();
+            // Each second: a frag, else a peek (the peer closed: free the slot), else a ping every 15 s.
+            std::thread::spawn(move || {
+                while s.write_all(msg.as_bytes()).is_ok() {
+                    let t = Instant::now();
+                    msg = loop {
+                        match rx.recv_timeout(Duration::from_secs(1)) {
+                            Ok(m) if !m.is_empty() => break m,
+                            Err(RecvTimeoutError::Disconnected) => return,
+                            _ if s.peek(&mut [0]).map_or_else(|e| !matches!(e.kind(), WouldBlock | TimedOut), |n| n == 0) => return,
+                            _ if t.elapsed() >= Duration::from_secs(15) => break ": ping\n\n".into(),
+                            _ => {}
+                        }
+                    };
+                }
+            });
+            return Ok(());
+        }
+        drop(clients);
+        s.write_all(&self.respond(&req, crate::now()))
+    }
+
+    /// Each 1 s tick: on a log change, a `herdr agent list` change (read every 2 s, uncached) or once a
+    /// minute (ages), re-render the fragments per audience (paired or not) and push the changed ones.
+    /// A stream whose device was removed closes first (the page reconnects unpaired).
+    fn tick(&self) {
+        let mut w = self.watch.borrow_mut();
+        let now = crate::now();
+        let known: Vec<String> = devices::load(self.ctx).into_iter().map(|d| d.hash).collect();
+        self.clients.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.1.as_ref().is_none_or(|h| known.contains(h)));
+        let log = std::fs::metadata(&self.ctx.state).ok().map(|m| (m.len(), m.modified().ok()));
+        let kicked = self.kick.swap(false, Relaxed);
+        if kicked { self.purge() }
+        let mut changed = kicked || log != w.log || now >= w.rendered + 60;
+        w.log = log;
+        if now >= w.herdr.0 + 2 {
+            let out = self.r.run("herdr", &argv(&["agent", "list"])).ok().filter(|o| o.code == 0).map(|o| o.stdout);
+            changed |= hash(&out) != w.herdr.1;
+            w.herdr = (now, hash(&out));
+            self.cache.borrow_mut().insert("herdr agent list".into(), (now, out));
+        }
+        if !changed {
+            return;
+        }
+        w.rendered = now;
+        for paired in [false, true] {
+            for (id, html) in self.frags(&Ctx { now, ..self.ctx.clone() }, false, paired).unwrap_or_default() {
+                if w.frags.insert((paired, id), hash(&html)).is_some_and(|h| h != hash(&html)) {
+                    let msg = format!("event: frag\ndata: {}\n\n", serde_json::json!({"id": id, "html": html}));
+                    self.clients.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.1.is_some() != paired || c.0.send(msg.clone()).is_ok());
+                }
+            }
+        }
+    }
+
+    /// Forget cached pane reads: the next render reads each pane afresh.
+    fn purge(&self) {
+        self.cache.borrow_mut().retain(|k, _| !k.starts_with("herdr pane read"));
     }
 
     /// stdout of `prog args` if it ran OK within the last `ttl` seconds (else run it now).
@@ -206,7 +308,13 @@ impl<'a> Server<'a> {
         let text = |s: &str| s.as_bytes().to_vec();
         let mut extra = String::new();
         let (status, ctype, body) = match (method, path) {
-            ("GET", "/") => match self.page(ctx, &form(query)) {
+            ("GET", "/") if query == "frag=all" => match self.frags(ctx, false, self.device(ctx, head).is_some()) {
+                Ok(f) => ("200 OK", "application/json", serde_json::to_vec(&f.into_iter().collect::<BTreeMap<_, _>>()).unwrap_or_default()),
+                Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
+            },
+            ("GET", "/live") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
+            ("GET", "/live") => ("503 Service Unavailable", "text/plain", text("8 live clients already: the page polls instead\n")),
+            ("GET", "/") => match self.page(ctx, &form(query), self.device(ctx, head).is_some()) {
                 Ok(b) => ("200 OK", "text/html; charset=utf-8", b.into_bytes()),
                 Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
             },
@@ -239,8 +347,8 @@ impl<'a> Server<'a> {
                 }
                 _ => ("403 Forbidden", "text/plain", text("wrong or expired code: run `herdsman serve pair` for a new one\n")),
             },
-            ("POST", "/send") => {
-                let (status, msg) = self.send(ctx, head, &form(body.trim()));
+            ("POST", p @ ("/send" | "/answer")) => {
+                let (status, msg) = self.send(ctx, head, &form(body.trim()), p == "/answer");
                 (status, "text/plain", format!("{msg}\n").into_bytes())
             }
             ("POST", _) => ("404 Not Found", "text/plain", text("not found\n")),
@@ -270,8 +378,8 @@ impl<'a> Server<'a> {
         devices::find(ctx, header(head, "cookie").unwrap_or_default())
     }
 
-    /// The reply box: a paired device (cookie) prompts one agent, at most 10 sends a minute.
-    fn send(&self, ctx: &Ctx, head: &str, f: &BTreeMap<String, String>) -> (&'static str, String) {
+    /// The reply box (or a blocked menu's option): a paired device (cookie) prompts one agent, at most 10 sends a minute.
+    fn send(&self, ctx: &Ctx, head: &str, f: &BTreeMap<String, String>, pick: bool) -> (&'static str, String) {
         let Some(dev) = self.device(ctx, head) else {
             return ("401 Unauthorized", "pair this device: run `herdsman serve pair` on the Mac".into());
         };
@@ -282,23 +390,58 @@ impl<'a> Server<'a> {
             return ("429 Too Many Requests", "10 sends a minute: wait a moment".into());
         }
         times.push(ctx.now);
-        match self.prompt(ctx, &dev, f) {
+        let res = if pick { self.pick(ctx, &dev, f) } else { self.prompt(ctx, &dev, f) };
+        if pick { self.purge(); self.kick.store(true, Relaxed); }
+        match res {
             Ok(msg) => ("200 OK", msg),
             Err(e) => ("409 Conflict", shown(&e)),
         }
+    }
+
+    /// The live fleet lane `agent` with its fleet and pane; refused PAUSED when its fleet is.
+    fn lane(&self, ctx: &Ctx, agent: &str) -> Result<(lanes::Lane, String, String)> {
+        let (cfg, events) = (Config::load(&ctx.config)?, read(&ctx.state)?);
+        let all = self.lanes(ctx.now, &cfg, &events, &fold(&events)).context("herdr agent list failed")?;
+        let l = all.into_iter().find(|l| l.name == agent).with_context(|| format!("no agent `{agent}`"))?;
+        let (Some(fleet), Some(pane)) = (l.fleet.clone(), l.pane.clone()) else { bail!("`{agent}` is not a live fleet lane") };
+        if cfg.fleet.get(&fleet).is_some_and(|f| f.paused) {
+            return refused("PAUSED", format!("{fleet} is paused (`herdsman resume {fleet}`)"));
+        }
+        Ok((l, fleet, pane))
+    }
+
+    /// A blocked Claude menu's option: its digit via `pane send-keys`, then a re-read ("sent" or
+    /// "still waiting"); logs an `answer` event without the question. No menu parsed, or not the
+    /// menu the tapped card showed (`h`, read afresh): no key.
+    fn pick(&self, ctx: &Ctx, dev: &devices::Device, f: &BTreeMap<String, String>) -> Result<String> {
+        let (agent, choice) = (f.get("agent").map_or("", String::as_str), f.get("choice").map_or("", String::as_str));
+        let (l, fleet, pane) = self.lane(ctx, agent)?;
+        let screen = || crate::runner::ok(self.r, "herdr", &["pane", "read", &pane, "--source", "visible"]);
+        let Some((q, opts)) = lanes::pending(&screen()?).filter(|p| l.harness == "claude" && !p.1.is_empty()) else {
+            return refused("BAD_VALUE", format!("no menu on {agent}'s pane: menu changed — refreshed; answer with the reply box"));
+        };
+        if l.role == "rev" && !q.starts_with("Do you want") {
+            return refused("REV_READONLY", "reviewer lanes answer permission prompts only");
+        }
+        if !choice.parse().is_ok_and(|n: usize| (1..=opts.len().min(9)).contains(&n)) || choice.len() != 1 {
+            return refused("BAD_VALUE", format!("choose 1 to {}", opts.len()));
+        }
+        if f.get("h") != Some(&seen(&q, &opts).to_string()) {
+            return refused("STALE", "menu changed — refreshed");
+        }
+        crate::runner::ok(self.r, "herdr", &["pane", "send-keys", &pane, choice])?;
+        let d = serde_json::json!({"via": "web", "agent": agent, "device": dev.label, "choice": choice});
+        append(&ctx.state, &Event::new(ctx.now, &fleet, l.issue, "answer", d))?;
+        self.r.sleep(1);
+        Ok(if lanes::pending(&screen()?) == Some((q, opts)) { format!("still waiting: {agent}") } else { format!("sent to {agent}") })
     }
 
     /// `herdr agent prompt` (dsh: `pane send-text`) + Enter; logs a `prompt` event without the text.
     fn prompt(&self, ctx: &Ctx, dev: &devices::Device, f: &BTreeMap<String, String>) -> Result<String> {
         let g = |k: &str| f.get(k).map_or("", String::as_str);
         let (agent, text) = (g("agent"), g("text"));
-        let (cfg, events) = (Config::load(&ctx.config)?, read(&ctx.state)?);
-        let all = self.lanes(ctx.now, &cfg, &events, &fold(&events)).context("herdr agent list failed")?;
-        let l = all.iter().find(|l| l.name == agent).with_context(|| format!("no agent `{agent}`"))?;
-        let (Some(fleet), Some(pane)) = (&l.fleet, &l.pane) else { bail!("`{agent}` is not a live fleet lane") };
-        if cfg.fleet.get(fleet).is_some_and(|f| f.paused) {
-            return refused("PAUSED", format!("{fleet} is paused (`herdsman resume {fleet}`)"));
-        }
+        let (l, fleet, pane) = self.lane(ctx, agent)?;
+        let (fleet, pane) = (&fleet, &pane);
         if l.role == "rev" {
             return refused("REV_READONLY", "reviewer lanes are not steered mid-review");
         }
@@ -364,10 +507,21 @@ impl<'a> Server<'a> {
         Ok(String::from_utf8_lossy(&out).trim().replace('\n', "; "))
     }
 
-    fn page(&self, ctx: &Ctx, q: &BTreeMap<String, String>) -> Result<String> {
+    /// The live sections' inner HTML by element id (the page, `/?frag=all`, `/live`); pane text only when `paired`.
+    fn frags(&self, ctx: &Ctx, all: bool, paired: bool) -> Result<Vec<(&'static str, String)>> {
         let events = read(&ctx.state)?;
-        let cfg = Config::load(&ctx.config).ok();
-        let st = fold(&events);
+        let (cfg, st) = (Config::load(&ctx.config).ok(), fold(&events));
+        Ok(vec![
+            ("needs", self.needs_you(ctx, cfg.as_ref(), &events, &st, paired)),
+            ("queue", self.queue_tab(ctx, cfg.as_ref(), &events, &st)),
+            ("lanes", self.lanes_tab(ctx, cfg.as_ref(), &events, &st, paired)),
+            ("host", self.host_tab(ctx, cfg.as_ref(), &events)),
+            ("events", events_tab(ctx, cfg.as_ref(), &events, &st, all)),
+        ])
+    }
+
+    fn page(&self, ctx: &Ctx, q: &BTreeMap<String, String>, paired: bool) -> Result<String> {
+        let f = self.frags(ctx, q.get("all").is_some_and(|v| v == "1"), paired)?;
         let msg = q.get("msg").map_or(String::new(), |m| {
             let bad = m.starts_with("REFUSED") || m.starts_with("error");
             format!("<p class=\"msg {}\">{}</p>", if bad { "r" } else { "g" }, esc(m))
@@ -379,22 +533,21 @@ impl<'a> Server<'a> {
              <meta name=theme-color content=\"#1f2a38\"><meta name=apple-mobile-web-app-capable content=yes>\
              <link rel=manifest href=/manifest.webmanifest><link rel=icon href=/icon-192.png><link rel=apple-touch-icon href=/icon-180.png>\
              <title>herdsman</title><style>{CSS}</style></head>\
-             <body data-ts={} data-mode=horse{ro}><header><b>herdsman</b><span id=stale hidden></span>\
-             <button id=mode type=button aria-label=\"lane display mode\">horse</button></header>{msg}{}<main>\
+             <body data-ts={} data-mode=horse{ro}><header><b>herdsman</b><span id=stale hidden></span><i id=dot class=a></i>\
+             <button id=rf type=button aria-label=refresh>↻</button><button id=mode type=button aria-label=\"lane display mode\">horse</button>\
+             </header><i id=ptr hidden>↻</i>{msg}<div id=needs>{}</div><main>\
              <section id=queue>{}</section><section id=lanes>{}</section><section id=host>{}</section>\
              <section id=events>{}</section></main><nav><a href=#queue>Queue</a><a href=#lanes>Lanes</a>\
              <a href=#host>Host</a><a href=#events>Events</a></nav><script>{JS}</script></body></html>\n",
-            ctx.now,
-            self.needs_you(ctx, &events),
-            self.queue_tab(ctx, cfg.as_ref(), &events, &st),
-            self.lanes_tab(ctx, cfg.as_ref(), &events, &st),
-            self.host_tab(ctx, cfg.as_ref(), &events),
-            events_tab(ctx, cfg.as_ref(), &events, &st, q.get("all").is_some_and(|v| v == "1")),
+            ctx.now, f[0].1, f[1].1, f[2].1, f[3].1, f[4].1
         ))
     }
 
-    /// Each open ask as a red card above every tab: options (recommended first) and a free-text box.
-    fn needs_you(&self, ctx: &Ctx, events: &[Event]) -> String {
+    /// Each open ask as a red card above every tab: options (recommended first) and a free-text box;
+    /// then each blocked lane's pending prompt.
+    fn needs_you(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States, paired: bool) -> String {
+        let all = cfg.and_then(|c| self.lanes(ctx.now, c, events, st)).unwrap_or_default();
+        let blocked: String = all.iter().filter(|l| l.state == "blocked").map(|l| self.blocked(ctx, l, paired)).collect();
         crate::events::open_asks(events).into_iter().map(|a| {
             let s = |k| a.str(k).unwrap_or_default();
             let mut opts: Vec<(u64, &str)> = a.data["options"].as_array().into_iter().flatten().zip(1..).map(|(o, n)| (n, o.as_str().unwrap_or("?"))).collect();
@@ -403,7 +556,24 @@ impl<'a> Server<'a> {
             let form = format!("<form method=post>{}<input type=hidden name=id value=\"{}\"><input name=text aria-label=answer placeholder=\"or type an answer\"><button>Send</button>{btns}</form>", hidden("answer", &a.fleet, &mtime(ctx)), esc(s("id")));
             let who = join(&[&a.fleet, &a.issue.map_or(String::new(), |n| format!("#{n}")), s("agent"), &age(ctx.now.saturating_sub(a.ts))]);
             format!("<div class=ask><p><b>needs you</b> <span class=m>{}</span></p><p>{}</p>{}</div>", esc(&who), esc(s("question")), if self.addr.is_some() { form } else { String::new() })
-        }).collect()
+        }).collect::<String>() + &blocked
+    }
+
+    /// A blocked lane's card: a Claude menu's options as buttons (`/answer`), else the question
+    /// (or the last 6 masked lines) and a Reply button that opens the lane's sheet. Unpaired: no
+    /// pane text, only the 1-line activity and a pairing hint.
+    fn blocked(&self, ctx: &Ctx, l: &lanes::Lane, paired: bool) -> String {
+        let screen = l.pane.as_ref().and_then(|p| self.cached(ctx.now, 2, "herdr", &["pane", "read", p, "--source", "visible"])).unwrap_or_default();
+        let rw = self.addr.is_some() && paired;
+        let body = match lanes::pending(&screen).filter(|_| l.harness == "claude") {
+            _ if !paired => format!("<p class=m>{}</p><p class=m>pair this phone to answer: `herdsman serve pair`</p>", esc(&lanes::activity(&l.harness, &screen))),
+            Some((q, opts)) => format!("<p>{}</p>", esc(&lanes::mask(&q)))
+                + &opts.iter().zip(1..).filter(|_| rw).map(|(o, n)| format!("<button type=button class=pick value={n} data-h={}>{n}. {}</button>", seen(&q, &opts), esc(&lanes::mask(o)))).collect::<String>(),
+            None => format!("<pre>{}</pre>", esc(&lanes::tail(&screen, 6).join("\n"))),
+        };
+        let who = join(&[l.fleet.as_deref().unwrap_or_default(), &l.issue.map_or(String::new(), |n| format!("#{n}")), &l.name]);
+        let reply = if rw { "<button type=button class=rp>Reply</button><p class=as></p>" } else { "" };
+        format!("<div class=ask data-ask=\"{}\"><p><b>needs you</b> <span class=m>{}</span></p>{body}{reply}</div>", esc(&l.name), esc(&who))
     }
 
     /// `herdr <args>` JSON, read at most every 10 s (None when herdr cannot be read).
@@ -515,7 +685,7 @@ impl<'a> Server<'a> {
     }
 
     /// State sections, fleet subgroups inside; a row opens the bottom sheet (serve.js) with its hidden card.
-    fn lanes_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States) -> String {
+    fn lanes_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States, paired: bool) -> String {
         let Some(cfg) = cfg else { return "<p class=m>no fleet.toml</p>".into() };
         let Some(all) = self.lanes(ctx.now, cfg, events, st) else { return "<p class=r>herdr agent list failed</p>".into() };
         let state = |l: &lanes::Lane| l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| st.get(&(f.clone(), n)));
@@ -525,14 +695,14 @@ impl<'a> Server<'a> {
             for (repo, ls) in subs {
                 h += &format!("<h3>{} ({})</h3>", esc(&repo), ls.len());
                 for l in ls {
-                    h += &self.lane_row(ctx, cfg, l, state(l));
+                    h += &self.lane_row(ctx, cfg, l, state(l), paired);
                 }
             }
         }
         if h.is_empty() { "<p class=m>no agents</p>".into() } else { h }
     }
 
-    fn lane_row(&self, ctx: &Ctx, cfg: &Config, l: &lanes::Lane, s: Option<&IssueState>) -> String {
+    fn lane_row(&self, ctx: &Ctx, cfg: &Config, l: &lanes::Lane, s: Option<&IssueState>, paired: bool) -> String {
         let screen = l.pane.as_ref().and_then(|p| self.cached(ctx.now, 30, "herdr", &["pane", "read", p, "--source", "visible"]));
         let a = if l.since > 0 { age(ctx.now.saturating_sub(l.since)) } else { String::new() };
         let title = l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| gh::cached_spec(ctx, f, n)).and_then(|v| v["title"].as_str().map(String::from));
@@ -547,7 +717,7 @@ impl<'a> Server<'a> {
         if l.mismatch {
             card.push("<span class=r>⚠ log/pane mismatch: the log has this lane open, herdr has no pane</span>".into());
         }
-        let card = self::card(&card);
+        let card = self::card(&card) + &if l.state == "blocked" { self.blocked(ctx, l, paired) } else { String::new() };
         let act = esc(&lanes::activity(&l.harness, &screen.unwrap_or_default()));
         format!(
             "<div class=lane data-agent=\"{}\" data-role={}><button type=button class=lr>{}<span>{}</span><span class={}>{}</span>\

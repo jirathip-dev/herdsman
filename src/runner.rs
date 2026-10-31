@@ -10,7 +10,7 @@ pub struct Out {
     pub stderr: String,
 }
 
-pub trait Runner {
+pub trait Runner: Sync {
     fn run(&self, prog: &str, args: &[String]) -> Result<Out>;
     /// `run` with `input` on stdin (secrets go here, never in argv); fakes ignore it.
     fn run_in(&self, prog: &str, args: &[String], _input: &str) -> Result<Out> {

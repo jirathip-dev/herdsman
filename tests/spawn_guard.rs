@@ -5,7 +5,6 @@ use common::*;
 use herdsman::events::{append, read, Event};
 use herdsman::runner::{Out, Runner};
 use serde_json::json;
-use std::cell::Cell;
 use std::path::PathBuf;
 
 const WS: &str = r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#;
@@ -191,9 +190,9 @@ fn supersede_kills_old_agent_then_spawns() {
 /// (`pane wait-output` saw the prompt), and the first prompt after that is dropped.
 struct Hermes {
     fake: Fake,
-    ready: Cell<bool>,
-    dropped: Cell<bool>,
-    landed: Cell<bool>,
+    ready: Shared<bool>,
+    dropped: Shared<bool>,
+    landed: Shared<bool>,
 }
 
 impl Runner for Hermes {
@@ -230,7 +229,7 @@ impl Runner for Hermes {
 fn hermes_kick_retries_after_dropped_first_prompt() {
     let d = tmpdir("kick-retry");
     let c = ctx(&d, CONFIG);
-    let h = Hermes { fake: happy(&c, NO_AGENTS), ready: Cell::new(false), dropped: Cell::new(false), landed: Cell::new(false) };
+    let h = Hermes { fake: happy(&c, NO_AGENTS), ready: Shared::new(false), dropped: Shared::new(false), landed: Shared::new(false) };
     let (exit, out) = spawn(&c, &h, &[]);
     assert_eq!(exit, 0, "{out} {:?}", h.fake.calls.borrow());
     let f = &h.fake;
