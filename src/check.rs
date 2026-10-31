@@ -6,7 +6,7 @@ use crate::gate::gate;
 use crate::gh;
 use crate::host;
 use crate::runner::{argv, ok, Runner};
-use crate::spawn::{dirty, OWN_FILES};
+use crate::spawn::{changes, dirty, OWN_FILES};
 use crate::Ctx;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -298,7 +298,7 @@ pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
     let (dirty, ahead) = match wt {
         Some(_) => {
             let st = git(&["status", "--porcelain"])?;
-            (st.lines().filter(|l| !OWN_FILES.iter().any(|f| l.trim_end() == format!("?? {f}"))).count(), git(&["rev-list", "--count", "HEAD", "--not", "--remotes"])?.trim().parse()?)
+            (changes(&st), git(&["rev-list", "--count", "HEAD", "--not", "--remotes"])?.trim().parse()?)
         }
         None => (0, 0),
     };
@@ -315,9 +315,20 @@ pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
         return Ok(writeln!(out, "dry run: nothing changed; pass --yes to kill")?);
     }
     if let Some(w) = &wip {
-        let skip: Vec<String> = OWN_FILES.iter().map(|f| format!(":(exclude){f}")).collect();
-        git(&[&["add", "-A", "--", "."][..], &skip.iter().map(String::as_str).collect::<Vec<_>>()].concat())?;
-        let diff = git(&["diff", "--cached"])? + &git(&["log", "-p", "--format=", "HEAD", "--not", "--remotes"])?;
+        // Stage all, then unstage the scratch: an `:(exclude)` of an ignored file fails `git add`.
+        let undo = |e: anyhow::Error| {
+            let _ = git(&["reset", "-q"]);
+            crate::gate::refused("SNAPSHOT_FAILED", format!("{agent}: wip snapshot failed ({e:#}); index restored, nothing pushed, pane kept"))
+        };
+        let snap = || -> Result<String> {
+            git(&["add", "-A"])?;
+            git(&[&["reset", "-q", "--"][..], &OWN_FILES].concat())?;
+            Ok(git(&["diff", "--cached"])? + &git(&["log", "-p", "--format=", "HEAD", "--not", "--remotes"])?)
+        };
+        let diff = match snap() {
+            Ok(d) => d,
+            Err(e) => return undo(e),
+        };
         // Added hunk lines only (a file header runs `diff --git` → `@@`), minus hash-shaped lockfile checksums.
         let hash = |l: &str| {
             let l = l.trim().trim_end_matches(',').strip_suffix('"').unwrap_or_default();
@@ -331,7 +342,9 @@ pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
             return crate::gate::refused("SECRET_IN_WIP", format!("{agent}'s unpushed diff has a secret-looking value; nothing pushed, pane kept"));
         }
         if dirty > 0 {
-            git(&["commit", "-q", "--no-verify", "-m", "wip: kill snapshot"])?;
+            if let Err(e) = git(&["commit", "-q", "--no-verify", "-m", "wip: kill snapshot"]) {
+                return undo(e);
+            }
         }
         git(&["push", "origin", &format!("HEAD:refs/heads/{w}")])?;
     }
