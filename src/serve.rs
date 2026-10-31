@@ -787,9 +787,10 @@ impl<'a> Server<'a> {
             }
             // #60: the live page loads a fleet's role forms when the row is opened (`/frag`); an export inlines them.
             body += &match self.export {
-                Some(_) => {
-                    format!("<details class=roles><summary><span>roles</span></summary>{}</details>", roles(cfg, f, fc, rw, &mt))
-                }
+                Some(_) => format!(
+                    "<details class=roles><summary><span>roles</span></summary>{}</details>",
+                    roles(cfg, f, fc, rw, &mt)
+                ),
                 None => {
                     let src = format!("frag?id=roles&amp;fleet={}", enc(f));
                     format!("<details class=roles data-src=\"{src}\"><summary><span>roles</span></summary></details>")
