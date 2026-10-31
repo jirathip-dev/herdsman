@@ -401,20 +401,16 @@ pub fn spawn(
     Ok(confirmed)
 }
 
-/// SERIAL_BUSY (another `--serial` issue in flight) and CAP (`max_impl` / `max_rev`).
+/// SERIAL_BUSY (`serial_max` other `--serial` issues in flight) and CAP (`max_impl` / `max_rev`).
 fn lane_admit(f: &Fleet, events: &[Event], fleet: &str, issue: u64, role: &str) -> Result<()> {
     let st = fold(events);
     let others: Vec<_> = st.values().filter(|s| s.fleet == fleet && s.issue != issue).collect();
     let building = |s: &str| s == "impl" || s.starts_with("fix");
-    if role == "impl" {
-        let serial = crate::queue::serial(events, fleet);
-        if serial.contains(&issue) {
-            let busy = others.iter().find(|s| {
-                serial.contains(&s.issue) && (building(&s.state) || s.state.starts_with("review") || s.state == "ready")
-            });
-            if let Some(s) = busy {
-                return refused("SERIAL_BUSY", format!("serial #{} is unmerged ({}); retry after it merges", s.issue, s.state));
-            }
+    if role == "impl" && crate::queue::serial(events, fleet).contains(&issue) {
+        let busy = crate::queue::serial_in_flight(events, &st, fleet).into_iter().filter(|s| s.issue != issue);
+        let busy: Vec<_> = busy.map(|s| format!("#{} is unmerged ({})", s.issue, s.state)).collect();
+        if busy.len() >= f.serial_max.unwrap_or(1) {
+            return refused("SERIAL_BUSY", format!("serial {}; retry after it merges", busy.join(", ")));
         }
     }
     let (cap, n) = match role {

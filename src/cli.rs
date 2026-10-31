@@ -237,7 +237,7 @@ enum QueueCmd {
         /// Put them right after issue N
         #[arg(long, value_name = "N")]
         after: Option<u64>,
-        /// They touch the fleet's serial_paths (DB migrations): one serial impl at a time
+        /// They touch the fleet's serial_paths (DB migrations): serial_max (default 1) in flight at a time
         #[arg(long)]
         serial: bool,
     },
@@ -376,12 +376,16 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 writeln!(out, "no tracked issues")?;
             } else {
                 let cfg = Config::load(&ctx.config).ok();
+                let serial = |f: &str| queue::serial_use(&events, &all, f, cfg.as_ref()).map(|s| format!("{f}: {s}\n"));
+                let mut serial: Vec<_> = rows.iter().filter_map(|s| serial(&s.fleet)).collect();
+                serial.dedup();
                 let waits = cfg.map(|c| crate::waiting::scan(ctx, &c, r, &events, &crate::host::agents(r).unwrap_or_default(), false));
                 writeln!(out, "{:<12} {:<6} {:<12} {:<24} {:<5} WAITING", "FLEET", "ISSUE", "STATE", "LANE", "AGE")?;
                 for s in rows {
                     let w = waits.iter().flatten().find(|(x, _)| x.fleet == s.fleet && x.issue == s.issue).map_or("-", |w| w.1.what.as_str());
                     writeln!(out, "{:<5} {w}", status_line(s, ctx.now))?;
                 }
+                write!(out, "{}", serial.concat())?;
             }
         }
         Cmd::Set { fleet, role, harness, model, profile, effort } => {
@@ -402,7 +406,8 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
         Cmd::Board { fleet } => {
             let events = read(&ctx.state)?;
             let all = fleet.map_or_else(|| queue::fleets(&events), |f| vec![f]);
-            let boards: Vec<_> = all.iter().map(|f| queue::board(&events, f, ctx.now)).collect();
+            let cfg = Config::load(&ctx.config).ok();
+            let boards: Vec<_> = all.iter().map(|f| queue::board(&events, f, ctx.now, cfg.as_ref())).collect();
             write!(out, "{}", boards.join("\n"))?;
         }
         Cmd::Asks { scope: Scope { fleet, json }, all } => crate::asks(ctx, out, fleet.as_deref(), json, all)?,

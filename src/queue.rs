@@ -92,6 +92,19 @@ pub fn serial(events: &[Event], fleet: &str) -> Vec<u64> {
     replay(events, fleet).into_iter().filter(|i| i.serial).map(|i| i.issue).collect()
 }
 
+/// The fleet's `--serial` issues in flight: a live impl/fix lane, or at review/ready (SERIAL_BUSY).
+pub fn serial_in_flight<'a>(events: &[Event], st: &'a States, fleet: &str) -> Vec<&'a IssueState> {
+    let serial = serial(events, fleet);
+    let busy = |s: &str| s == "impl" || s.starts_with("fix") || s.starts_with("review") || s == "ready";
+    st.values().filter(|s| s.fleet == fleet && serial.contains(&s.issue) && busy(&s.state)).collect()
+}
+
+/// `serial n/max` for a fleet with `serial_paths`: board and status.
+pub fn serial_use(events: &[Event], st: &States, fleet: &str, cfg: Option<&crate::config::Config>) -> Option<String> {
+    let f = cfg.and_then(|c| c.fleet.get(fleet)).filter(|f| !f.serial_paths.is_empty())?;
+    Some(format!("serial {}/{}", serial_in_flight(events, st, fleet).len(), f.serial_max.unwrap_or(1)))
+}
+
 /// The queue as shown: merged issues drop out; a blocker counts until it is merged.
 pub fn view(events: &[Event], st: &States, fleet: &str) -> Vec<Item> {
     let open = replay(events, fleet).into_iter().filter(|i| state(st, fleet, i.issue) != "merged");
@@ -122,13 +135,14 @@ pub fn ls_json(events: &[Event], fleet: &str) -> Value {
 pub const WIDTH: usize = 60;
 
 /// One fleet's board, lines ≤ 60 cols: the queue, other open issues, issues merged in the last 24 h.
-pub fn board(events: &[Event], fleet: &str, now: u64) -> String {
+pub fn board(events: &[Event], fleet: &str, now: u64, cfg: Option<&crate::config::Config>) -> String {
     let st = fold(events);
     let q = view(events, &st, fleet);
     let mine: Vec<&IssueState> = st.values().filter(|s| s.fleet == fleet).collect();
     let active = mine.iter().filter(|s| s.active_lane().is_some()).count();
     let head = format!("{:>2} {:<6} {:<11} {:<20} {:<5} {:<4} LAST", "Q", "ISSUE", "STATE", "LANE", "EFF", "AGE");
-    let mut lines = vec![format!("{fleet}: {} queued, {active} active", q.len()), head];
+    let serial = serial_use(events, &st, fleet, cfg).map_or(String::new(), |s| format!(", {s}"));
+    let mut lines = vec![format!("{fleet}: {} queued, {active} active{serial}", q.len()), head];
     let row = |pos: String, n: u64, last: Option<String>| {
         let s = st.get(&(fleet.to_string(), n));
         let lane: String = s.and_then(|s| s.lane.as_deref()).unwrap_or("-").chars().take(20).collect();

@@ -23,7 +23,7 @@ queued → impl → review(n) → fix(n) → ready → merged; plus blocked, nee
 - LANE_LIVE: spawn: a herdr agent is live in the worktree, or the log has an unfinished lane for it; --supersede
 - WORKTREE_DIRTY: spawn: the worktree has unpushed or uncommitted work from no known lane; --supersede
 - MERGED: spawn/adopt: the issue is merged; a merged issue never reopens
-- SERIAL_BUSY: spawn: a `--serial` impl waits while another serial issue has a live impl/fix lane or sits at review/ready
+- SERIAL_BUSY: spawn: a `--serial` impl waits while the fleet's `serial_max` (default 1) other serial issues have a live impl/fix lane or sit at review/ready
 - SERIAL_UNMARKED: merge: the PR touches the fleet's serial_paths but the issue was not queued `--serial`
 - CAP: spawn: the fleet's optional max_impl / max_rev lane cap is reached (unset = no cap)
 - PAUSED: spawn: the fleet is paused (`herdsman resume <fleet>`); impl/rev lanes wait, live lanes are untouched
