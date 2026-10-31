@@ -1,6 +1,7 @@
 //! Cached GitHub reads: the issue spec (re-fetched when `updatedAt` moved) and PR/CI views fresh for 60 s.
 use crate::config::Fleet;
 use crate::runner::{argv, json, Runner};
+use crate::usage::load;
 use crate::Ctx;
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -12,10 +13,6 @@ pub const PR_TTL: u64 = 60;
 
 fn cache_path(ctx: &Ctx, kind: &str, fleet: &str, issue: u64) -> PathBuf {
     ctx.state.parent().unwrap_or(&ctx.state).join("cache").join(format!("{kind}-{fleet}-{issue}.json"))
-}
-
-fn load(p: &Path) -> Option<Value> {
-    serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }
 
 /// A `{"ts": …}` cache entry younger than `PR_TTL` at `now`.
@@ -60,7 +57,7 @@ pub fn spec(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, issue: u64, refre
 /// The PR for `branch` as of `now`: one `gh pr view` per 60 s. Null when there is none.
 pub fn pr(ctx: &Ctx, r: &dyn Runner, f: &Fleet, (fleet, issue): (&str, u64), branch: &str, now: u64) -> Result<Value> {
     let p = cache_path(ctx, "pr", fleet, issue);
-    if let Some(c) = load(&p).filter(|c| c["branch"] == branch && fresh(c, now)) {
+    if let Some(c) = load::<Value>(&p).filter(|c| c["branch"] == branch && fresh(c, now)) {
         return Ok(c["pr"].clone());
     }
     let o = r.run("gh", &argv(&["pr", "view", branch, "-R", &f.repo, "--json", PR_FIELDS]))?;
@@ -71,7 +68,7 @@ pub fn pr(ctx: &Ctx, r: &dyn Runner, f: &Fleet, (fleet, issue): (&str, u64), bra
 
 /// The last cached PR read, however old; never calls `gh` (Null when none).
 pub fn cached_pr(ctx: &Ctx, fleet: &str, issue: u64) -> Value {
-    load(&cache_path(ctx, "pr", fleet, issue)).map_or(Value::Null, |c| c["pr"].clone())
+    load::<Value>(&cache_path(ctx, "pr", fleet, issue)).map_or(Value::Null, |c| c["pr"].clone())
 }
 
 /// Numbers of the fleet's closed issues: one `gh issue list` per fleet, fresh for 60 s.
@@ -89,7 +86,7 @@ pub fn closed(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, now: u64) -> Re
 /// Files PR `num` changes at `head` (`gh pr diff --name-only`), cached per head sha.
 pub fn diff_names(ctx: &Ctx, r: &dyn Runner, f: &Fleet, (fleet, issue): (&str, u64), num: &str, head: &str) -> Result<Vec<String>> {
     let p = cache_path(ctx, "diff", fleet, issue);
-    let files = match load(&p).filter(|c| c["head"] == head) {
+    let files = match load::<Value>(&p).filter(|c| c["head"] == head) {
         Some(c) => c["files"].clone(),
         None => {
             let out = crate::runner::ok(r, "gh", &["pr", "diff", num, "-R", &f.repo, "--name-only"])?;

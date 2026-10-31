@@ -22,7 +22,7 @@ pub mod waiting;
 pub mod webpush;
 
 pub use cli::{main_with, usage_doc};
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use config::{home, set_in, set_value, write_atomic, Config};
 use events::{emit, read, Event};
 use serde_json::{json, Value};
@@ -225,24 +225,30 @@ pub fn answer(ctx: &Ctx, cfg: &Config, r: &dyn runner::Runner, out: &mut dyn Wri
         return gate::refused("BAD_VALUE", "an answer is an option number or one line of text, at most 2,000 chars");
     }
     let agent = ask.str("agent").unwrap_or_default();
-    let pane = events::last_spawn(&events, agent).and_then(|e| e.str("pane")).context(format!("{agent} has no pane: {id} stays open"))?;
+    let pane = events::last_spawn(&events, agent).and_then(|e| e.str("pane"));
     emit(&ctx.state, cfg, Event::new(ctx.now, fleet, ask.issue, "decision", with_via(json!({"id": id, "choice": text, "by": by}), via)))?;
-    herdr::prompt(r, agent, &format!("DECISION {id}: {text}"))?;
+    let Some(pane) = pane.filter(|_| herdr::prompt(r, agent, &format!("DECISION {id}: {text}")).is_ok()) else {
+        let open = ask.issue.filter(|_| events::closed(&events, ask) != Some("closed: merged"));
+        let next = open.map_or(String::new(), |n| format!("; the next lane on #{n} gets it in its brief"));
+        return Ok(writeln!(out, "{fleet} {id}: {text} recorded; asking agent gone, not prompted{next}")?);
+    };
     herdr::keys(r, pane, "Enter")?;
     Ok(writeln!(out, "{fleet} {id}: {text} -> {agent}")?)
 }
 
-/// `herdsman asks`: the open asks, oldest first, with age.
-pub fn asks(ctx: &Ctx, out: &mut dyn Write, fleet: Option<&str>, as_json: bool) -> Result<()> {
+/// `herdsman asks`: the open asks (`all`: closed ones too, with why), oldest first, with age.
+pub fn asks(ctx: &Ctx, out: &mut dyn Write, fleet: Option<&str>, as_json: bool, all: bool) -> Result<()> {
     let events = read(&ctx.state)?;
-    let open: Vec<&Event> = events::open_asks(&events).into_iter().filter(|e| fleet.is_none_or(|f| f == e.fleet)).collect();
+    let shown = |e: &&Event| fleet.is_none_or(|f| f == e.fleet) && (all || events::closed(&events, e).is_none());
+    let open: Vec<&Event> = events.iter().filter(|e| e.kind == "needs-decision").filter(shown).collect();
     if as_json {
         writeln!(out, "{}", serde_json::to_string_pretty(&open)?)?;
     }
     for e in open.iter().filter(|_| !as_json) {
         let at = e.issue.map_or("-".into(), |n| format!("#{n}"));
         let s = |k| e.str(k).unwrap_or_default();
-        writeln!(out, "{} {} {at} {} {}: {}", e.fleet, s("id"), events::age(ctx.now.saturating_sub(e.ts)), s("agent"), s("question"))?;
+        let why = events::closed(&events, e).map_or(String::new(), |w| format!(" [{w}]"));
+        writeln!(out, "{} {} {at} {} {}: {}{why}", e.fleet, s("id"), events::age(ctx.now.saturating_sub(e.ts)), s("agent"), s("question"))?;
     }
     Ok(())
 }

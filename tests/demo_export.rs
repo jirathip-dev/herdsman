@@ -57,6 +57,10 @@ fn demo_page_is_inert_and_relative() {
     assert!(page.contains("data-demo=1") && page.contains("id=demo>demo</span>"), "demo badge");
     assert!(page.contains("Demo with fake data. Install herdsman to run your own."));
     assert_eq!(page.matches("<span class=g>merged</span>").count(), 4, "4 merges today");
+    // #81: #39 merged with q1 unanswered; its ask is closed, so the only needs-you card is #21's.
+    assert_eq!(html.matches("<div class=ask>").count(), 1, "one needs-you card");
+    let card = &html[html.find("<div class=ask>").unwrap()..];
+    assert!(card.starts_with("<div class=ask><p><b>needs you</b> <span class=m>acme-api · #21 · acme-api-orch"), "{card:.300}");
     assert!(!page.contains("<form method=post") && page.contains("<form inert"), "every form inert");
     for abs in ["href=/", "href=\"/", "src=/", "src=\"/", "action=/", "fetch('/", "register('/", "EventSource('/"] {
         assert!(!page.contains(abs), "absolute URL `{abs}`");

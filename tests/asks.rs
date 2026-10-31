@@ -46,6 +46,7 @@ fn ask_answer_round_trip_prompts_the_asker_once() {
     let dec = &kinds(&c, "decision")[0];
     assert_eq!((dec.str("id"), dec.str("choice"), dec.str("by")), (Some("q1"), Some("no, trim"), Some("conductor")));
     assert_eq!(run(&c, &Fake::default(), &["asks"]).1, "", "answered asks are closed");
+    assert!(run(&c, &Fake::default(), &["asks", "--all"]).1.contains("Raise the src budget? [answered]"));
 
     let (code, out) = run(&c, &r, &["answer", "sendmeter", "q1", "free text"]);
     assert_eq!(code, 3);
@@ -131,17 +132,59 @@ fn needs_you_card_tops_every_tab_and_answer_needs_a_paired_device() {
 }
 
 #[test]
-fn answer_without_a_pane_refuses_and_keeps_the_ask_open() {
+fn answer_to_a_gone_agent_records_the_decision_and_exits_0() {
     let d = tmpdir("ask-nopane");
     let c = ctx(&d, CONFIG);
     ask(&c);
-    let r = Fake::default().reply("herdr agent prompt", "").reply("herdr pane send-keys", "");
-    let (code, out) = run(&c, &r, &["answer", "sendmeter", "q1", "1"]);
-    assert_ne!(code, 0, "{out}");
-    assert!(kinds(&c, "decision").is_empty() && !r.called("herdr agent prompt"));
-    orch_spawn(&c, NOW);
-    assert_eq!(run(&c, &r, &["answer", "sendmeter", "q1", "1"]).0, 0, "the ask is still answerable");
-    assert!(r.called("herdr agent prompt sendmeter-orch DECISION q1: yes, to 5,200"));
+    let (code, out) = run(&c, &Fake::default(), &["answer", "sendmeter", "q1", "1"]);
+    assert_eq!(code, 0, "{out}");
+    let want = "sendmeter q1: yes, to 5,200 recorded; asking agent gone, not prompted; the next lane on #36 gets it in its brief";
+    assert_eq!(out.trim(), want);
+    assert_eq!(kinds(&c, "decision")[0].str("choice"), Some("yes, to 5,200"));
+
+    // A pane in the log whose herdr agent is gone: the prompt fails, the decision is still recorded.
+    let d = tmpdir("ask-gone");
+    let c = ctx(&d, CONFIG);
+    orch_spawn(&c, NOW - 60);
+    ask(&c);
+    let (code, out) = run(&c, &Fake::default(), &["answer", "sendmeter", "q1", "2"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("recorded; asking agent gone, not prompted"), "{out}");
+    assert_eq!(kinds(&c, "decision").len(), 1);
+}
+
+/// One ask from `sendmeter-impl-36` on #36, then `then`: is it still in `open_asks`, and why it closed.
+fn closed_by(then: Event) -> (usize, String) {
+    let d = tmpdir(&format!("ask-closed-{}", then.kind));
+    let c = ctx(&d, CONFIG);
+    let impl36 = json!({"role": "impl", "agent": "sendmeter-impl-36", "pane": "w1:p2"});
+    append(&c.state, &Event::new(NOW - 90, "sendmeter", Some(36), "spawn", impl36)).unwrap();
+    let q = json!({"id": "q1", "question": "Split the PR?", "options": ["yes", "no"], "agent": "sendmeter-impl-36"});
+    append(&c.state, &Event::new(NOW - 60, "sendmeter", Some(36), "needs-decision", q)).unwrap();
+    append(&c.state, &then).unwrap();
+    let events = read(&c.state).unwrap();
+    (herdsman::events::open_asks(&events).len(), run(&c, &Fake::default(), &["asks", "--all"]).1)
+}
+
+#[test]
+fn an_ask_closes_when_its_issue_merges_or_its_lane_goes() {
+    let ev = |kind: &str, issue: u64, d| Event::new(NOW, "sendmeter", Some(issue), kind, d);
+    let respawn = json!({"role": "impl", "agent": "sendmeter-impl-36", "pane": "w1:p3"});
+    let killed = json!({"role": "impl", "agent": "sendmeter-impl-36"});
+    for (then, why) in [
+        (ev("merged", 36, json!({"pr": "52"})), "[closed: merged]"),
+        (ev("clean", 36, json!({"worktree": "/wt/36", "pane": "w1:p2"})), "[closed: lane gone]"),
+        (ev("lane-killed", 36, killed), "[closed: lane gone]"),
+        (ev("spawn", 36, respawn), "[closed: lane gone]"),
+    ] {
+        let kind = then.kind.clone();
+        let (open, all) = closed_by(then);
+        assert_eq!(open, 0, "{kind} closes the ask");
+        assert!(all.contains("q1 #36") && all.trim_end().ends_with(why), "{kind}: {all}");
+    }
+    // Another issue's merge or clean leaves it open.
+    assert_eq!(closed_by(ev("merged", 37, json!({}))).0, 1);
+    assert_eq!(closed_by(ev("clean", 37, json!({}))).0, 1);
 }
 
 /// POST `body` to `/` (plus extra header lines); the raw response.

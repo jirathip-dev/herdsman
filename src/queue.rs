@@ -1,8 +1,7 @@
 //! The per-fleet work queue (`queue` events): `herdsman queue`, `next` and `board`.
-use crate::events::{age, fold, Event, IssueState};
+use crate::events::{age, fold, Event, IssueState, States};
 use anyhow::{anyhow, ensure, Result};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
@@ -83,8 +82,6 @@ pub fn replay(events: &[Event], fleet: &str) -> Vec<Item> {
     }
     q
 }
-
-type States = BTreeMap<(String, u64), IssueState>;
 
 fn state<'a>(st: &'a States, fleet: &str, n: u64) -> &'a str {
     st.get(&(fleet.to_string(), n)).map_or("queued", |s| s.state.as_str())

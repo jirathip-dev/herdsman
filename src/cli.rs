@@ -99,7 +99,13 @@ enum Cmd {
         by: String,
     },
     /// The open asks, oldest first, with age
-    Asks(Scope),
+    Asks {
+        #[command(flatten)]
+        scope: Scope,
+        /// Closed asks too, with why: answered, closed: merged, closed: lane gone
+        #[arg(long)]
+        all: bool,
+    },
     /// Per-issue state, lane and last-event age
     Status(Scope),
     /// Every lane waiting on the orch or the owner, with its next command (the conductor's watchdog)
@@ -399,7 +405,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
             let boards: Vec<_> = all.iter().map(|f| queue::board(&events, f, ctx.now)).collect();
             write!(out, "{}", boards.join("\n"))?;
         }
-        Cmd::Asks(Scope { fleet, json }) => crate::asks(ctx, out, fleet.as_deref(), json)?,
+        Cmd::Asks { scope: Scope { fleet, json }, all } => crate::asks(ctx, out, fleet.as_deref(), json, all)?,
         Cmd::Serve { cmd: Some(ServeCmd::Pair), .. } => writeln!(out, "now: open the page, tap Pair, then run serve approve <code>")?,
         Cmd::Serve { cmd: Some(ServeCmd::Approve { code }), .. } => writeln!(out, "paired {}", devices::approve(ctx, &code)?)?,
         Cmd::Serve { cmd: Some(ServeCmd::Pending), .. } => devices::pending(ctx).iter().try_for_each(|d| writeln!(out, "{} {} {}m left", d.code.as_deref().unwrap_or_default(), d.label, (d.created + 600 - ctx.now).div_ceil(60)))?,
