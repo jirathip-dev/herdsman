@@ -19,9 +19,9 @@ tab(t0 && document.getElementById(t0) ? t0 : 'queue');
 $$('details.q').forEach(d => { if (want && d.querySelector('summary>span').textContent === '#' + want) { d.open = true; d.scrollIntoView(); } });
 const MODES = ['horse', 'ascii', 'glyph'];
 // The mode button sits in the Lanes tab (swapped with it): delegated, relabelled after each swap.
-function mode(m) { B.dataset.mode = m; const b = $('#mode'); if (b) b.textContent = m; put('mode', m); }
+function mode(m) { B.dataset.mode = m; const b = $('#mode span') || $('#mode'); if (b) b.textContent = m; put('mode', m); }
 mode(MODES.includes(get('mode')) ? get('mode') : 'horse');
-document.addEventListener('click', e => { if (e.target.id === 'mode') mode(MODES[(MODES.indexOf(B.dataset.mode) + 1) % MODES.length]); });
+document.addEventListener('click', e => { if (e.target.closest('#mode')) mode(MODES[(MODES.indexOf(B.dataset.mode) + 1) % MODES.length]); });
 // Sync dot: g = live and up to date (pulses on an update), a = reconnecting (↻ spins), r = offline.
 const dot = $('#dot'), rf = $('#rf');
 let last = Number(B.dataset.ts) * 1000, es = null, down = Date.now(), tries = 0, poller = 0, busy = false;
@@ -73,22 +73,39 @@ function frag(id, html) {
   alerts();
   if (id === 'lanes') mode(B.dataset.mode);
 }
+// #68: buttons hold labels, never sentences: a control's runtime result is an 11 px `p.st` under it (red on error).
+function note(b, msg, ok) {
+  let s = b.nextElementSibling;
+  if (!s || !s.matches('p.st')) b.after(s = Object.assign(document.createElement('p'), { className: 'st' }));
+  s.textContent = msg;
+  s.classList.toggle('r', !ok);
+}
 // Enable alerts: Home Screen app only (iOS allows push there alone); subscribe with the VAPID key, POST it.
+// Unpaired (any 401): `[enable alerts]` dims, "pair this phone first" under it; kept across live swaps.
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-function alerts() { const b = $('#push'); if (b) b.hidden = !standalone || !('PushManager' in window); }
+let nopair = false;
+function alerts() {
+  const b = $('#push');
+  if (!b) return;
+  b.hidden = !standalone || !('PushManager' in window);
+  if (nopair) { b.disabled = true; note(b, 'pair this phone first', false); }
+}
+function unpaired() { nopair = true; alerts(); }
 alerts();
 document.addEventListener('click', async e => {
-  const b = e.target;
-  if (b.id !== 'push') return;
+  const b = e.target.closest('#push');
+  if (!b) return;
   try {
     if (await Notification.requestPermission() !== 'granted') throw new Error('notifications are off for this app');
     const key = Uint8Array.from(atob(b.dataset.key.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
     const reg = await navigator.serviceWorker.ready;
     const s = (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key })).toJSON();
     const r = await fetch(R + 'push/subscribe', { method: 'POST', body: new URLSearchParams({ endpoint: s.endpoint, p256dh: s.keys.p256dh, auth: s.keys.auth }) });
-    b.textContent = (await r.text()).trim();
+    const msg = (await r.text()).trim();
+    if (r.status === 401) return unpaired();
+    note(b, msg, r.ok);
     if (r.ok) refresh();
-  } catch (err) { b.textContent = 'alerts failed: ' + err.message; }
+  } catch (err) { note(b, 'alerts failed: ' + err.message, false); }
 });
 // Network only (the SW passes `frags` through); spins ↻ until done.
 async function refresh() {
@@ -165,7 +182,7 @@ if (DEMO) sync();
 const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st'), now = $('.now'), old = $('.old'), more = $('.more');
 let agent = null, timer = 0, cur = 0, y = 0;
 const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text || '' });
-// #58: controls are bracket text. A select hides behind its short `[opus ▾]` label (the native picker
+// #58: controls are bracket text, the label in a span that ellipsises (#68). A select hides behind its short `[opus ▾]` label (the native picker
 // keeps full names); ▲/▼ drop their words; a choice (ask or menu option) wraps in a span, its full text in title (#63 A).
 const short = o => (o ? o.textContent : '').replace(/^default.*/, 'default').replace(/.*\b(opus|sonnet|haiku)\b.*/, '$1');
 function tidy(root) {
@@ -178,11 +195,15 @@ function tidy(root) {
     s.addEventListener('change', show);
     show();
   });
-  root.querySelectorAll('button').forEach(b => {
+  for (const b of root.querySelectorAll('button')) {
     const m = b.textContent.match(/^([▲▼]) (up|down)$/);
     if (m) { b.textContent = m[1]; b.setAttribute('aria-label', 'move ' + m[2]); }
-    if (b.matches('[name=choice], .pick') && !b.title) { const t = el('span'); t.append(...b.childNodes); b.replaceChildren(t); b.title = b.textContent; }
-  });
+    if (b.matches('.lr, .hh, .hqh') || (b.childNodes.length === 1 && b.firstChild.nodeName === 'SPAN')) continue;
+    const t = el('span', '');
+    t.append(...b.childNodes);
+    b.replaceChildren(t);
+    if (b.matches('[name=choice], .pick')) b.title = b.textContent;
+  }
 }
 tidy(document);
 rf.innerHTML = '<i>↻</i>';
@@ -205,6 +226,7 @@ async function poll() {
     const r = await lane('');
     // Unpaired (401): say so, with the code entry; never a silent one-liner.
     if (r.status === 401) {
+      unpaired();
       $('.pairf').hidden = false;
       return now.replaceChildren(el('p', 'unp', 'Pair this phone to see the conversation'));
     }
@@ -232,10 +254,10 @@ function say(msg, ok) { st.textContent = msg; st.className = 'st ' + (ok ? 'g' :
 const act = (op, confirm) => fetch(R + 'act', { method: 'POST', body: new URLSearchParams({ agent, op, confirm: confirm ? '1' : '' }) });
 async function run(op) {
   const r = await act(op, op === 'stop'), msg = (await r.text()).trim();
-  if (r.status === 401) $('.pairf').hidden = false;
+  if (r.status === 401) { unpaired(); $('.pairf').hidden = false; }
   if (op === 'stop' || !r.ok) return say(msg, r.ok);
   $('.cf p').textContent = msg.split('; ').find(l => !l.startsWith('dry run')) || msg;
-  $('.cf .yes').textContent = op === 'kill' ? 'Kill' : 'Clean';
+  $('.cf .yes span').textContent = op === 'kill' ? 'Kill' : 'Clean';
   $('.cf').dataset.op = op;
   $('.cf').hidden = false;
 }
@@ -250,7 +272,8 @@ $('.cf .yes').onclick = async () => {
 async function cleanable() {
   const b = $('[data-op=clean]'), r = await act('clean', false), msg = (await r.text()).trim();
   b.disabled = !r.ok;
-  b.textContent = 'Clean' + (r.ok || r.status === 401 ? '' : ' (' + msg.split(': ').pop() + ')');
+  b.title = r.ok ? '' : msg;
+  if (!r.ok && r.status !== 401 && !st.textContent) say('clean: ' + msg.split(': ').pop(), false);
 }
 function open(e) {
   agent = e.dataset.agent;
@@ -337,7 +360,7 @@ $('.reply').onsubmit = async e => {
   e.preventDefault();
   const r = await fetch(R + 'send', { method: 'POST', body: new URLSearchParams({ agent, text: e.target.text.value }) });
   const msg = (await r.text()).trim();
-  if (r.status === 401) $('.pairf').hidden = false;
+  if (r.status === 401) { unpaired(); $('.pairf').hidden = false; }
   say(msg, r.ok);
   if (r.ok) { e.target.text.value = ''; setTimeout(poll, 1500); }
 };

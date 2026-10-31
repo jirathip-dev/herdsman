@@ -401,7 +401,7 @@ impl<'a> Server<'a> {
                 _ => ("403 Forbidden", "text/plain", text("wrong or expired code: run `herdsman serve pair` for a new one\n")),
             },
             ("POST", "/push/subscribe" | "/push/unsubscribe") if self.device(ctx, head).is_none() => {
-                ("401 Unauthorized", "text/plain", text("pair this device first: `herdsman serve pair` on the Mac\n"))
+                ("401 Unauthorized", "text/plain", text("pair this device first\n"))
             }
             ("POST", "/push/subscribe") => match crate::webpush::subscribe(&ctx.state, &form(body.trim()), kind(head), now) {
                 Ok(()) => ("200 OK", "text/plain", text("alerts on\n")),

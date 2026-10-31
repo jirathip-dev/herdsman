@@ -25,7 +25,7 @@ fn demo_export_writes_the_file_set_without_running_anything() {
     }
     let mut lanes: Vec<String> = std::fs::read_dir(site.join("lane")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     lanes.sort();
-    assert_eq!(lanes.len(), 11, "{lanes:?}");
+    assert_eq!(lanes.len(), 12, "{lanes:?}");
     for l in &lanes {
         let j: Value = serde_json::from_str(&std::fs::read_to_string(site.join("lane").join(l)).unwrap()).unwrap();
         assert!(!j["turns"].as_array().unwrap().is_empty(), "{l}: no turns");
@@ -37,13 +37,13 @@ fn demo_export_writes_the_file_set_without_running_anything() {
     let fleets = h["fleets"].as_array().unwrap();
     assert_eq!(fleets.iter().map(|f| f["name"].as_str().unwrap()).collect::<Vec<_>>(), ["acme-api", "acme-web", "docs"]);
     let all: Vec<&Value> = fleets.iter().flat_map(|f| f["lanes"].as_array().unwrap()).chain(h["others"].as_array().unwrap()).collect();
-    assert_eq!(all.len(), 12);
+    assert_eq!(all.len(), 13);
     for st in ["working", "idle", "done", "blocked", "dead"] {
         assert!(all.iter().any(|l| l["state"] == st), "no {st} lane");
     }
     assert!(h["others"].as_array().unwrap().iter().any(|l| l["role"] == "other"));
     let q: Vec<&Value> = fleets.iter().flat_map(|f| f["queue"].as_array().unwrap()).collect();
-    assert_eq!((q.len(), q.iter().filter(|i| !i["blocked_by"].is_null()).count()), (6, 1));
+    assert_eq!((q.len(), q.iter().filter(|i| !i["blocked_by"].is_null()).count()), (7, 1));
 }
 
 #[test]

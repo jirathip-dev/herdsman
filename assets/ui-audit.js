@@ -5,12 +5,55 @@
   const V = DBG.get('audit'); // serve.js read the query before it tidied the URL
   if (!V) return;
   const hp = n => H.querySelectorAll('.hp')[n];
+  // #68: each inline control's failure path with a canned long reply (the old 401 pair text, a 140-char refusal,
+  // a send error); measured after each step (`mid`), then with the rest at the end.
+  const F = window.fetch, early = [], wait = () => new Promise(r => setTimeout(r, 300));
+  const LONG = {
+    pair: 'pair this device first: `herdsman serve pair` on the Mac',
+    sub: 'push subscribe refused: the endpoint https://web.push.apple.com/QGx2c3Rlc3Qtc3Vic2NyaXB0aW9uLWVuZHBvaW50LWlk is not https or not a known push service',
+    kill: 'REFUSED UNSAFE_CLEAN: acme-web-impl-48-contrast-audit-for-every-settings-pane-abxx has 3 unpushed commits and a dirty tree; push them first',
+    dry: 'dry run; would push 3 commits and 2 dirty files to wip/acme-web-impl-48-contrast-audit-for-every-settings-pane-abxx-20261031-1943, then close pane w1:p5',
+    send: 'error: herdr pane send w1:p5 failed: pane closed while sending (exit 1); the message was not delivered, nothing was typed into the agent',
+  };
+  const canned = async (status, text, then) => { window.fetch = (u, o) => o && o.method === 'POST' ? Promise.resolve(new Response(text, { status })) : F(u, o); then(); await wait(); };
+  const mid = what => early.push(...measure().outliers.map(o => `${what}: ${o}`));
   const VIEWS = {
     queue: () => tab('queue'),
     'queue-open': () => { tab('queue'); const d = $('#queue details.q'); d.open = true; d.scrollIntoView(); },
     lanes: () => tab('lanes'),
-    sheet: () => { tab('lanes'); open($('.lane')); },
-    host: () => tab('host'),
+    sheet: async () => { // the longest agent name, then kill refused, kill's dry run, clean refused, a send error
+      tab('lanes');
+      open([...$$('.lane')].sort((a, b) => b.dataset.agent.length - a.dataset.agent.length)[0]);
+      await wait();
+      await canned(400, LONG.kill, () => run('kill'));
+      mid('kill refused');
+      await canned(200, LONG.dry, () => run('kill'));
+      mid('kill dry run');
+      $('.cf').hidden = true;
+      say('', true);
+      await canned(400, LONG.kill, cleanable);
+      mid('clean refused');
+      await canned(502, LONG.send, () => $('.reply').requestSubmit());
+    },
+    host: async () => { // the live Host tab's Alerts (the export leaves it out) as the Home Screen app shows it: an error, then unpaired
+      tab('host');
+      const push = Object.assign(document.createElement('button'), { id: 'push', type: 'button', textContent: 'Enable alerts' });
+      push.dataset.key = 'AA';
+      $('#host').append(Object.assign(document.createElement('h2'), { textContent: 'Alerts' }), push);
+      tidy($('#host'));
+      Object.defineProperty(window, 'Notification', { value: { requestPermission: async () => 'granted' } });
+      const sub = { toJSON: () => ({ endpoint: 'e', keys: { p256dh: 'p', auth: 'a' } }) };
+      Object.defineProperty(navigator, 'serviceWorker', { value: { ready: Promise.resolve({ pushManager: { subscribe: async () => sub } }) } });
+      const st = () => ($('#push + p.st') || {}).textContent;
+      await canned(400, LONG.sub, () => $('#push').click());
+      if (st() !== LONG.sub) early.push(`alerts error: p.st reads "${st()}", not the reply`);
+      mid('alerts error');
+      await canned(401, LONG.pair, () => $('#push').click());
+      if (!$('#push').disabled || st() !== 'pair this phone first') early.push(`unpaired: [enable alerts] disabled ${$('#push').disabled}, p.st "${st()}"`);
+      $('#push').hidden = false;
+      // `--screenshot` captures the document's top: the shot drops the needs cards so Alerts is in it (the check keeps them).
+      if (!DBG.get('check')) { $('#needs').hidden = true; scrollTo(0, 0); }
+    },
     events: () => tab('events'),
     herd1: () => herd(true),
     herd2: () => herd(true),
@@ -36,6 +79,7 @@
   function check() {
     let res;
     try { res = (SCROLL[V] || measure)(); } catch (e) { res = { view: V, controls: 0, outliers: ['audit error: ' + e.message] }; }
+    if (innerWidth !== 390) res.outliers.push(`viewport ${innerWidth} px wide, not 390`); // #68: new-headless Chrome keeps windows ≥ 500 px
     const out = document.createElement('pre');
     out.id = 'audit';
     out.textContent = JSON.stringify(res);
@@ -76,6 +120,18 @@
         const tr = g.getBoundingClientRect(), br = b.getBoundingClientRect();
         if (!input && (tr.right > br.right + 1 || tr.left < br.left - 1) && getComputedStyle(b).textOverflow !== 'ellipsis') bad.push(`"${t.data.trim().slice(0, 20)}": text overflows its box by ${Math.max(tr.right - br.right, br.left - tr.left) | 0}px`);
       }
+      // #68: no box holds more than it shows unless it ellipsises (or scrolls by design); nothing past the screen's right edge.
+      // Tap rings (`]`, the queued horse's ::before) are hit area, not content: off while measuring. The sky's clouds drift past its clipped sides.
+      const ring = Object.assign(document.createElement('style'), { textContent: 'button::after,.pk::after,.hqh::before{display:none!important}' });
+      B.append(ring);
+      for (const e of [r, ...r.querySelectorAll('*')]) {
+        if (e.closest('svg, .hr') || !seen(e)) continue;
+        const cs = getComputedStyle(e), what = `${e.localName}${typeof e.className === 'string' && e.className ? '.' + e.className.split(' ')[0] : ''} "${label(e)}"`;
+        if (cs.display === 'inline' || /auto|scroll/.test(cs.overflowX)) continue;
+        if (e.scrollWidth > e.clientWidth + 1 && !(cs.textOverflow === 'ellipsis' && cs.overflowX === 'hidden')) bad.push(`${what}: ${e.scrollWidth}px of content in ${e.clientWidth}px`);
+        if (e.getBoundingClientRect().right > innerWidth + 1) bad.push(`${what}: right edge ${e.getBoundingClientRect().right | 0} past the screen's ${innerWidth}`);
+      }
+      ring.remove();
       for (const e of [...r.querySelectorAll(NAME)].filter(seen)) {
         const cs = getComputedStyle(e), h = e.getBoundingClientRect().height;
         const lh = cs.lineHeight === 'normal' ? 1.2 * parseFloat(cs.fontSize) : parseFloat(cs.lineHeight);
@@ -118,7 +174,7 @@
         clip();
       }
     }
-    return { view: V, controls: ctl.length, outliers: bad };
+    return { view: V, controls: ctl.length, outliers: [...early.splice(0), ...bad] };
   }
   // #65: a live update never moves the scroll or replaces a kept node. Scroll to 400 px, push a changed fixture
   // through the live path (herdData / frag), and count what the MutationObserver saw leave the tree for good.
@@ -173,8 +229,8 @@
       return { view: V, controls: keep.length, outliers: bad };
     },
   };
-  const go = () => {
-    VIEWS[V]();
+  const go = async () => {
+    await VIEWS[V]();
     setTimeout(() => {
       if (V === 'herd2') PG.scrollLeft = PG.clientWidth;
       setTimeout(() => { if (DBG.get('check')) check(); }, 1000);
