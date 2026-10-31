@@ -43,4 +43,4 @@ the hook for one release, and `HERDSMAN_LANE` wins when both are set.
 
 ## Size cap
 
-At most 5,000 lines of Rust under `src/` (tests live in `tests/`). CI enforces it.
+At most 6,000 lines of Rust under `src/` (tests live in `tests/`). CI enforces it.

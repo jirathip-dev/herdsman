@@ -166,7 +166,7 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
     };
     let kick = format!("Read {} and execute it fully.", brief.display());
     let lane = format!("{fleet}:{}:{role}", issue.map_or("-".into(), |n| n.to_string()));
-    let account = if r.harness == "claude" { access::pick(cfg, &read(&ctx.state)?, r, ctx.now)? } else { None };
+    let account = if r.harness == "claude" { access::pick(ctx, cfg, &read(&ctx.state)?, r)? } else { None };
     let mcp_file = match issue {
         None => brief.with_file_name(format!("orch-{fleet}.mcp.json")),
         Some(_) => worktree.join(".mcp.lane.json"),
