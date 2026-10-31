@@ -499,14 +499,14 @@ async function claim() {
 }
 document.addEventListener('click', async e => {
   if (!e.target.closest('.pairb')) { if (e.target.closest('#pairp')) { pairing = false; clearTimeout(ttl); pp.hidden = true; } return; }
-  const r = await fetch(R + 'pair/request', { method: 'POST' }).catch(err => ({ ok: false, text: () => 'error: ' + err.message })), t = (await r.text()).trim();
+  const r = await fetch(R + 'pair/request', { method: 'POST' }).catch(err => ({ ok: false, text: () => 'error: ' + err.message })), s = (await r.text()).trim(), [t, h] = s.split('\n');
   pairing = r.ok;
   pp.className = 'pairp' + (r.ok ? '' : ' r');
   if (!e.target.closest('#pairp')) (e.target.closest('.pairf') || $('header')).after(pp);
   pp.hidden = false;
   clearTimeout(ttl);
-  if (r.ok) pp.replaceChildren(el('p', 'code', t), el('p', 'm', `Approve on the Mac: herdsman serve approve ${t} · or tell the conductor 'pair ${t}'`));
-  else pp.replaceChildren(el('p', '', t));
+  if (r.ok) pp.replaceChildren(el('p', 'code', t), el('p', 'm', `Approve on the Mac: herdsman serve approve ${t}` + (h ? ` · ${h}` : '')));
+  else pp.replaceChildren(el('p', '', s));
   pp.scrollIntoView({ block: 'nearest' });
   if (!r.ok) return;
   ttl = setTimeout(() => { pairing = false; pp.className = 'pairp r'; pp.replaceChildren(el('span', '', 'code expired — '), $('.pairb').cloneNode(true)); }, 6e5);

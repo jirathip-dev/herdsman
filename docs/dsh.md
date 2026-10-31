@@ -5,9 +5,9 @@ public beta) over DeepSeek Harness in a lane pane. Only the **reviewer** role is
 piloted; no dsh orchestrator or implementer until that passes.
 
 ```toml
-[fleet.fleet.role.rev]
+[fleet.app.role.rev]
 harness = "dsh"
-profile = "fleet-rev"
+profile = "lane-rev"
 ```
 
 - `herdsman profiles sync` writes `~/.config/herdsman/dsh/<profile>.patch.yml`, a DSH patch
@@ -44,14 +44,7 @@ DSH 0.2.1-rc.3 / dsh-TUI 0.17.0 document no pre-tool hook, so the Claude
 | Edits to fleet config, the event log, fleet-operations, Hermes profiles | hook denies | **not enforced** for non-reviewer roles (`danger-full-access`); reviewers' sandbox keeps them outside the writable root |
 | Hook inert outside fleet lanes (`HERDSMAN_LANE`) | yes | n/a: the `pre-push` hook only exists in fleet lane worktrees and always applies there |
 
-Server-side protection is the real backstop, and it is not on yet (measured 2026-10-30,
-`gh api repos/<repo>/branches/<branch>/protection` and `.../rulesets`):
-
-| Repo | main / staging protection |
-|---|---|
-| `jirathip-dev/sendmeter` | none (HTTP 404 "Branch not protected", no rulesets) |
-| `jirathip-dev/herdsman` | none (HTTP 404 "Branch not protected", no rulesets) |
-| `jirathip-dev/fleet` | unavailable: private repo on the free plan (HTTP 403 "Upgrade to GitHub Pro or make this repository public") |
+Server-side protection is the real backstop; turn it on for every fleet repo's main and staging.
 
 `herdsman protection` re-runs this measurement: for each fleet repo it reads
 `gh api repos/<repo>/branches/<branch>/protection` for `main`, `staging` and the integration

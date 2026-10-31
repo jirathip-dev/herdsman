@@ -98,7 +98,7 @@ pub fn emit(state: &Path, cfg: &Config, ev: Event) -> Result<()> {
     Ok(())
 }
 
-/// One human-readable line, e.g. `sendmeter #1037 merged → staging 8ed4a06 (PR #1041)`.
+/// One human-readable line, e.g. `api #1037 merged → staging 8ed4a06 (PR #1041)`.
 pub fn plain(ev: &Event) -> String {
     let who = ev.issue.map_or(ev.fleet.clone(), |n| format!("{} #{n}", ev.fleet));
     let s = |k: &str| ev.str(k).unwrap_or("?");

@@ -1,7 +1,7 @@
 # Lanes, hooks and notifiers
 
 A lane is one agent working one issue in its own worktree and herdr pane: `impl`, `rev`,
-`orch` (the fleet's orchestrator, `herdsman spawn <fleet> - orch`) or the conductor-only
+`orch` (the fleet's orchestrator, `herdsman spawn <fleet> - orch`) or the owner-only
 `design`. Agents get their usage doc from `herdsman help --agent`.
 
 ## Typical flow

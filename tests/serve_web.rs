@@ -533,3 +533,25 @@ fn frag_parts_redirect_navigations_and_404_unknown_ids() {
         assert!(res.starts_with("HTTP/1.1 404 Not Found") && res.ends_with("no such part\n"), "{path}: {res}");
     }
 }
+
+/// #82: the pairing panel's Mac line, plus `[serve] approve_hint` (`{code}` substituted) when set.
+#[test]
+fn pair_request_carries_the_optional_approve_hint() {
+    let js = include_str!("../assets/serve.js");
+    assert!(js.contains("`Approve on the Mac: herdsman serve approve ${t}` + (h ? ` · ${h}` : '')"), "the Mac line, hint after ` · `");
+    assert!(js.contains("el('p', 'm', `Approve"), "`el` sets textContent: the hint is never HTML");
+    let request = |c: &herdsman::Ctx| {
+        let r = Fake::default();
+        let s = Server::new(c, &r, Some(ADDR.into()));
+        let req = format!("POST /pair/request HTTP/1.1\r\nHost: {ADDR}\r\nX-Peer: 10.0.0.1\r\nContent-Length: 0\r\n\r\n");
+        let res = String::from_utf8_lossy(&s.respond(&req, 1_000_000)).into_owned();
+        assert!(res.starts_with("HTTP/1.1 200 "), "{res}");
+        res.rsplit("\r\n\r\n").next().unwrap().to_string()
+    };
+    let body = request(&ctx(&tmpdir("hint-off"), &config()));
+    assert!(body.len() == 8 && body.ends_with("\n\n"), "code only: {body:?}");
+    let hinted = config().replace("[serve]\n", "[serve]\napprove_hint = \"or send 'pair {code}' to <b>ops</b>\"\n");
+    let body = request(&ctx(&tmpdir("hint-on"), &hinted));
+    let code = &body[..6];
+    assert_eq!(body, format!("{code}\nor send 'pair {code}' to <b>ops</b>\n"), "text/plain; the page sets it as text");
+}

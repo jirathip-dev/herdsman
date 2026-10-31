@@ -48,7 +48,7 @@ fn ask_answer_round_trip_prompts_the_asker_once() {
     assert_eq!(run(&c, &Fake::default(), &["asks"]).1, "", "answered asks are closed");
     assert!(run(&c, &Fake::default(), &["asks", "--all"]).1.contains("Raise the src budget? [answered]"));
 
-    let (code, out) = run(&c, &r, &["answer", "sendmeter", "q1", "free text"]);
+    let (code, out) = run(&c, &r, &["answer", "sendmeter", "q1", "free text", "--by", "alice"]);
     assert_eq!(code, 3);
     assert!(out.contains("REFUSED ALREADY_ANSWERED"), "{out}");
     assert_eq!(r.count("herdr agent prompt"), 1);

@@ -35,18 +35,18 @@ serial_paths = ["db/migrations/**"]          # one `--serial` lane at a time
 
 [fleet.app.role.orch]
 harness = "hermes"
-profile = "fleet-orch"
+profile = "lane-orch"
 
 [fleet.app.role.impl]
 harness = "claude"
-profile = "fleet-impl"
+profile = "lane-impl"
 model = "opus"
 effort = "high"                              # none | low | medium | high | xhigh
 mcp = ["<dev-server>"]                       # servers from the repo's .mcp.json; default none
 
 [fleet.app.role.rev]
 harness = "claude"
-profile = "fleet-rev"
+profile = "lane-rev"
 model = "sonnet"
 ```
 
@@ -211,8 +211,9 @@ Replies, answers and lane actions need a paired phone. You never type on the pho
 
 1. On the page (or the Home Screen app), tap **Pair this phone** in the header. It shows a
    6-digit code, e.g. `482913`.
-2. On the Mac run `herdsman serve approve 482913`, or ask the conductor to (it runs the
-   same command). `herdsman serve pending` lists the open requests.
+2. On the Mac run `herdsman serve approve 482913`, or ask the owner to (it runs the
+   same command; a `[serve] approve_hint` in fleet.toml adds
+   your own way to the panel, e.g. `"or send 'pair {code}' to the owner"`). `herdsman serve pending` lists the open requests.
 3. The phone flips to "paired as iPhone Safari" by itself.
 
 A code works once, for 10 minutes. At most 3 requests are open at a time, 2 per address

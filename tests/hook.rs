@@ -237,14 +237,14 @@ fn protected_config_edits_are_denied() {
 }
 
 #[test]
-fn design_spawn_is_conductor_only() {
+fn design_spawn_is_owner_only() {
     for cmd in ["fleet spawn x 1 design", "herdsman spawn x 1 design", "~/.local/bin/herdsman spawn x 1 design --dry-run"] {
         let input = json!({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": cmd}});
         for (var, role) in [("FLEET_LANE", "orch"), ("HERDSMAN_LANE", "orch"), ("HERDSMAN_LANE", "impl")] {
             let out = hook_env(&[(var, Some("x:-:orch"))], role, input.clone());
-            assert!(out.contains("conductor-only"), "{var} {role} {cmd}: {out}");
+            assert!(out.contains("owner-only"), "{var} {role} {cmd}: {out}");
         }
-        assert_eq!(hook_env(&[], "orch", input.clone()), "", "the conductor (no lane) may: {cmd}");
+        assert_eq!(hook_env(&[], "orch", input.clone()), "", "the owner (no lane) may: {cmd}");
     }
     assert_eq!(bash_as("orch", "herdsman spawn x 1 impl"), None);
     assert_eq!(bash_as("orch", "herdsman board x # design"), None);

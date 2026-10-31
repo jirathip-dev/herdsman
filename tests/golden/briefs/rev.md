@@ -1,4 +1,4 @@
-# Brief — sendmeter-rev-12-r1 (jirathip-dev/sendmeter#12)
+# Brief — api-rev-12-r1 (acme/api#12)
 
 # ROLE: ADVERSARIAL REVIEWER
 
@@ -33,5 +33,5 @@ AC: it {works} \ `ok`
 
 - Read-only: no edits, no commits, no push.
 - Review the diff `origin/staging...HEAD` against the issue's acceptance criteria.
-- Write `<TMP>/worktrees/sendmeter/rev-12-r1/verdict.md`: first line `PASS` or `FAIL`, then findings (`blocking`/`non-blocking`, file:line).
+- Write `<TMP>/worktrees/api/rev-12-r1/verdict.md`: first line `PASS` or `FAIL`, then findings (`blocking`/`non-blocking`, file:line).
 - Report the exact head sha you reviewed (`git rev-parse HEAD`).

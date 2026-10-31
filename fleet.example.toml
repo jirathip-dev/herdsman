@@ -4,47 +4,48 @@ models = ["opus", "sonnet", "claude-opus-5-5"]   # the model dropdown `herdsman 
 
 [serve]
 allowed_hosts = ["<mac>.<tailnet>.ts.net"]   # `tailscale serve` proxies the page over HTTPS
+# approve_hint = "or send 'pair {code}' to the owner"   # appended to the pairing panel's Mac line
 
-[fleet.sendmeter]
-repo = "jirathip-dev/sendmeter"
-local = "~/Projects/sendmeter"
+[fleet.api]
+repo = "acme/api"
+local = "~/Projects/api"
 integration = "staging"          # herdsman merge target; main is never a target
-# paused = true                  # `herdsman pause|resume sendmeter`: no next, impl/rev spawns refuse PAUSED
+# paused = true                  # `herdsman pause|resume api`: no next, impl/rev spawns refuse PAUSED
 
-[fleet.sendmeter.role.orch]
+[fleet.api.role.orch]
 harness = "hermes"
-profile = "fleet-orch"
+profile = "lane-orch"
 
-[fleet.sendmeter.role.impl]
+[fleet.api.role.impl]
 harness = "claude"
-profile = "fleet-impl"
+profile = "lane-impl"
 model = "opus"
 effort = "xhigh"                 # none|low|medium|high|xhigh: Claude --effort, Hermes --reasoning
 accounts = ["A", "B", "C"]   # Claude token: first uncapped one (or `account = "A"`)
 mcp = ["supabase-dev"]        # only these servers from the repo's .mcp.json; default none
 
-[fleet.sendmeter.role.rev]
+[fleet.api.role.rev]
 harness = "hermes"
-profile = "fleet-rev"
+profile = "lane-rev"
 
-# This repo, dogfooding.
-[fleet.fleet]
-repo = "jirathip-dev/herdsman"
-local = "~/Projects/fleet"
+# This repo, dogfooding: a `*/herdsman` repo's merge prints the `cargo install` that picks it up.
+[fleet.herdsman]
+repo = "<owner>/herdsman"
+local = "~/Projects/herdsman"
 integration = "staging"
 
-[fleet.fleet.role.impl]
+[fleet.herdsman.role.impl]
 harness = "claude"
-profile = "fleet-impl"
+profile = "lane-impl"
 model = "opus"
 
-[fleet.fleet.role.rev]
+[fleet.herdsman.role.rev]
 harness = "hermes"
-profile = "fleet-rev"
+profile = "lane-rev"
 
-[fleet.synergy]
-repo = "<owner>/synergy"
-local = "~/Projects/synergy"
+[fleet.web]
+repo = "acme/web"
+local = "~/Projects/web"
 integration = "staging"
 serial_paths = ["supabase/migrations/**"]   # one `--serial` lane at a time (SERIAL_BUSY / SERIAL_UNMARKED)
 # required_checks = ["quality"]   # gate/check/wait look only at these (latest run each); unset = all checks
@@ -53,29 +54,30 @@ serial_paths = ["supabase/migrations/**"]   # one `--serial` lane at a time (SER
 # notify_global = true   # also send this fleet's events to the global [[notify]]
 
 # Per-fleet notifiers replace the global [[notify]] for this fleet's events (same fields).
-[[fleet.synergy.notify]]
-cmd = "hermes send -q -t telegram:<chat_id>:<thread_id>"   # e.g. one thread per repo
+[[fleet.web.notify]]
+cmd = "notify <chat>:<thread>"   # e.g. one thread per repo
+# cmd = "hermes send -q -t telegram:<chat_id>:<thread_id>"   # or Hermes, to Telegram
 on = ["stall", "lane-dead", "ready-unmerged", "blocked", "merged", "needs-human", "evidence-missing"]
 
-[fleet.synergy.role.orch]
+[fleet.web.role.orch]
 harness = "hermes"
-profile = "fleet-orch"
+profile = "lane-orch"
 
-[fleet.synergy.role.impl]
+[fleet.web.role.impl]
 harness = "hermes"
-profile = "fleet-impl"
+profile = "lane-impl"
 
-[fleet.synergy.role.rev]
+[fleet.web.role.rev]
 harness = "hermes"
-profile = "fleet-rev"
+profile = "lane-rev"
 
-# Conductor-only: `herdsman spawn synergy <issue> design`; the hook denies it from any lane.
-[fleet.synergy.role.design]
+# Owner-only: `herdsman spawn web <issue> design`; the hook denies it from any lane.
+[fleet.web.role.design]
 harness = "hermes"
-profile = "fleet-design"
+profile = "lane-design"
 
 [accounts]
-accounts_env = "~/.config/claude-accounts/tokens.env"   # VAR=token lines; never copied anywhere
+accounts_env = "~/.config/herdsman/accounts/tokens.env"   # VAR=token lines; never copied anywhere
 A = "CLAUDE_CODE_OAUTH_TOKEN_A"
 B = "CLAUDE_CODE_OAUTH_TOKEN_B"
 C = "CLAUDE_CODE_OAUTH_TOKEN_C"
@@ -84,7 +86,7 @@ C = "CLAUDE_CODE_OAUTH_TOKEN_C"
 
 # The usage meter: each account's own `claude` login folder (docs/providers.md); never given to lanes.
 # [accounts.usage]
-# A = "~/.config/claude-accounts/A"
+# A = "~/.config/herdsman/accounts/A"
 
 # The DeepSeek balance row; the key is read from an env file, never from here.
 # [providers.deepseek]
@@ -100,6 +102,7 @@ swapout_rate = 2000  # pages swapped out per 2 s sample
 effort = "high"      # default for roles without `effort`; dsh accepts only "none" for now
 
 [[notify]]
-cmd = "hermes send -q -t telegram:<chat_id>"   # one plain line on stdin
+cmd = "notify <chat>"   # any command; one plain line on stdin
+# cmd = "hermes send -q -t telegram:<chat_id>"   # or Hermes, to Telegram
 on = ["stall", "lane-dead", "ready-unmerged", "blocked", "merged", "needs-human", "evidence-missing", "account-capped"]
 # format = "json"   # send the raw event JSON instead
