@@ -2,6 +2,7 @@
 pub mod access;
 pub mod check;
 pub mod config;
+pub mod devices;
 pub mod events;
 pub mod gate;
 pub mod gh;
@@ -262,6 +263,8 @@ enum Cmd {
     Board { fleet: Option<String> },
     /// Phone page (PWA): queue, lanes, host, events; buttons for queue order, pause/resume, role model/effort
     Serve {
+        #[command(subcommand)]
+        cmd: Option<ServeCmd>,
         /// Listen address
         #[arg(long, default_value = "127.0.0.1:7777")]
         addr: String,
@@ -355,6 +358,12 @@ enum QueueCmd {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum ServeCmd {
+    /// Print a one-time 6-digit code (5 min) that pairs a phone's reply box
+    Pair,
 }
 
 #[derive(Subcommand)]
@@ -499,7 +508,8 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
             let boards: Vec<_> = all.iter().map(|f| queue::board(&events, f, ctx.now)).collect();
             write!(out, "{}", boards.join("\n"))?;
         }
-        Cmd::Serve { addr, read_only } => serve::serve(ctx, r, &addr, read_only)?,
+        Cmd::Serve { cmd: Some(ServeCmd::Pair), .. } => writeln!(out, "pairing code {} (5 min, one use)", devices::new_code(ctx)?)?,
+        Cmd::Serve { addr, read_only, .. } => serve::serve(ctx, r, &addr, read_only)?,
         Cmd::Queue { fleet, cmd: QueueCmd::Ls { json } } => {
             let rows = queue::ls_json(&read(&ctx.state)?, &fleet);
             if json {

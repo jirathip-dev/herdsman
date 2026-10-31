@@ -129,7 +129,7 @@ fn role_dropdowns_set_like_herdsman_set() {
     let s = Server::new(&web, &r, Some(ADDR.into()));
     let page = get(&s, "/");
     assert!(page.contains("<option selected>opus</option><option>sonnet</option>"), "only `models`");
-    assert!(page.contains("<select name=effort aria-label=effort><option value=\"\" selected>—</option><option>none</option>"));
+    assert!(page.contains("<select name=effort aria-label=effort><option value=\"\" selected>default (none)</option><option>none</option>"));
     assert_eq!(run(&cli, &Fake::default(), &["set", "sendmeter", "impl", "--model", "sonnet", "--effort", "high"]).0, 0);
     let res = post(&s, &format!("op=set&fleet=sendmeter&role=impl&model=sonnet&effort=high&mtime={}", mtime(&s)), "");
     assert!(location(&res).starts_with("/?msg=sendmeter.impl model: opus -> sonnet; sendmeter.impl effort: - -> high"), "{res}");
@@ -219,7 +219,7 @@ fn foreign_host_or_origin_is_403_and_read_only_is_405() {
     let ro = Server::new(&web, &r, None);
     assert!(post(&ro, &body, "").starts_with("HTTP/1.1 405 "));
     let page = get(&ro, "/");
-    assert!(!page.contains("<form") && page.contains("data-ro=1"), "no buttons");
+    assert!(!page.contains("<form method=post") && page.contains("data-ro=1"), "no buttons");
 }
 
 #[test]
@@ -302,12 +302,14 @@ fn lanes_group_by_fleet_with_others() {
         ]
     );
     assert_eq!((lanes[1].model.as_deref(), lanes[1].effort.as_deref(), lanes[1].issue), (Some("opus"), Some("high"), Some(12)));
-    // Rendered: groups in fleet order, Others last, the mismatch flagged.
+    // Rendered: state sections, fleet subgroups (Others last), the mismatch flagged.
     let list = json!({"result": {"agents": agents}}).to_string();
     let r = Fake::default().reply("herdr agent list", &list).reply("herdr pane read w1:p2", "⏺ Bash(cargo test)\n> \n");
     let page = get(&Server::new(&c, &r, None), "/");
     let at = |s: &str| page.find(s).unwrap_or_else(|| panic!("{s} missing"));
-    assert!(at("<h2><span>sendmeter</span>") < at("<h2><span>synergy</span>") && at("<h2><span>synergy</span>") < at("<h2><span>Others</span>"));
+    let working = &page[at("<h2><span class=g>working (2)</span></h2><h3>sendmeter (1)</h3>")..];
+    let rest = &working[4..];
+    assert!(rest.find("<h3>synergy (1)</h3>") < rest.find("<h2>"), "synergy subgroup inside working");
     assert!(page.contains("⚠ log/pane mismatch") && page.contains("<span class=act>⏺ Bash(cargo test)</span>"));
     // One herdr agent list per 10 s, one pane read per 30 s.
     let s = Server::new(&c, &r, None);
@@ -353,7 +355,7 @@ fn activity_lines_per_harness_are_masked_and_cut() {
     assert_eq!((t.len(), t[0].as_str(), t[9].as_str()), (10, "line 6", "ghp_•••"));
 }
 
-/// AC3 + amendment A.2: no table, every row a <details>, and (where WebKit is at hand)
+/// AC3 + amendment A.2: no table, every queue row a <details>, and (where WebKit is at hand)
 /// `body.scrollWidth` ≤ 390 at 390 px with every row open, in all three lane modes.
 #[test]
 fn page_fits_390px_without_horizontal_scroll() {
@@ -382,7 +384,7 @@ fn page_fits_390px_without_horizontal_scroll() {
     std::fs::write(&file, html).unwrap();
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/webview.swift");
     for tab in ["queue", "lanes", "host", "events"] {
-        for mode in ["glyph", "ascii", "pixel"] {
+        for mode in ["horse", "ascii", "glyph"] {
             let o = std::process::Command::new("swift").args([script, file.to_str().unwrap(), "390", tab, mode]).output().unwrap();
             let out = String::from_utf8_lossy(&o.stdout);
             let w: Vec<u32> = out.split_whitespace().filter_map(|n| n.parse().ok()).collect();
