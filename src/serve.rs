@@ -4,7 +4,7 @@ use crate::config::{Config, Role};
 use crate::events::{age, append, fold, plain, read, Event, IssueState};
 use crate::gate::{refused, Refusal};
 use crate::host::{self, Host};
-use crate::runner::{argv, Runner};
+use crate::runner::{argv, ok, Out, Runner};
 use crate::{devices, gh, lanes, queue, Ctx};
 use anyhow::{bail, Context, Result};
 use serde_json::json;
@@ -42,9 +42,7 @@ pub fn serve(ctx: &Ctx, r: &dyn Runner, addr: &str, read_only: bool) -> Result<(
 
 pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> Result<()> {
     let s = Server::new(ctx, r, (!read_only).then(|| l.local_addr().map(|a| a.to_string())).transpose()?);
-    // The watcher shares the pane-read cache: it keeps a request's herdr reads warm.
-    let w = Server { cache: s.cache.clone(), clients: s.clients.clone(), kick: s.kick.clone(), host: s.host.clone(), ..Server::new(ctx, r, s.addr.clone()) };
-    let h = s.host.clone();
+    let (h, w) = (s.host.clone(), Server { fresh: true, cache: s.cache.clone(), clients: s.clients.clone(), kick: s.kick.clone(), host: s.host.clone(), ..Server::new(ctx, r, s.addr.clone()) });
     std::thread::scope(|sc| {
         // #57: the host every 10 s (its 2 s vm_stat delta included) here, never on a request.
         sc.spawn(move || loop { *h.lock().unwrap_or_else(|e| e.into_inner()) = host::sample(r); std::thread::sleep(Duration::from_secs(10)) });
@@ -55,6 +53,18 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
         l.incoming().flatten().for_each(|st| drop(s.handle(st)));
     });
     Ok(())
+}
+
+/// `Server::cached` as a Runner (runner, cache, now, ttl): also `waiting::scan`'s per-issue `git log` on a request.
+struct Memo<'a>(&'a dyn Runner, &'a Cache, u64, u64);
+impl Runner for Memo<'_> {
+    fn run(&self, prog: &str, args: &[String]) -> Result<Out> {
+        let (key, cache) = (format!("{prog} {}", args.join(" ")), || self.1.lock().unwrap_or_else(|e| e.into_inner()));
+        let hit = cache().get(&key).filter(|(t, _)| self.2 >= *t && self.2 - t < self.3).cloned();
+        let (t, out) = hit.unwrap_or_else(|| (self.2, self.0.run(prog, args).ok().filter(|o| o.code == 0).map(|o| o.stdout)));
+        cache().insert(key, (t, out.clone()));
+        Ok(out.map_or(Out { code: 1, ..Out::default() }, |stdout| Out { stdout, ..Out::default() }))
+    }
 }
 
 fn hash(s: &impl Hash) -> u64 {
@@ -84,8 +94,9 @@ pub struct Server<'a> {
     r: &'a dyn Runner,
     /// The bind address a POST's `Host` must name; None: read-only.
     addr: Option<String>,
-    /// Command stdout by argv, with its time: herdr reads are rate-limited (shared with the watcher).
+    /// Command stdout by argv, with its time: rate-limited reads, shared with the watcher, which (`fresh`) re-reads at a third of the ttl.
     cache: Cache,
+    fresh: bool,
     /// The background sampler's last host read (serve_on); a request only reads it.
     pub host: Arc<Mutex<Host>>,
     /// Reply-box send times per device hash (10 a minute).
@@ -227,7 +238,7 @@ fn kind(head: &str) -> &'static str {
 
 impl<'a> Server<'a> {
     pub fn new(ctx: &'a Ctx, r: &'a dyn Runner, addr: Option<String>) -> Self {
-        Server { ctx, r, addr, cache: Arc::default(), host: Arc::default(), sent: RefCell::default(), clients: Arc::default(), kick: Arc::default(), watch: RefCell::default(), export: None }
+        Server { ctx, r, addr, cache: Arc::default(), fresh: false, host: Arc::default(), sent: RefCell::default(), clients: Arc::default(), kick: Arc::default(), watch: RefCell::default(), export: None }
     }
 
     fn handle(&self, mut s: TcpStream) -> std::io::Result<()> {
@@ -276,7 +287,7 @@ impl<'a> Server<'a> {
     }
 
     /// Each 1 s tick: on a log change, a `herdr agent list` change (read every 2 s, uncached) or every
-    /// 20 s (ages; it keeps lane rows' 30 s pane reads warm for requests), re-render the fragments per audience (paired or not) and push the changed ones.
+    /// 15 s (ages; it keeps requests' cached reads warm), re-render the fragments per audience (paired or not) and push the changed ones.
     /// A stream whose device was removed closes first (the page reconnects unpaired).
     fn tick(&self) {
         let mut w = self.watch.borrow_mut();
@@ -286,7 +297,7 @@ impl<'a> Server<'a> {
         let log = std::fs::metadata(&self.ctx.state).ok().map(|m| (m.len(), m.modified().ok()));
         let kicked = self.kick.swap(false, Relaxed);
         if kicked { self.purge() }
-        let mut changed = kicked || log != w.log || now >= w.rendered + 20;
+        let mut changed = kicked || log != w.log || now >= w.rendered + 15;
         w.log = log;
         if now >= w.herdr.0 + 2 {
             let out = self.r.run("herdr", &argv(&["agent", "list"])).ok().filter(|o| o.code == 0).map(|o| o.stdout);
@@ -324,13 +335,7 @@ impl<'a> Server<'a> {
 
     /// stdout of `prog args` if it ran OK within the last `ttl` seconds (else run it now).
     fn cached(&self, now: u64, ttl: u64, prog: &str, args: &[&str]) -> Option<String> {
-        let key = format!("{prog} {}", args.join(" "));
-        if let Some((_, out)) = self.cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key).filter(|(t, _)| now >= *t && now - t < ttl) {
-            return out.clone();
-        }
-        let out = self.r.run(prog, &argv(args)).ok().filter(|o| o.code == 0).map(|o| o.stdout);
-        self.cache.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (now, out.clone()));
-        out
+        ok(&Memo(self.r, &self.cache, now, if self.fresh { ttl / 3 } else { ttl }), prog, args).ok()
     }
 
     /// The full HTTP response to one request.
@@ -774,7 +779,7 @@ impl<'a> Server<'a> {
 
     fn waits(&self, ctx: &Ctx, cfg: &Config, events: &[Event], all: &[lanes::Lane]) -> Vec<crate::waiting::Waiting> {
         let live: Vec<_> = all.iter().map(|l| json!({"name": l.name, "agent_status": l.state})).collect();
-        crate::waiting::scan(ctx, cfg, self.r, events, &live, false).into_iter().map(|x| x.1).collect()
+        crate::waiting::scan(ctx, cfg, &Memo(self.r, &self.cache, ctx.now, if self.fresh { 10 } else { 30 }), events, &live, false).into_iter().map(|x| x.1).collect()
     }
 
     /// #37: Herd mode's data (`/herd.json`, the `/live` `herd` event): per fleet the lanes as the unpaired Lanes rows

@@ -7,7 +7,7 @@ The board is live: the page keeps one `GET /live` Server-Sent Events stream open
 Host/Origin check, at most 8 clients, then 503; a `: ping` every 15 s; a closed client frees its
 slot within ~1 s). A watcher thread checks the
 event log's size/mtime every 1 s and `herdr agent list` every 2 s (uncached); on a change (or
-once a minute, for ages) it re-renders the needs-you cards and the four tabs and pushes only
+every 15 s, for ages) it re-renders the needs-you cards and the four tabs and pushes only
 the changed ones as `event: frag` (`{id, html}`), rendered per audience (paired or not; a stream whose device was removed is closed at the next
 tick, and the page reconnects unpaired), swapped in place: open rows stay open,
 changed rows flash. The dot next to ↻ is green (live; it pulses on an update), amber
@@ -16,11 +16,14 @@ down) or red (offline). Tapping ↻, or pulling down from the top (past ~70 px),
 `/?frag=all` from the network.
 
 Speed (#57): a background thread samples the host every 10 s (the 2 s `vm_stat` delta happens there),
-so a request never waits on it. The page is HTML only (`no-store`); its scripts, styles and horses are
+so a request never waits on it. Requests share the watcher's cache of `herdr pane read` and the
+per-issue `git log`; the watcher re-reads at a third of a request's ttl, so a request finds them warm. The icons and
+manifest are `public, max-age=86400`. The page is HTML only (`no-store`); its scripts, styles and horses are
 `/a/<hash8>/serve.js`, `serve.css`, `herd.js`, `herd.css` and `horses.svg` (`<hash8>` is FNV-1a over
 their content at build time) with `cache-control: public, max-age=31536000, immutable`, precached by
 the service worker. The SW serves the page stale-while-revalidate: the cached copy paints at once (the
-dot amber) and the live stream's first `?frag=all` fills it in (green).
+dot amber) and the live stream's first `?frag=all` fills it in (green). In horse mode a Lanes avatar shows its
+glyph until herd.js has built the horse symbols from `horses.svg`.
 
 Its only writes are ▲/▼ (`queue mv`), Pause/Resume and a role's model/effort (`set`, choices
 from `models = [...]`), each through the CLI's own code path, logged with `"via":"web"`.
