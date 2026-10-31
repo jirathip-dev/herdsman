@@ -152,12 +152,31 @@ impl Default for Limits {
 
 #[derive(Debug, Deserialize)]
 pub struct Notify {
+    #[serde(default)]
     pub cmd: String,
     #[serde(default)]
     pub on: Vec<String>,
     /// "json" sends the raw event; anything else one plain line.
     #[serde(default)]
     pub format: Option<String>,
+    /// "webpush": push to the page's subscribed devices instead of running `cmd`.
+    #[serde(default, rename = "type")]
+    pub kind: Option<String>,
+    /// webpush: the VAPID `sub` claim (`mailto:` or `https:`).
+    #[serde(default)]
+    pub sub: Option<String>,
+}
+
+/// A webpush notifier's events when `on` is unset: the Telegram set plus the asks (#40) and a stuck orch (#46).
+pub const WEBPUSH_ON: [&str; 8] = ["blocked", "stall", "lane-dead", "ready-unmerged", "merged", "needs-decision", "orch-stuck", "ask-waiting"];
+
+impl Notify {
+    pub fn webpush(&self) -> bool {
+        self.kind.as_deref() == Some("webpush")
+    }
+    pub fn wants(&self, kind: &str) -> bool {
+        self.on.iter().any(|k| k == kind) || (self.on.is_empty() && self.webpush() && WEBPUSH_ON.contains(&kind))
+    }
 }
 
 impl Config {
@@ -179,8 +198,11 @@ impl Config {
         if let Some(e) = c.limits.effort.as_deref().filter(|e| !levels.contains(e)) {
             bail!("limits.effort: \"{e}\" must be one of {levels:?}");
         }
+        if c.notify.iter().chain(c.fleet.values().flat_map(|f| &f.notify)).any(|n| n.webpush() && n.sub.as_deref().is_none_or(str::is_empty)) {
+            bail!("notify: a type = \"webpush\" notifier needs sub = \"mailto:you@example.com\"");
+        }
         for (name, f) in &c.fleet {
-            if f.notify.iter().any(|n| n.cmd.trim().is_empty()) {
+            if f.notify.iter().any(|n| !n.webpush() && n.cmd.trim().is_empty()) {
                 bail!("fleet.{name}.notify: cmd must not be empty");
             }
             for (role, r) in &f.role {

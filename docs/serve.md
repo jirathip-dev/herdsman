@@ -66,3 +66,34 @@ jirathip-dev): same shapes and 8 coats, a stable coat per agent name, the diagon
 while working (off under `prefers-reduced-motion`), dimmed when done, red when blocked or dead.
 
 The Home Screen icon is Corral's Palomino app icon (jirathip-dev/corral, `ios/tools/herd-art/appicon-masters/treatment-a/palomino-1024.png`, MIT © jirathip-dev).
+
+## Alerts (web push)
+
+The Host tab's **Enable alerts** button shows only in the Home Screen app (iOS allows web push
+there alone). Tapping it asks for notification permission, subscribes with the server's VAPID
+public key and `POST /push/subscribe`s the subscription; that and the Host tab's per-device
+**Remove** (`POST /push/unsubscribe`) need the same Host/Origin check and a paired device (401
+otherwise). Delivery goes Mac → Apple/Google push service → phone, outbound only; the page stays
+tailnet-only.
+
+```toml
+[[notify]]
+type = "webpush"
+sub = "mailto:you@example.com"   # the VAPID `sub` claim; required
+# on = [...]   # default: blocked, stall, lane-dead, ready-unmerged, merged, needs-decision, orch-stuck, ask-waiting
+```
+
+It works per fleet too (`[[fleet.<name>.notify]]`), next to the Telegram notifier, which is
+unchanged. Each event is encrypted per device (RFC 8291 aes128gcm), signed with an ES256 VAPID
+JWT (12 h) and sent once with `curl -sS --max-time 10 -X POST`, the body on stdin. A 404 or 410
+prunes that device; any other failure logs one `notify-failed` (no retry). Tapping an alert
+opens the page on its tab with the issue's row open. `herdsman push test` sends a test alert to
+every subscribed device.
+
+Secrets: the VAPID key (`<state>/webpush/vapid.key`) and the subscriptions
+(`<state>/webpush/subs.json`, endpoint, keys, device label, creation time) are 0600 and never
+logged, printed or served; the page gets only the public key and each device's label.
+
+Dependencies: the allowed crates are clap, serde, serde_json, toml and anyhow/thiserror, plus, for web
+push only, the pure-Rust RustCrypto set p256, aes-gcm, hkdf, sha2 and base64 (no async, no HTTP
+client). CI's deps gate fails on any other direct dependency.
