@@ -1,6 +1,6 @@
 // #37 Herd mode: Corral's Herd screen (jirathip-dev/corral ios/FleetNotifier/UI/Herd: RanchEnvironment,
 // RanchWind, HerdArt; MIT © jirathip-dev). One full-screen page per fleet (swipe ←→, Others last), the
-// ranch on top, the pasture below in bands; queued issues wait at the gate. Data: `/herd.json`, then the
+// ranch strip on top, the pasture below in bands; queued issues wait at the gate above them. Data: `/herd.json`, then the
 // `/live` stream's `herd` event (polled by refresh() while it is down). Host load is the weather.
 // One requestAnimationFrame loop on one clock drives every motion, current page only, paused when hidden.
 const NS = 'http://www.w3.org/2000/svg', M64 = (1n << 64n) - 1n;
@@ -92,9 +92,11 @@ const horses0 = $('#horses');
 if (horses0) horses0.remove();
 
 B.insertAdjacentHTML('beforeend', `<div id=herd hidden><div class=hpages></div><div class=hrain></div><div class=hflash></div>
-<button type=button class=hx aria-label="close herd mode">✕</button><p class=hcap></p><div class=hq hidden></div></div>`);
+<button type=button class=hx aria-label="close herd mode">×</button><p class=hcap></p><div class=hq hidden></div></div>`);
 const H = $('#herd'), PG = H.querySelector('.hpages'), cap = $('.hcap'), info = $('.hq'), rain = $('.hrain'), flash = $('.hflash');
-H.prepend(defs);
+B.prepend(defs);
+// #58: the header's Herd button is our horse (the default coat), not an emoji.
+$('#herd-on').innerHTML = '<svg viewBox="0 0 132 100" style="--c:#c89a56;--d:#a37a3c;--m:#e8dcc0;--b:#efe7dc" aria-hidden=true><use href="#hp2"/></svg>';
 const pages = new Map();
 const POSE = { working: 1, idle: 2, unknown: 2, done: 3, blocked: 4, dead: 4 };
 const MARK = { working: '○', idle: '◦', unknown: '?', done: '✓', blocked: '!', dead: '✗' };
@@ -134,13 +136,11 @@ function draw() {
     p.querySelector('.hs .dots').textContent = list.map((_, i) => i === n ? '●' : '○').join('');
     const count = states => lanes.filter(l => states.includes(l.state)).length;
     p.querySelector('.sum').textContent = `${count(['blocked', 'dead'])} blocked · ${count(['working'])} working · ${count(['idle', 'unknown'])} idle · ${count(['done'])} done`;
-    let h = '';
+    // Queued horses get their own row above the working band; a band with no horses is not drawn.
+    let h = queue.length ? `<div class="band b-queue"><h4>queued <span>${queue.length}</span></h4><div class=gate>${queue.map(queued).join('')}</div></div>` : '';
     for (const [name, states] of BANDS) {
-      const ls = lanes.filter(l => states.includes(l.state)), gate = name === 'working' && queue.length;
-      if (!ls.length && !gate) continue;
-      h += `<div class="band b-${name.split('/')[0]}"><h4>${name} <span>${ls.length}</span>${gate ? ` <span>· ${queue.length} queued</span>` : ''}</h4><div class=row>`;
-      if (gate) h += `<div class=gate>${queue.map(queued).join('')}</div>`;
-      h += `<div class=field>${ls.map(horse).join('')}</div></div></div>`;
+      const ls = lanes.filter(l => states.includes(l.state));
+      if (ls.length) h += `<div class="band b-${name.split('/')[0]}"><h4>${name} <span>${ls.length}</span></h4><div class=field>${ls.map(horse).join('')}</div></div>`;
     }
     p.querySelector('.hb').innerHTML = h || '<p class=empty>no horses here</p>';
     p._queue = queue;
@@ -271,4 +271,4 @@ H.addEventListener('click', e => {
   weather(Object.assign(h, { load: k * h.limit, pressure: p, swapouts: 0, gate: why.join('; ') || null }));
   $$('.hwx button').forEach(b => b.classList.toggle('on', b === w));
 });
-herd(get('herd') === '1');
+herd(get('herd') === '1' || DBG.get('herd') === '1');

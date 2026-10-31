@@ -156,3 +156,70 @@ fn herd_snapshots_fit_390px() {
         assert!(w[0] <= 390 && w[1] == 390, "{name}: scrollWidth {} at {}", w[0], w[1]);
     }
 }
+
+/// #58: the ranch is a ~22% strip, empty bands are not drawn, every lane horse is one size in every
+/// band and queued ones are 60% of it in their own row above working. 390 px, `?weather=calm`:
+/// (a) 0 blocked · 1 working · 13 queued · 7 idle · 11 done, (b) only 1 done, (c) every band.
+#[test]
+fn herd_horses_are_one_size_at_390px() {
+    if std::process::Command::new("swift").arg("--version").output().is_err() || !cfg!(target_os = "macos") {
+        eprintln!("skipping: no swift/WebKit here");
+        return;
+    }
+    let (c, r) = fixture("sizes");
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    let page = get(&s, "/", ADDR, "");
+    let mut calm = body(&get(&s, "/herd.json?weather=calm", ADDR, ""));
+    let fleet = calm["fleets"][0].clone();
+    // One fleet with `n` lanes per state (cloned from the fixture's lane) and `q` queued issues.
+    let mut herd = |states: &[(&str, &str, usize)], q: u64| {
+        let mut lanes = vec![];
+        for &(state, tone, n) in states {
+            for _ in 0..n {
+                let mut l = fleet["lanes"][0].clone();
+                (l["name"], l["state"], l["shown"], l["tone"]) = (json!(format!("sendmeter-impl-{}", 100 + lanes.len())), json!(state), json!(state), json!(tone));
+                lanes.push(l);
+            }
+        }
+        let queue: Vec<Value> = (0..q).map(|i| json!({"issue": 200 + i, "title": null, "blocked_by": null, "coat": fleet["queue"][0]["coat"]})).collect();
+        calm["fleets"] = json!([{"name": "sendmeter", "lanes": lanes, "queue": queue}]);
+        calm["others"] = json!([]);
+        calm.to_string()
+    };
+    let scenes = [
+        ("herd-58-a", herd(&[("working", "g", 1), ("idle", "m", 7), ("done", "g", 11)], 13), 4.0, String::new()),
+        ("herd-58-b", herd(&[("done", "g", 1)], 0), 1.0, String::new()),
+        ("herd-58-c", herd(&[("working", "g", 3), ("idle", "m", 2), ("done", "g", 2), ("blocked", "r", 1), ("dead", "r", 1)], 5), 5.0, String::new()),
+    ];
+    // The lower bands of (a) and (c): scrolled to a band's header, clear of the sticky strip.
+    let to = |band: &str| format!("; document.querySelector('.b-{band}').scrollIntoView({{behavior: 'instant'}}); here().scrollTop -= 64");
+    let scenes = scenes.iter().cloned().chain([("herd-58-a2", scenes[0].1.clone(), 4.0, to("done")), ("herd-58-c2", scenes[2].1.clone(), 5.0, to("idle"))]);
+    let d = tmpdir("herd-58-png");
+    let file = d.join("page.html");
+    std::fs::write(&file, &page[page.find("<!doctype").unwrap()..]).unwrap();
+    let w = |sel: &str| format!("(document.querySelector('{sel} svg') || {{getBoundingClientRect: () => ({{width: -1}})}}).getBoundingClientRect().width");
+    let measure = format!(
+        "window.measure = [document.querySelector('.hr').clientHeight, document.querySelectorAll('.band').length, {}, {}, {}, {}, {}]",
+        w(".b-working .hh"), w(".b-idle .hh"), w(".b-done .hh"), w(".b-blocked .hh"), w(".b-queue .hqh")
+    );
+    for (name, json, bands, then) in scenes {
+        let js = format!("window.fetch = async () => new Response('', {{status: 404}}); herd(true); herdData({json}); {measure}{then}");
+        let png = std::env::var("HERDSMAN_SNAPSHOTS").map_or(d.join(format!("{name}.png")), |p| std::path::Path::new(&p).join(format!("{name}.png")));
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/webview.swift");
+        let o = std::process::Command::new("swift").args([script, file.to_str().unwrap(), "390", "lanes", "horse", png.to_str().unwrap(), &js]).output().unwrap();
+        let out = String::from_utf8_lossy(&o.stdout);
+        let v: Vec<f64> = out.split_whitespace().filter_map(|n| n.parse().ok()).collect();
+        assert!(o.status.success() && v.len() == 9, "{name}: {out} {}", String::from_utf8_lossy(&o.stderr));
+        let [sw, vw, ranch, n, working, idle, done, blocked, queued] = v[..] else { unreachable!() };
+        assert!(sw <= 390.0 && vw == 390.0, "{name}: scrollWidth {sw} at {vw}");
+        // 22svh of the 844 px window (≥ 120 px), not 45%.
+        assert!((ranch - 0.22 * 844.0).abs() <= 1.0, "{name}: ranch {ranch}px");
+        assert_eq!(n, bands, "{name}: bands drawn");
+        // Two lane horses per row at 390 px, the same in every band present; queued ≈ 0.6×.
+        let lane: Vec<f64> = [working, idle, done, blocked].into_iter().filter(|&x| x >= 0.0).collect();
+        assert!(lane.iter().all(|&x| (x - 195.0).abs() <= 1.0), "{name}: lane horse widths {lane:?}");
+        if queued >= 0.0 {
+            assert!((queued / lane[0] - 0.6).abs() <= 0.01, "{name}: queued {queued} vs lane {}", lane[0]);
+        }
+    }
+}

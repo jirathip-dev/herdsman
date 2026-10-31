@@ -53,6 +53,7 @@ function frag(id, html) {
   });
   last = Date.now();
   alerts();
+  tidy(el);
   if (id === 'lanes') mode(B.dataset.mode);
 }
 // Enable alerts: Home Screen app only (iOS allows push there alone); subscribe with the VAPID key, POST it.
@@ -123,6 +124,27 @@ if (DEMO) sync();
 const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st'), now = $('.now'), old = $('.old'), more = $('.more');
 let agent = null, timer = 0, cur = 0, y = 0;
 const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text || '' });
+// #58: controls are bracket text. A select hides behind its short `[opus ▾]` label (the native picker
+// keeps full names); ▲/▼ drop their words; a long menu option ellipsises inside its 28 px line.
+const short = o => (o ? o.textContent : '').replace(/^default.*/, 'default').replace(/.*\b(opus|sonnet|haiku)\b.*/, '$1');
+function tidy(root) {
+  root.querySelectorAll('select').forEach(s => {
+    if (s.parentNode.matches('.pk')) return;
+    const k = el('label', 'pk'), t = el('span', '');
+    s.replaceWith(k);
+    k.append(t, s);
+    const show = () => { t.textContent = short(s.selectedOptions[0]) + ' ▾'; k.title = s.selectedOptions[0] ? s.selectedOptions[0].textContent : ''; };
+    s.addEventListener('change', show);
+    show();
+  });
+  root.querySelectorAll('button').forEach(b => {
+    const m = b.textContent.match(/^([▲▼]) (up|down)$/);
+    if (m) { b.textContent = m[1]; b.setAttribute('aria-label', 'move ' + m[2]); }
+    if (b.matches('.pick') && !b.firstElementChild) b.replaceChildren(el('span', '', b.textContent));
+  });
+}
+tidy(document);
+rf.innerHTML = '<i>↻</i>';
 // One block per turn (server-grouped): the typed prompt, text runs, tool calls collapsed to their head line.
 const render = turns => turns.map(t => {
   const d = el('div', 'turn');
