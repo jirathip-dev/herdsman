@@ -375,10 +375,7 @@ pub fn spawn(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (flee
     let start = herdr::exec(r, &p.start_cmd(ctx, &pane))?;
     if start.code != 0 {
         // Under load herdr can time out while the harness still comes up: keep it as the lane.
-        let timeout = [&start.stderr, &start.stdout]
-            .iter()
-            .any(|s| serde_json::from_str::<Value>(s.trim()).is_ok_and(|v| v["error"]["code"] == "timeout"));
-        if !timeout {
+        if !herdr::timed_out(&start) {
             bail!("herdr agent start failed: {}", start.stderr.trim());
         }
         if herdr::harness_in(r, &pane).is_none() {
