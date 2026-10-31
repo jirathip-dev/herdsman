@@ -217,12 +217,12 @@ pub fn answer(ctx: &Ctx, cfg: &Config, r: &dyn runner::Runner, out: &mut dyn Wri
         return gate::refused("ALREADY_ANSWERED", format!("{id} was answered by {}: {}", d.str("by").unwrap_or("?"), d.str("choice").unwrap_or("?")));
     }
     let text = choice.parse::<usize>().ok().and_then(|n| ask.data["options"].get(n.checked_sub(1)?)?.as_str()).unwrap_or(choice);
-    if text.trim().is_empty() || text.chars().any(char::is_control) {
-        return gate::refused("BAD_VALUE", "an answer is an option number or one line of text");
+    if text.trim().is_empty() || text.chars().any(char::is_control) || text.chars().count() > 2000 {
+        return gate::refused("BAD_VALUE", "an answer is an option number or one line of text, at most 2,000 chars");
     }
-    emit(&ctx.state, cfg, Event::new(ctx.now, fleet, ask.issue, "decision", with_via(json!({"id": id, "choice": text, "by": by}), via)))?;
     let agent = ask.str("agent").unwrap_or_default();
-    let pane = events::last_spawn(&events, agent).and_then(|e| e.str("pane")).context("decision logged, but the asking agent has no pane")?;
+    let pane = events::last_spawn(&events, agent).and_then(|e| e.str("pane")).context(format!("{agent} has no pane: {id} stays open"))?;
+    emit(&ctx.state, cfg, Event::new(ctx.now, fleet, ask.issue, "decision", with_via(json!({"id": id, "choice": text, "by": by}), via)))?;
     runner::ok(r, "herdr", &["agent", "prompt", agent, &format!("DECISION {id}: {text}")])?;
     runner::ok(r, "herdr", &["pane", "send-keys", pane, "Enter"])?;
     Ok(writeln!(out, "{fleet} {id}: {text} -> {agent}")?)

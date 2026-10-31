@@ -129,3 +129,54 @@ fn needs_you_card_tops_every_tab_and_answer_needs_a_paired_device() {
     assert!(res.starts_with("HTTP/1.1 401"), "{res}");
     assert!(kinds(&c, "decision").is_empty());
 }
+
+#[test]
+fn answer_without_a_pane_refuses_and_keeps_the_ask_open() {
+    let d = tmpdir("ask-nopane");
+    let c = ctx(&d, CONFIG);
+    ask(&c);
+    let r = Fake::default().reply("herdr agent prompt", "").reply("herdr pane send-keys", "");
+    let (code, out) = run(&c, &r, &["answer", "sendmeter", "q1", "1"]);
+    assert_ne!(code, 0, "{out}");
+    assert!(kinds(&c, "decision").is_empty() && !r.called("herdr agent prompt"));
+    orch_spawn(&c, NOW);
+    assert_eq!(run(&c, &r, &["answer", "sendmeter", "q1", "1"]).0, 0, "the ask is still answerable");
+    assert!(r.called("herdr agent prompt sendmeter-orch DECISION q1: yes, to 5,200"));
+}
+
+/// POST `body` to `/` (plus extra header lines); the raw response.
+fn post(s: &Server, body: &str, extra: &str) -> String {
+    let req = format!("POST / HTTP/1.1\r\nHost: 127.0.0.1:7777\r\n{extra}Content-Length: {}\r\n\r\n{body}", body.len());
+    String::from_utf8_lossy(&s.respond(&req, NOW)).into_owned()
+}
+
+#[test]
+fn a_paired_device_answers_from_the_card_and_bad_text_is_refused() {
+    let d = tmpdir("ask-web");
+    let mut c = ctx(&d, CONFIG);
+    c.now = NOW;
+    orch_spawn(&c, NOW - 60);
+    ask(&c);
+    let r = Fake::default().reply("herdr agent prompt", "").reply("herdr pane send-keys", "");
+    let s = Server::new(&c, &r, Some("127.0.0.1:7777".into()));
+    let (_, out) = run(&c, &Fake::default(), &["serve", "pair"]);
+    let code: String = out.chars().filter(char::is_ascii_digit).take(6).collect();
+    let res = String::from_utf8_lossy(&s.respond(&format!("POST /pair HTTP/1.1\r\nHost: 127.0.0.1:7777\r\nContent-Length: 11\r\n\r\ncode={code}"), NOW)).into_owned();
+    let set = res.lines().find_map(|l| l.strip_prefix("Set-Cookie: ")).expect(&res);
+    let cookie = format!("Cookie: {}\r\n", &set[..set.find(';').unwrap()]);
+    let page = String::from_utf8_lossy(&s.respond("GET / HTTP/1.1\r\nHost: 127.0.0.1:7777\r\n\r\n", NOW)).into_owned();
+    let i = page.find("name=mtime value=").unwrap() + 17;
+    let mtime: String = page[i..].chars().take_while(char::is_ascii_digit).collect();
+    let long = "x".repeat(2001);
+    for bad in ["%20", "a%0Ab", long.as_str()] {
+        let res = post(&s, &format!("op=answer&fleet=sendmeter&id=q1&text={bad}&mtime={mtime}"), &cookie);
+        assert!(res.starts_with("HTTP/1.1 303") && res.contains("REFUSED%20BAD%5FVALUE"), "{res}");
+    }
+    assert!(kinds(&c, "decision").is_empty() && !r.called("herdr agent prompt"));
+    let res = post(&s, &format!("op=answer&fleet=sendmeter&id=q1&choice=2&mtime={mtime}"), &cookie);
+    assert!(res.starts_with("HTTP/1.1 303"), "{res}");
+    let dec = &kinds(&c, "decision")[0];
+    assert_eq!((dec.str("choice"), dec.str("by"), dec.str("via")), (Some("no, trim"), Some("owner"), Some("web")));
+    assert!(r.called("herdr agent prompt sendmeter-orch DECISION q1: no, trim"), "{:?}", r.calls.borrow());
+    assert_eq!(run(&c, &Fake::default(), &["asks"]).1, "", "the ask is closed");
+}
