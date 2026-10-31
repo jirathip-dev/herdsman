@@ -59,8 +59,7 @@ pub fn append(path: &Path, ev: &Event) -> Result<()> {
         }
     }
     f.write_all(line.as_bytes())?;
-    f.sync_all()?;
-    Ok(())
+    Ok(f.sync_all()?)
 }
 
 /// Every complete record: a torn last line is skipped silently, any other bad line with a warning.

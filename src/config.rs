@@ -353,6 +353,5 @@ pub fn set_in(text: &str, header: &str, key: &str, lit: &str) -> Result<String> 
 pub fn write_atomic(path: &Path, text: &str) -> Result<()> {
     let tmp = path.with_extension("toml.tmp");
     std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+    Ok(std::fs::rename(&tmp, path)?)
 }
