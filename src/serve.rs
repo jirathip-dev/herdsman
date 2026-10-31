@@ -571,32 +571,39 @@ impl<'a> Server<'a> {
         if g("mtime") != mtime(ctx) {
             return refused("STALE", "fleet.toml changed since the page was rendered; reload and retry");
         }
+        // #66: a short line for the toast, not the CLI's stdout (a queue move prints the whole queue).
         let (fleet, mut out) = (g("fleet"), vec![]);
-        match g("op") {
+        Ok(match g("op") {
             "mv" => {
                 let n = |k: &str| g(k).parse::<u64>().ok();
                 let issue = n("issue").context("no issue")?;
                 let d = queue::op("mv", &[issue], false, n("before"), n("after"), None);
-                writeln!(out, "{}", crate::queue_change(ctx, &Config::load(&ctx.config)?, fleet, d, Some("web"))?)?;
+                crate::queue_change(ctx, &Config::load(&ctx.config)?, fleet, d, Some("web"))?;
+                format!("moved #{issue} {}", n("before").map_or_else(|| format!("after #{}", g("after")), |b| format!("before #{b}")))
             }
-            op @ ("pause" | "resume") => crate::pause(ctx, &mut out, fleet, op == "pause", Some("web"))?,
+            op @ ("pause" | "resume") => {
+                crate::pause(ctx, &mut out, fleet, op == "pause", Some("web"))?;
+                format!("{fleet} {op}d")
+            }
             "set" => {
-                let wanted = ["model", "effort"].into_iter().filter(|k| !g(k).is_empty()).map(|k| (k, g(k).to_string()));
-                crate::set(ctx, &mut out, fleet, g("role"), wanted.collect(), Some("web"))?
+                let wanted: Vec<_> = ["model", "effort"].into_iter().filter(|k| !g(k).is_empty()).map(|k| (k, g(k).to_string())).collect();
+                let line = wanted.iter().map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(", ");
+                crate::set(ctx, &mut out, fleet, g("role"), wanted, Some("web"))?;
+                format!("{fleet} {}: {line}", g("role"))
             }
             "answer" => {
                 let choice = if g("choice").is_empty() { g("text") } else { g("choice") };
-                crate::answer(ctx, &Config::load(&ctx.config)?, self.r, &mut out, (fleet, g("id")), choice, ("owner", Some("web")))?
+                crate::answer(ctx, &Config::load(&ctx.config)?, self.r, &mut out, (fleet, g("id")), choice, ("owner", Some("web")))?;
+                format!("answered {}", g("id"))
             }
             "unpair" => {
                 let mut all = devices::load(ctx);
                 all.retain(|d| d.hash != g("hash"));
                 devices::store(ctx, &all)?;
-                writeln!(out, "device removed")?;
+                "device removed".into()
             }
             op => bail!("unknown op `{op}`"),
-        }
-        Ok(String::from_utf8_lossy(&out).trim().replace('\n', "; "))
+        })
     }
 
     /// The live sections' inner HTML by element id (the page, `/?frag=all`, `/live`); pane text only when `paired`.

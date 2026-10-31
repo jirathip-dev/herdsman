@@ -128,7 +128,30 @@ rf.onclick = () => { refresh(); if (!live()) { tries = 0; connect(); } };
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { down = down || Date.now(); tries = 0; connect(); } });
 addEventListener('online', () => { tries = 0; connect(); });
 addEventListener('offline', () => sync('r'));
-if (location.search) history.replaceState(null, '', location.pathname + (location.search.includes('all=1') ? '?all=1' : ''));
+if (location.search) history.replaceState(null, '', location.pathname + (location.search.includes('all=1') ? '?all=1' : '') + location.hash);
+// #66: an action's result is a one-line toast under the header: ok fades after 4 s, an error stays; a tap dismisses it.
+function toast(text) {
+  $$('.msg.g, .msg.r').forEach(m => m.remove());
+  const m = document.createElement('p'), ok = !/^(REFUSED|error)/.test(text);
+  m.className = 'msg ' + (ok ? 'g' : 'r');
+  m.textContent = text;
+  m.onclick = () => m.remove();
+  $('header').after(m);
+  if (ok) setTimeout(() => { m.classList.add('out'); setTimeout(() => m.remove(), 400); }, 4000);
+}
+if ($('.msg.g, .msg.r')) toast($('.msg.g, .msg.r').textContent);
+// ▲/▼ and Set POST with fetch (same checks), toast the redirect's `msg` and patch in place: the scroll stays (#65).
+// The plain form POST is the no-JS fallback.
+document.addEventListener('submit', async e => {
+  const f = e.target, op = f.elements.op && f.elements.op.value;
+  if (op !== 'mv' && op !== 'set') return;
+  e.preventDefault();
+  try {
+    const r = await fetch(R, { method: 'POST', body: new URLSearchParams(new FormData(f)) });
+    toast(r.redirected ? new URL(r.url).searchParams.get('msg') || '' : 'error: ' + (await r.text()).trim());
+    refresh();
+  } catch (err) { toast('error: ' + err.message); }
+});
 B.insertAdjacentHTML('beforeend', `<div id=sheet hidden><div class=bd></div><div class=sh role=dialog aria-modal=true>
 <div class=grip></div><div class=top></div><div class=acts><button type=button data-op=stop>Stop</button><button type=button data-op=kill>Kill</button><button type=button data-op=clean>Clean</button></div>
 <div class=cf hidden><p></p><button type=button class=yes>Kill</button><button type=button class=no>Cancel</button></div>

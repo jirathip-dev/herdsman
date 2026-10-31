@@ -70,14 +70,16 @@ fn queue_buttons_move_like_queue_mv() {
     let s = Server::new(&web, &r, Some(ADDR.into()));
     let page = get(&s, "/");
     assert!(page.contains("name=before value=18") && page.contains("▲ up"), "▲ on #12 targets #18");
-    for (args, body) in [
-        (vec!["mv", "12", "--before", "18"], "op=mv&fleet=sendmeter&issue=12&before=18"),
-        (vec!["mv", "17", "--after", "18"], "op=mv&fleet=sendmeter&issue=17&after=18"),
+    for (args, body, msg) in [
+        (vec!["mv", "12", "--before", "18"], "op=mv&fleet=sendmeter&issue=12&before=18", "moved #12 before #18"),
+        (vec!["mv", "17", "--after", "18"], "op=mv&fleet=sendmeter&issue=17&after=18", "moved #17 after #18"),
     ] {
         assert_eq!(run(&cli, &Fake::default(), &[&["queue", "sendmeter"][..], &args].concat()).0, 0);
         let res = post(&s, &format!("{body}&mtime={}", mtime(&s)), "");
         assert!(res.starts_with("HTTP/1.1 303 See Other\r\n"), "{res}");
-        assert!(location(&res).starts_with("/?msg=sendmeter queue: "), "{res}");
+        // #66: a short toast line (≤ 60 chars), not the CLI's queue dump.
+        assert_eq!(location(&res), format!("/?msg={msg}"), "{res}");
+        assert!(msg.len() <= 60);
         assert_eq!(order(&cli), order(&web));
         assert_eq!(last(&cli), (last(&web).0, None));
         assert_eq!(last(&web).1.as_deref(), Some("web"));
@@ -85,7 +87,7 @@ fn queue_buttons_move_like_queue_mv() {
     assert_eq!(order(&web), [12, 18, 17]);
     // A refusal from the shared path is shown, not hidden.
     let res = post(&s, &format!("op=mv&fleet=sendmeter&issue=99&before=12&mtime={}", mtime(&s)), "");
-    assert!(location(&res).contains("error: #99 is not queued"), "{res}");
+    assert!(location(&res).starts_with("/?msg=error: #99 is not queued"), "an error is kept: {res}");
     assert!(get(&s, "/").contains("events"), "page still renders");
 }
 
@@ -96,7 +98,7 @@ fn pause_button_matches_cli_and_blocks_next_and_spawn() {
     let s = Server::new(&web, &r, Some(ADDR.into()));
     assert_eq!(run(&cli, &Fake::default(), &["pause", "sendmeter"]), (0, "sendmeter: paused\n".into()));
     let res = post(&s, &format!("op=pause&fleet=sendmeter&mtime={}", mtime(&s)), "");
-    assert_eq!(location(&res), "/?msg=sendmeter: paused", "{res}");
+    assert_eq!(location(&res), "/?msg=sendmeter paused", "{res}");
     let text = |c: &herdsman::Ctx| std::fs::read_to_string(&c.config).unwrap();
     assert_eq!(text(&cli), text(&web));
     assert!(text(&web).contains("integration = \"staging\"   # never main\npaused = true\n"), "{}", text(&web));
@@ -115,7 +117,7 @@ fn pause_button_matches_cli_and_blocks_next_and_spawn() {
     }
     assert_eq!(run(&cli, &Fake::default(), &["resume", "sendmeter"]).0, 0);
     let res = post(&s, &format!("op=resume&fleet=sendmeter&mtime={}", mtime(&s)), "");
-    assert_eq!(location(&res), "/?msg=sendmeter: resumed");
+    assert_eq!(location(&res), "/?msg=sendmeter resumed");
     assert_eq!(text(&cli), text(&web));
     assert!(text(&web).contains("paused = false\n"));
     assert_eq!(last(&web), (json!({"type": "resume", "fleet": "sendmeter", "data": {}}), Some("web".into())));
@@ -132,7 +134,7 @@ fn role_dropdowns_set_like_herdsman_set() {
     assert!(page.contains("<select name=effort aria-label=effort><option value=\"\" selected>default (none)</option><option>none</option>"));
     assert_eq!(run(&cli, &Fake::default(), &["set", "sendmeter", "impl", "--model", "sonnet", "--effort", "high"]).0, 0);
     let res = post(&s, &format!("op=set&fleet=sendmeter&role=impl&model=sonnet&effort=high&mtime={}", mtime(&s)), "");
-    assert!(location(&res).starts_with("/?msg=sendmeter.impl model: opus -> sonnet; sendmeter.impl effort: - -> high"), "{res}");
+    assert_eq!(location(&res), "/?msg=sendmeter impl: model sonnet, effort high", "{res}");
     let text = |c: &herdsman::Ctx| std::fs::read_to_string(&c.config).unwrap();
     assert_eq!(text(&cli), text(&web));
     assert!(text(&web).contains("model = \"sonnet\"\neffort = \"high\"\n"));

@@ -53,6 +53,8 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
    pushes a changed fixture through `herdData()` (a label, a band move, a lane and a queued issue gone, one lane
    added); `queue-scroll` opens every Queue row, scrolls to 400 px and pushes a changed section through `frag()`.
    Each fails if the scroll moved, a row closed, or the MutationObserver saw more nodes leave than were removed.
+   `toast` (#66) submits a ▲ form through the page's fetch path with a fixture redirect and fails unless the
+   one-line toast showed, is gone 5 s later, and `location.search` has no `msg`.
    Screenshots are uploaded as the `ui-390` artifact on every run.
 
 Run both locally:
