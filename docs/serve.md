@@ -13,7 +13,8 @@ fleet.toml changed since the page was rendered.
 Lanes are grouped like Corral: state sections blocked → working → idle → done → dead, each
 split into fleet subgroups (alphabetical, Others last), newest-changed first. Tapping a lane
 opens a bottom sheet (78 % high, drag up for full, swipe down / backdrop / Esc to close) with
-its details card and a transcript of the last ~40 masked pane lines, refreshed every 5 s.
+its details card and a transcript of the last ~40 masked pane lines, refreshed every 5 s
+(paired devices only, same Host/Origin checks; otherwise just the row's activity line).
 
 The sheet's reply box sends text to that agent (`herdr agent prompt` + Enter; dsh lanes:
 `herdr pane send-text` + Enter). A device must be paired once: `herdsman serve pair` prints a
@@ -21,8 +22,8 @@ The sheet's reply box sends text to that agent (`herdr agent prompt` + Enter; ds
 Secure, SameSite=Strict cookie with a random token. Only the token's SHA-256 is kept, in
 `<state>/serve/devices.json` (0600); the Host tab lists paired devices with a Remove button.
 Sends pass the same Host/Origin checks, are limited to 10 a minute per device, and are refused
-`PAUSED` (paused fleet), `REV_READONLY` (reviewer lanes) or `BAD_VALUE` (empty or over 2,000
-chars). Each send logs `{"type":"prompt","via":"web","agent","device","chars"}`, never the
+`PAUSED` (paused fleet), `REV_READONLY` (reviewer lanes) or `BAD_VALUE` (empty, over 2,000
+chars, or a control character other than newline). Removing a device also needs a paired cookie. Each send logs `{"type":"prompt","via":"web","agent","device","chars"}`, never the
 text. Secure cookies need https (`tailscale serve`) or localhost.
 
 Lane modes: `horse` (default), `ascii` (a 3-line horse, 2-frame gallop when working) and

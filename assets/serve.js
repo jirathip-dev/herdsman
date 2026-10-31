@@ -35,13 +35,15 @@ B.insertAdjacentHTML('beforeend', `<div id=sheet hidden><div class=bd></div><div
 <form class=reply><textarea name=text rows=1 maxlength=2000 placeholder=Message aria-label=message></textarea><button>Send</button></form>
 <p class=st></p></div></div>`);
 const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st');
-let agent = null, timer = 0;
+let agent = null, act = '', timer = 0;
 // A new bubble per turn marker: Claude's `⏺`, Hermes's tool lines, a typed prompt.
 const MARK = { claude: l => l.startsWith('⏺'), hermes: l => l.includes('💻') || l.startsWith('┊') };
 const typed = l => /^[❯>›]/.test(l);
 async function poll() {
   try {
     const r = await fetch('/lane?agent=' + encodeURIComponent(agent));
+    // Unpaired (401) or refused: only the row's 1-line activity, no transcript.
+    if (!r.ok) return chat.replaceChildren(Object.assign(document.createElement('p'), { className: 'b', textContent: act }));
     const j = await r.json(), mark = MARK[j.harness] || (() => false);
     const end = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 8;
     chat.replaceChildren(...j.lines.reduce((bs, l) => {
@@ -59,6 +61,7 @@ async function poll() {
 function say(msg, ok) { st.textContent = msg; st.className = 'st ' + (ok ? 'g' : 'r'); }
 function open(el) {
   agent = el.dataset.agent;
+  act = el.querySelector('.act').textContent;
   $('.top').innerHTML = '<p><b></b></p>' + el.querySelector('.card').innerHTML;
   $('.top b').textContent = agent;
   const rev = el.dataset.role === 'rev';

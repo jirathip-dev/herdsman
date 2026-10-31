@@ -88,14 +88,22 @@ fn lanes_group_by_state_then_repo_with_counts() {
 #[test]
 fn sheet_transcript_is_the_masked_pane_tail() {
     let (c, r) = fixture("tail");
-    let s = Server::new(&c, &r, None);
-    let res = req(&s, "GET", "/lane?agent=sendmeter-impl-12", "", "", T);
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    // No cookie: 401; a foreign Host or Origin: 403; neither reads the pane.
+    assert!(req(&s, "GET", "/lane?agent=sendmeter-impl-12", "", "", T).starts_with("HTTP/1.1 401 "));
+    let evil = "GET /lane?agent=sendmeter-impl-12 HTTP/1.1\r\nHost: evil.example\r\n\r\n";
+    assert!(String::from_utf8_lossy(&s.respond(evil, T)).starts_with("HTTP/1.1 403 "));
+    let cookie = paired(&s, &c);
+    let origin = format!("Origin: https://evil.example\r\n{cookie}");
+    assert!(req(&s, "GET", "/lane?agent=sendmeter-impl-12", "", &origin, T).starts_with("HTTP/1.1 403 "));
+    assert!(!r.called("herdr pane read"));
+    let res = req(&s, "GET", "/lane?agent=sendmeter-impl-12", "", &cookie, T);
     assert!(res.starts_with("HTTP/1.1 200 OK") && res.contains("application/json"), "{res}");
     let v: serde_json::Value = serde_json::from_str(&res[res.find("\r\n\r\n").unwrap() + 4..]).unwrap();
     assert_eq!(v["harness"], "claude");
     assert_eq!(v["lines"].as_array().unwrap().len(), 5);
     assert!(r.called("herdr pane read w1:p2 --source recent --lines 80"));
-    assert!(req(&s, "GET", "/lane?agent=nobody", "", "", T).starts_with("HTTP/1.1 404 "));
+    assert!(req(&s, "GET", "/lane?agent=nobody", "", &cookie, T).starts_with("HTTP/1.1 404 "));
 }
 
 /// The pairing code `herdsman serve pair` printed.
@@ -136,6 +144,8 @@ fn pairing_codes_devices_and_prompt_events() {
     assert!(req(&s, "POST", "/pair", &format!("code={late}"), "", T + 301).starts_with("HTTP/1.1 403 "));
     // A foreign Origin never reaches pairing or sending.
     assert!(req(&s, "POST", "/pair", "code=1", "Origin: https://evil.example\r\n", T).starts_with("HTTP/1.1 403 "));
+    let evil = "POST /pair HTTP/1.1\r\nHost: evil.example\r\nContent-Length: 6\r\n\r\ncode=1";
+    assert!(String::from_utf8_lossy(&s.respond(evil, T)).starts_with("HTTP/1.1 403 "));
     // A valid code sets the cookie; only the token's hash is stored, 0600.
     let cookie = paired(&s, &c);
     let file = c.state.parent().unwrap().join("serve/devices.json");
@@ -155,6 +165,12 @@ fn pairing_codes_devices_and_prompt_events() {
     assert_eq!((e.kind.as_str(), e.fleet.as_str(), e.issue), ("prompt", "sendmeter", Some(12)));
     assert_eq!(serde_json::Value::Object(e.data), json!({"via": "web", "agent": "sendmeter-impl-12", "device": label, "chars": 18}));
     assert!(!std::fs::read_to_string(&c.state).unwrap().contains("secret"), "no message text in the log");
+    // ESC, Ctrl-C, DEL, CR and tab are refused; a leading `-` goes through verbatim as herdr's text argument.
+    for ctl in ["%1B%5B2J", "stop%03", "x%7F", "a%0Db", "a%09b"] {
+        assert!(send(&cookie, ctl).contains("REFUSED BAD_VALUE: "), "{ctl}");
+    }
+    assert!(send(&cookie, "--wait%0Aline+two").starts_with("HTTP/1.1 200 OK"));
+    assert!(r.called("herdr agent prompt sendmeter-impl-12 --wait\nline two"));
     // The Host tab lists the device; Remove unpairs it and its next send is 401.
     let page = req(&s, "GET", "/", "", "", T);
     let host = section(&page, "host");
@@ -162,7 +178,12 @@ fn pairing_codes_devices_and_prompt_events() {
     let mt = &page[page.find("name=mtime value=").unwrap() + 17..];
     let mt: String = mt.chars().take_while(char::is_ascii_digit).collect();
     let hash = herdsman::devices::sha256(tok.as_bytes());
-    let res = req(&s, "POST", "/", &format!("op=unpair&fleet=&hash={hash}&mtime={mt}"), "", T);
+    let unpair = format!("op=unpair&fleet=&hash={hash}&mtime={mt}");
+    assert!(req(&s, "POST", "/", &unpair, "", T).starts_with("HTTP/1.1 401 "), "unpair needs a paired cookie");
+    let evil = format!("POST / HTTP/1.1\r\nHost: evil.example\r\n{cookie}Content-Length: {}\r\n\r\n{unpair}", unpair.len());
+    assert!(String::from_utf8_lossy(&s.respond(&evil, T)).starts_with("HTTP/1.1 403 "));
+    assert_eq!(herdsman::devices::load(&c).len(), 1);
+    let res = req(&s, "POST", "/", &unpair, &cookie, T);
     assert!(res.starts_with("HTTP/1.1 303 ") && res.contains("device%20removed"), "{res}");
     assert!(herdsman::devices::load(&c).is_empty());
     assert!(send(&cookie, "again").starts_with("HTTP/1.1 401 "));
@@ -253,8 +274,8 @@ fn lanes_and_sheet_fit_390px() {
     let s = Server::new(&c, &r, Some(ADDR.into()));
     let page = req(&s, "GET", "/", "", "", T);
     let body = |res: String| res[res.find("\r\n\r\n").unwrap() + 4..].to_string();
-    let lane = body(req(&s, "GET", "/lane?agent=sendmeter-impl-12", "", "", T));
     let cookie = paired(&s, &c);
+    let lane = body(req(&s, "GET", "/lane?agent=sendmeter-impl-12", "", &cookie, T));
     let (pair, sent) = (body(req(&s, "POST", "/send", "agent=sendmeter-impl-12&text=x", "", T)), body(req(&s, "POST", "/send", "agent=sendmeter-impl-12&text=rerun+the+tests", &cookie, T)));
     // fetch() answered with this server's own responses.
     let stub = |send: (u16, &str)| {

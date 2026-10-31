@@ -204,6 +204,8 @@ impl<'a> Server<'a> {
                 Ok(b) => ("200 OK", "text/html; charset=utf-8", b.into_bytes()),
                 Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
             },
+            ("GET", "/lane") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
+            ("GET", "/lane") if self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("pair this device to read transcripts\n")),
             ("GET", "/lane") => match self.transcript(ctx, form(query).get("agent").map_or("", String::as_str)) {
                 Some(j) => ("200 OK", "application/json", j.into_bytes()),
                 None => ("404 Not Found", "text/plain", text("no such agent pane\n")),
@@ -216,6 +218,9 @@ impl<'a> Server<'a> {
             ("GET", _) => ("404 Not Found", "text/plain", text("not found\n")),
             ("POST", _) if self.addr.is_none() => ("405 Method Not Allowed", "text/plain", text("read-only: GET only\n")),
             ("POST", _) if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
+            ("POST", "/") if form(body.trim()).get("op").is_some_and(|o| o == "unpair") && self.device(ctx, head).is_none() => {
+                ("401 Unauthorized", "text/plain", text("only a paired device may remove devices\n"))
+            }
             ("POST", "/") => {
                 let msg = self.post(ctx, &form(body.trim()));
                 let loc = format!("/?msg={}", enc(&msg));
@@ -254,9 +259,14 @@ impl<'a> Server<'a> {
         hosts.iter().any(|h| names(h, host)) && origin.is_none_or(|o| hosts.iter().any(|h| names(h, o)))
     }
 
+    /// The paired device whose token the request's `Cookie` carries.
+    fn device(&self, ctx: &Ctx, head: &str) -> Option<devices::Device> {
+        devices::find(ctx, header(head, "cookie").unwrap_or_default())
+    }
+
     /// The reply box: a paired device (cookie) prompts one agent, at most 10 sends a minute.
     fn send(&self, ctx: &Ctx, head: &str, f: &BTreeMap<String, String>) -> (&'static str, String) {
-        let Some(dev) = devices::find(ctx, header(head, "cookie").unwrap_or_default()) else {
+        let Some(dev) = self.device(ctx, head) else {
             return ("401 Unauthorized", "pair this device: run `herdsman serve pair` on the Mac".into());
         };
         let mut sent = self.sent.borrow_mut();
@@ -290,6 +300,10 @@ impl<'a> Server<'a> {
         if text.trim().is_empty() || n > 2000 {
             return Err(refuse("BAD_VALUE", format!("a message is 1 to 2000 chars, not {n}")).into());
         }
+        if text.chars().any(|c| (c < ' ' && c != '\n') || c == '\x7f') {
+            return Err(refuse("BAD_VALUE", "a message has no control characters (newlines are fine)").into());
+        }
+        // No `--`: herdr 0.9 reads the 2nd positional as literal text (even `-x`), and a `--` there would be sent as text.
         let first = if l.harness == "dsh" { argv(&["pane", "send-text", pane, text]) } else { argv(&["agent", "prompt", agent, text]) };
         for a in [first, argv(&["pane", "send-keys", pane, "Enter"])] {
             let o = self.r.run("herdr", &a)?;
