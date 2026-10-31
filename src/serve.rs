@@ -950,7 +950,7 @@ impl<'a> Server<'a> {
             let (all, mt) = (devices::load(ctx).into_iter().filter(|d| d.code.is_none()).collect::<Vec<_>>(), mtime(ctx));
             h += "<h2>Paired devices</h2>";
             if all.is_empty() {
-                h += "<p class=m>none yet: tap Pair this phone, then `herdsman serve approve <code>` here</p>";
+                h += "<p class=m>none yet: tap Pair this phone, then `herdsman serve approve &lt;code&gt;` here</p>";
             }
             for d in all {
                 let when = format!("paired {} ago · used {} ago", age(ctx.now.saturating_sub(d.created)), age(ctx.now.saturating_sub(d.used)));

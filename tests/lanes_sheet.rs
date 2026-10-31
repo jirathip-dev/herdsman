@@ -133,7 +133,9 @@ fn pairing_is_a_phone_request_approved_on_the_mac() {
     let (rc, out) = run(&c, &Fake::default(), &["serve", "pair"]);
     assert_eq!((rc, out.as_str()), (0, "now: open the page, tap Pair, then run serve approve <code>\n"));
     // An unpaired page has the Pair button; a request sets a short-lived HttpOnly cookie and shows a 6-digit code.
-    assert!(req(&s, "GET", "/", "", "", T).contains("<button type=button class=pairb>Pair this phone</button></header>"));
+    let page = req(&s, "GET", "/", "", "", T);
+    assert!(page.contains("<button type=button class=pairb>Pair this phone</button></header>"));
+    assert!(page.contains("`herdsman serve approve &lt;code&gt;` here") && !page.contains("<code>"), "the hint is text, never an open tag");
     let res = req(&s, "POST", "/pair/request", "", "X-Peer: 10.0.0.1\r\nUser-Agent: Mozilla/5.0 (iPhone) Safari/604.1\r\n", T);
     assert!(res.contains("Set-Cookie: hd=") && res.contains("; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Strict\r\n"), "{res}");
     let (st, code, mine) = ask_pair(&s, "10.0.0.2", T);
