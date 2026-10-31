@@ -188,7 +188,9 @@ function draw() {
     p.querySelector('.hs .n').textContent = `· ${lanes.length} here`;
     p.querySelector('.hs .dots').textContent = list.map((_, i) => i === n ? '●' : '○').join('');
     const count = states => lanes.filter(l => states.includes(l.state)).length;
-    p.querySelector('.sum').textContent = `${count(['blocked', 'dead'])} blocked · ${count(['working'])} working · ${count(['idle', 'unknown'])} idle · ${count(['done'])} done · ${queue.length} queued`;
+    // #65 A: queued first, zero counts left out, a bare `·` (a full mono cell) between, so the line fits the 28 px strip at 390 px without an ellipsis.
+    p.querySelector('.sum').textContent = [[queue.length, 'queued'], [count(['blocked', 'dead']), 'blocked'], [count(['working']), 'working'],
+      [count(['idle', 'unknown']), 'idle'], [count(['done']), 'done']].filter(c => c[0]).map(c => c.join(' ')).join('·');
     // Queued horses get their own row above the working band; a band with no horses is not drawn.
     const top = p.scrollTop;
     patch(p.querySelector('.hb'), lanes, queue);

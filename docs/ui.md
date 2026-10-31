@@ -31,7 +31,7 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
   line, stacked 8 px apart, the recommended one first with an 11 px `(recommended)`.
 - **Type scale:** text is 13 or 11 px, nothing else; inputs 16 px (iOS zooms below 16 px).
 - **Herd strip:** one 28 px bar on top of each Herd page with `[×]` inside it on the right; the
-  counts share its line or wrap to an 11 px second line in the same bar.
+  counts share its line or wrap to an 11 px second line in the same bar, and are never ellipsised (#65 A).
 - Names never wrap vertically (`.nw` cells stay on one line, horse labels clamp at 2 lines);
   text that does not fit ellipsises. Nothing scrolls sideways at 390 px.
 
@@ -47,7 +47,8 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
    not 28 px tall (a choice: over 4 lines), text not 11/13 px (inputs 16), a tap area under 44 px, sideways scroll
    (on Herd pages too: no box past the page's sides), a name over 2 lines, text overflowing its box without an
    ellipsis, a Herd strip/`[×]` not 28 px, a lane horse not 132±1 px wide or a queued one not 53±1 (#65), or
-   text under the weather caption with the page scrolled to its end (#65 A).
+   text under the weather caption or the demo's weather switcher with the page scrolled to its end, or ellipsised
+   strip text, also with a fixture of the owner's counts (13 queued, 11 done, 5 idle, 3 working) (#65 A).
    Two more views (#65) prove updates never move the scroll: `herd-scroll` scrolls Herd page 1 to 400 px and
    pushes a changed fixture through `herdData()` (a label, a band move, a lane and a queued issue gone, one lane
    added); `queue-scroll` opens every Queue row, scrolls to 400 px and pushes a changed section through `frag()`.

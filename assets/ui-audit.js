@@ -87,15 +87,25 @@
         const r = e.getBoundingClientRect();
         if (r.left < pr.left - 1 || r.right > pr.right + 1) bad.push(`${label(e)}: past the page's side (${r.left | 0}..${r.right | 0} of ${pr.left | 0}..${pr.right | 0})`);
       }
-      // #65 A: scrolled to the end, no text sits under the weather caption.
+      // #65 A: scrolled to the end, no text sits under the weather caption or the demo's switcher.
       p.scrollTo({ top: p.scrollHeight, behavior: 'instant' });
-      const c = cap.getBoundingClientRect(), w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+      const bars = [cap, $('.hwx')].filter(Boolean).map(e => [e.className, e.getBoundingClientRect()]), w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
       for (let t; (t = w.nextNode());) {
         if (!t.data.trim() || !seen(t.parentElement)) continue;
         const g = document.createRange();
         g.selectNodeContents(t);
         const r = g.getBoundingClientRect();
-        if (r.bottom > c.top && r.top < c.bottom && r.right > c.left && r.left < c.right) bad.push(`"${t.data.trim().slice(0, 20)}": under the weather caption`);
+        for (const [k, c] of bars) if (r.bottom > c.top && r.top < c.bottom && r.right > c.left && r.left < c.right) bad.push(`"${t.data.trim().slice(0, 20)}": under .${k}`);
+      }
+      // #65 A: no strip text is cut to an ellipsis, also at the owner's counts (13 queued, 11 done, 5 idle, 3 working).
+      const clip = () => [...p.querySelectorAll('.hs p')].filter(e => e.scrollWidth > e.clientWidth).forEach(e => bad.push(`"${e.textContent.slice(0, 24)}": strip text ellipsized, ${e.scrollWidth}>${e.clientWidth}`));
+      clip();
+      if (V === 'herd1') {
+        const f = structuredClone(data), l = f.fleets[0].lanes[0], q = f.fleets[0].queue[0];
+        f.fleets[0].lanes = [...'wwwiiiiiddddddddddd'].map((s, i) => ({ ...l, name: 'audit-' + i, state: { w: 'working', i: 'idle', d: 'done' }[s] }));
+        f.fleets[0].queue = Array.from({ length: 13 }, (_, i) => ({ ...q, issue: 900 + i }));
+        herdData(f);
+        clip();
       }
     }
     return { view: V, controls: ctl.length, outliers: bad };

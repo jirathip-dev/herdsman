@@ -102,7 +102,7 @@ The 🐎 button in the header switches to **Herd mode**, a port of Corral's Herd
 `RanchEnvironment.swift`, `RanchWind.swift`; MIT © jirathip-dev): full screen, no tabs, one page
 per registered fleet (swipe left/right; an Others page only when unregistered agents run), ✕
 returns to the tabs. The mode and the page are kept in `localStorage`. Each page: a strip with
-`repo · N here`, page dots and `0 blocked · 3 working · 2 idle · 4 done · 5 queued` (queue items waiting on another issue count as queued, not blocked); the fleet's needs-you
+`repo · N here`, page dots and `5 queued·3 working·2 idle·4 done` (zero counts left out, so it fits 390 px unclipped; queue items waiting on another issue count as queued, not blocked); the fleet's needs-you
 cards (same per-audience rules as the tabs); Corral's ranch (sky, clouds, hills, barn, fence,
 trees, grass); then the pasture in bands (working in gait, idle, done, blocked/dead in red),
 each horse at Corral's size (a fixed 132×100 px drawing in a 156 px slot; rows wrap centred: 2 on a
