@@ -502,4 +502,11 @@ fn fetch_only_reads_redirect_navigations_to_the_board() {
         assert!(!send(path, "Sec-Fetch-Mode: cors\r\nAccept: */*\r\n").starts_with("HTTP/1.1 303"), "{path}: fetch() is not redirected");
     }
     assert!(send("/", "Sec-Fetch-Mode: navigate\r\n").starts_with("HTTP/1.1 200 OK"), "the board itself");
+    // The SW answers a navigation off the page with the page, and never caches `frags`; the page fetches `frags`.
+    let sw = send("/sw.js", "");
+    assert!(sw.contains("e.request.mode === 'navigate' && u.pathname !== P) return e.respondWith(caches.match(P).then(m => m || fetch(P)))"), "{sw}");
+    assert!(sw.contains("P + 'frags'") && !sw.contains("frag=all"));
+    let v = send("/", "");
+    let v = &v[v.find("/a/").unwrap()..][..11];
+    assert!(send(&format!("{v}/serve.js"), "").contains("fetch(R + 'frags'"));
 }
