@@ -21,18 +21,20 @@ const POLL: u64 = 600;
 pub fn lane_secs(events: &[Event], account: &str, now: u64, window: u64) -> u64 {
     let from = now.saturating_sub(window);
     let spawns = events.iter().enumerate().filter(|(_, e)| e.kind == "spawn" && e.str("account") == Some(account));
-    spawns.map(|(i, s)| {
-        let a = s.str("agent").unwrap_or_default();
-        let ends = |e: &&Event| match e.kind.as_str() {
-            "merged" | "clean" => e.fleet == s.fleet && s.issue.is_some() && e.issue == s.issue,
-            "lane-dead" => e.fleet == s.fleet && e.str("key").is_some_and(|k| k.ends_with(&format!(":{a}"))),
-            "supersede" => e.str("agent") == Some(a) || e.data["killed"].as_array().is_some_and(|k| k.iter().any(|n| n == a)),
-            "spawn" => e.str("agent") == Some(a),
-            _ => false,
-        };
-        let end = events[i + 1..].iter().find(ends).map_or(now, |e| e.ts).min(now);
-        end.saturating_sub(s.ts.max(from))
-    }).sum()
+    spawns
+        .map(|(i, s)| {
+            let a = s.str("agent").unwrap_or_default();
+            let ends = |e: &&Event| match e.kind.as_str() {
+                "merged" | "clean" => e.fleet == s.fleet && s.issue.is_some() && e.issue == s.issue,
+                "lane-dead" => e.fleet == s.fleet && e.str("key").is_some_and(|k| k.ends_with(&format!(":{a}"))),
+                "supersede" => e.str("agent") == Some(a) || e.data["killed"].as_array().is_some_and(|k| k.iter().any(|n| n == a)),
+                "spawn" => e.str("agent") == Some(a),
+                _ => false,
+            };
+            let end = events[i + 1..].iter().find(ends).map_or(now, |e| e.ts).min(now);
+            end.saturating_sub(s.ts.max(from))
+        })
+        .sum()
 }
 
 /// `5h 1.5 · 7d 12.0 herdsman lane-hours`: what herdsman ran, not Anthropic's quota.
@@ -247,7 +249,11 @@ fn refresh(r: &dyn Runner, creds: &mut Value, (svc, acct): (&str, &str), now: u6
     let hex: String = creds.to_string().bytes().map(|b| format!("{b:02x}")).collect();
     let stored = r.run_in("security", &argv(&["-i"]), &format!("add-generic-password -U -a \"{acct}\" -s \"{svc}\" -X \"{hex}\"\n"));
     let back = stored.is_ok_and(|o| o.code == 0).then(|| keychain_read(r, svc, acct)).flatten();
-    back.is_some_and(|b| b["claudeAiOauth"]["accessToken"] == json!(token)).then_some(token).ok_or(Poll::Lost)
+    if back.is_some_and(|b| b["claudeAiOauth"]["accessToken"] == json!(token)) {
+        Ok(token)
+    } else {
+        Err(Poll::Lost)
+    }
 }
 
 /// `five_hour` and `seven_day` of `/api/oauth/usage`: (utilization %, reset epoch).

@@ -65,8 +65,12 @@ pub fn list(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Res
     let events = read(&ctx.state)?;
     let states = fold(&events);
     // Latest spawn per agent, kept while its issue (if any) is not merged.
-    let spawns = events.iter().filter(|e| e.kind == "spawn");
-    let on: BTreeMap<&str, &str> = spawns.filter_map(|e| Some((e.str("agent")?, e.str("account").unwrap_or_default()))).collect();
+    let mut on: BTreeMap<&str, &str> = BTreeMap::new();
+    for e in events.iter().filter(|e| e.kind == "spawn") {
+        if let Some(a) = e.str("agent") {
+            on.insert(a, e.str("account").unwrap_or_default());
+        }
+    }
     let merged = |e: &Event| e.issue.is_some_and(|n| states.get(&(e.fleet.clone(), n)).is_some_and(|s| s.state == "merged"));
     let open = |a: &str| last_spawn(&events, a).is_some_and(|e| !merged(e));
     if cfg.accounts.names.is_empty() {

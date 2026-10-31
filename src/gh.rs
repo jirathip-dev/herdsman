@@ -161,9 +161,15 @@ pub fn summary(pr: &Value, branch: &str, req: &[String]) -> String {
         return format!("no PR for branch {branch}");
     }
     let head: String = pr["headRefOid"].as_str().unwrap_or("?").chars().take(7).collect();
-    let (n, ci) = (pr["statusCheckRollup"].as_array().map_or(0, Vec::len), ci(&required(&pr["statusCheckRollup"], req)));
-    let s = |k: &str| pr[k].as_str().unwrap_or("?");
-    format!("PR #{} {} → {} head {head} mergeable {} ci {ci} ({n} checks)", pr["number"], s("state"), s("baseRefName"), s("mergeable"))
+    let n = pr["statusCheckRollup"].as_array().map_or(0, Vec::len);
+    format!(
+        "PR #{} {} → {} head {head} mergeable {} ci {} ({n} checks)",
+        pr["number"],
+        pr["state"].as_str().unwrap_or("?"),
+        pr["baseRefName"].as_str().unwrap_or("?"),
+        pr["mergeable"].as_str().unwrap_or("?"),
+        ci(&required(&pr["statusCheckRollup"], req))
+    )
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]

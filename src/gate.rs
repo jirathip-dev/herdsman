@@ -43,8 +43,16 @@ pub fn branch_of(st: Option<&IssueState>, issue: u64) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn verdict(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (fleet, issue): (&str, u64), pass: bool, sha: &str, file: &str)
-    -> Result<()> {
+pub fn verdict(
+    ctx: &Ctx,
+    cfg: &Config,
+    r: &dyn Runner,
+    out: &mut dyn Write,
+    (fleet, issue): (&str, u64),
+    pass: bool,
+    sha: &str,
+    file: &str,
+) -> Result<()> {
     let f = cfg.fleet(fleet)?;
     if sha.len() != 40 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
         return refused("BAD_SHA", format!("--sha {sha} must be a full 40-hex commit sha"));

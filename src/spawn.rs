@@ -284,8 +284,14 @@ pub struct Opts {
     pub supersede: bool,
 }
 
-pub fn spawn(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (fleet, issue, role): (&str, Option<u64>, &str), o: &Opts)
-    -> Result<bool> {
+pub fn spawn(
+    ctx: &Ctx,
+    cfg: &Config,
+    r: &dyn Runner,
+    out: &mut dyn Write,
+    (fleet, issue, role): (&str, Option<u64>, &str),
+    o: &Opts,
+) -> Result<bool> {
     let f = cfg.fleet(fleet)?;
     if f.paused && matches!(role, "impl" | "rev") {
         return refused("PAUSED", format!("{fleet} is paused; `herdsman resume {fleet}` first"));
@@ -428,8 +434,14 @@ fn lane_data(p: &Plan, pane: &str, ws: &str) -> Value {
 }
 
 /// `herdsman adopt`: log the lane running in `pane` and name its agent as planned; nothing is started.
-pub fn adopt(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (fleet, issue, role): (&str, Option<u64>, &str), pane: &str)
-    -> Result<()> {
+pub fn adopt(
+    ctx: &Ctx,
+    cfg: &Config,
+    r: &dyn Runner,
+    out: &mut dyn Write,
+    (fleet, issue, role): (&str, Option<u64>, &str),
+    pane: &str,
+) -> Result<()> {
     let p = plan(ctx, cfg, fleet, issue, role)?;
     let info = herdr::harness_in(r, pane).with_context(|| format!("no harness running in pane {pane}"))?;
     herdr::ok(r, &herdr::rename_argv(pane, &p.agent))?;
