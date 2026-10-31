@@ -232,11 +232,7 @@ fn act_needs_a_paired_cookie_and_logs_via_web() {
     assert!(req(&s, "/act", &format!("agent={LANE}&op=stop"), "").starts_with("HTTP/1.1 401 "));
     assert!(req(&s, "/act", &format!("agent={LANE}&op=stop"), "Origin: https://evil.example\r\n").starts_with("HTTP/1.1 403 "));
     assert!(!r.called("herdr pane send-keys"));
-    let (_, code) = run(&c, &Fake::default(), &["serve", "pair"]);
-    let code: String = code.chars().filter(char::is_ascii_digit).take(6).collect();
-    let res = req(&s, "/pair", &format!("code={code}"), "User-Agent: Mozilla/5.0 (iPhone)\r\n");
-    let set = res.lines().find_map(|l| l.strip_prefix("Set-Cookie: ")).unwrap();
-    let cookie = format!("Cookie: {}\r\n", &set[..set.find(';').unwrap()]);
+    let cookie = pair(&s, &c, "Mozilla/5.0 (iPhone)", T);
     let res = req(&s, "/act", &format!("agent={LANE}&op=stop"), &cookie);
     assert!(res.starts_with("HTTP/1.1 200 OK") && res.ends_with("sent Esc to sendmeter-impl-12\n"), "{res}");
     let e = read(&c.state).unwrap().pop().unwrap();
@@ -283,10 +279,7 @@ fn lane_loads_more_from_the_scrollback() {
     let list = agents(&[(LANE, "working", "/x", "w1:p2")]);
     let r = Fake::default().reply("herdr agent list", &list).reply("herdr workspace list", "{}").reply("herdr pane read", &screen());
     let s = Server::new(&c, &r, Some(ADDR.into()));
-    let (_, code) = run(&c, &Fake::default(), &["serve", "pair"]);
-    let code: String = code.chars().filter(char::is_ascii_digit).take(6).collect();
-    let set = req(&s, "/pair", &format!("code={code}"), "");
-    let cookie = format!("Cookie: {}\r\n", &set[set.find("hd=").unwrap()..set.find("; Path").unwrap()]);
+    let cookie = pair(&s, &c, "", T);
     let get = |q: &str| {
         let res = String::from_utf8_lossy(&s.respond(&format!("GET /lane?agent={LANE}{q} HTTP/1.1\r\nHost: {ADDR}\r\n{cookie}\r\n"), T)).into_owned();
         serde_json::from_str::<serde_json::Value>(&res[res.find("\r\n\r\n").unwrap() + 4..]).unwrap()
@@ -303,7 +296,7 @@ fn lane_loads_more_from_the_scrollback() {
 #[test]
 fn inputs_are_16px_and_zoom_stays_allowed() {
     let css = include_str!("../assets/serve.css");
-    let rule = css.lines().find(|l| l.starts_with(".reply textarea,.pairf input{")).unwrap();
+    let rule = css.lines().find(|l| l.starts_with(".reply textarea{")).unwrap();
     assert!(rule.ends_with("font-size:var(--fs-input)}") && css.contains("--fs-input:16px"), "{rule}");
     let (c, _) = lane("zoom");
     let page = String::from_utf8_lossy(&Server::new(&c, &Fake::default(), None).respond("GET / HTTP/1.1\r\n\r\n", T)).into_owned();

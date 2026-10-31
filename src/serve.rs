@@ -230,10 +230,11 @@ pub fn avatar(name: &str, state: &str) -> String {
     format!("<span class=\"av {} {state}\"><i class=gl>{glyph}</i>{art}<svg class=px viewBox=\"0 0 132 100\" style=\"{}\"><use href=#hp{pose} /></svg></span>", tone(state), coat(name))
 }
 
-/// The device kind from `User-Agent`, for the Host tab's device list.
-fn kind(head: &str) -> &'static str {
+/// The device kind and browser from `User-Agent` ("iPhone Safari"), for the Host tab's device lists.
+fn kind(head: &str) -> String {
     let ua = header(head, "user-agent").unwrap_or_default();
-    ["iPhone", "iPad", "Android", "Mac", "Windows", "Linux"].into_iter().find(|k| ua.contains(k)).unwrap_or("device")
+    let k = |l: &[&'static str], d| l.iter().copied().find(|k| ua.contains(k)).unwrap_or(d);
+    format!("{} {}", k(&["iPhone", "iPad", "Android", "Mac", "Windows", "Linux"], "device"), k(&["Firefox", "Edg", "Chrome", "Safari"], "")).trim_end().into()
 }
 
 impl<'a> Server<'a> {
@@ -256,7 +257,7 @@ impl<'a> Server<'a> {
                 n => buf.extend_from_slice(&chunk[..n]),
             }
         }
-        let req = String::from_utf8_lossy(&buf);
+        let req = String::from_utf8_lossy(&buf).replacen("\r\n", &format!("\r\nX-Peer: {}\r\n", s.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default()), 1);
         let mut clients = self.clients.lock().unwrap_or_else(|e| e.into_inner());
         clients.retain(|c| c.0.send(String::new()).is_ok());
         if req.starts_with("GET /live ") && self.allowed(self.ctx, &req) && clients.len() < 8 {
@@ -385,25 +386,24 @@ impl<'a> Server<'a> {
             }
             ("POST", _) if self.addr.is_none() => ("405 Method Not Allowed", "text/plain", text("read-only: GET only\n")),
             ("POST", _) if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
-            ("POST", "/") if form(body.trim()).get("op").is_some_and(|o| o == "unpair" || o == "answer") && self.device(ctx, head).is_none() => {
-                ("401 Unauthorized", "text/plain", text("only a paired device may remove devices or answer asks\n"))
-            }
+            ("POST", "/") if form(body.trim()).get("op").is_some_and(|o| o == "unpair" || o == "answer") && self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("only a paired device may remove devices or answer asks\n")),
             ("POST", "/") => {
                 let msg = self.write(ctx, &form(body.trim())).unwrap_or_else(|e| shown(&e));
                 let loc = format!("/?msg={}", enc(&msg));
                 return format!("HTTP/1.1 303 See Other\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes();
             }
-            ("POST", "/pair") => match devices::redeem(ctx, form(body.trim()).get("code").map_or("", String::as_str), kind(head)) {
-                Ok(Some(t)) => {
-                    extra = format!("Set-Cookie: hd={t}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict\r\n");
-                    ("200 OK", "text/plain", text("paired\n"))
-                }
-                _ => ("403 Forbidden", "text/plain", text("wrong or expired code: run `herdsman serve pair` for a new one\n")),
+            // #59: the request's `hd=` token (10 min) works once `serve approve` clears its code; `/pair/claim` then keeps it a year.
+            ("POST", "/pair/request") => match devices::request(ctx, &kind(head), header(head, "x-peer").unwrap_or_default()) {
+                Ok(Some((code, t))) => (extra = format!("Set-Cookie: hd={t}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Strict\r\n"), ("200 OK", "text/plain", format!("{code}\n").into_bytes())).1,
+                Ok(None) => ("429 Too Many Requests", "text/plain", text("3 pairing requests open (2 per address), or a code clash: approve one, tap Pair again or wait 10 min\n")),
+                Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
             },
-            ("POST", "/push/subscribe" | "/push/unsubscribe") if self.device(ctx, head).is_none() => {
-                ("401 Unauthorized", "text/plain", text("pair this device first\n"))
-            }
-            ("POST", "/push/subscribe") => match crate::webpush::subscribe(&ctx.state, &form(body.trim()), kind(head), now) {
+            ("POST", "/pair/claim") => match self.device(ctx, head) {
+                Some(d) => (extra = format!("Set-Cookie: {}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict\r\n", header(head, "cookie").unwrap_or_default().split(';').map(str::trim).find(|c| c.starts_with("hd=")).unwrap_or_default()), ("200 OK", "text/plain", format!("paired as {}\n", d.label).into_bytes())).1,
+                None => ("403 Forbidden", "text/plain", text("not approved yet: `herdsman serve approve <code>` on the Mac\n")),
+            },
+            ("POST", "/push/subscribe" | "/push/unsubscribe") if self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("pair this device first\n")),
+            ("POST", "/push/subscribe") => match crate::webpush::subscribe(&ctx.state, &form(body.trim()), &kind(head), now) {
                 Ok(()) => ("200 OK", "text/plain", text("alerts on\n")),
                 Err(e) => ("400 Bad Request", "text/plain", format!("{}\n", shown(&e)).into_bytes()),
             },
@@ -438,6 +438,11 @@ impl<'a> Server<'a> {
         hosts.iter().any(|h| names(h, host)) && origin.is_none_or(|o| hosts.iter().any(|h| names(h, o)))
     }
 
+    /// The Pair this phone button (#59), on the live, writable page only.
+    fn pairb(&self) -> &'static str {
+        if self.addr.is_some() && self.export.is_none() { " <button type=button class=pairb>Pair this phone</button>" } else { "" }
+    }
+
     /// The paired device whose token the request's `Cookie` carries.
     fn device(&self, ctx: &Ctx, head: &str) -> Option<devices::Device> {
         devices::find(ctx, header(head, "cookie").unwrap_or_default())
@@ -446,7 +451,7 @@ impl<'a> Server<'a> {
     /// The reply box (or a blocked menu's option, or a sheet action): a paired device (cookie) prompts one agent, at most 10 sends a minute.
     fn send(&self, ctx: &Ctx, head: &str, f: &BTreeMap<String, String>, path: &str) -> (&'static str, String) {
         let Some(dev) = self.device(ctx, head) else {
-            return ("401 Unauthorized", "pair this device: run `herdsman serve pair` on the Mac".into());
+            return ("401 Unauthorized", "pair this device: tap Pair this phone".into());
         };
         let mut sent = self.sent.borrow_mut();
         let times = sent.entry(dev.hash.clone()).or_default();
@@ -637,11 +642,11 @@ impl<'a> Server<'a> {
              <link rel=manifest href={root}manifest.webmanifest><link rel=icon href={root}icon-192.png><link rel=apple-touch-icon href={root}icon-180.png>\
              <title>herdsman</title><link rel=stylesheet href={root}a/{VER:08x}/serve.css><link rel=stylesheet href={root}a/{VER:08x}/herd.css></head>\
              <body data-ts={} data-mode=horse{ro}><header><b>herdsman</b>{badge}<span id=stale hidden></span><i id=dot class=a></i>\
-             <button id=rf type=button aria-label=refresh>↻</button><button id=herd-on type=button aria-label=\"herd mode\">🐎</button></header><i id=ptr hidden>↻</i>{msg}<div id=needs>{}</div><main>\
+             <button id=rf type=button aria-label=refresh>↻</button><button id=herd-on type=button aria-label=\"herd mode\">🐎</button>{}</header><i id=ptr hidden>↻</i>{msg}<div id=needs>{}</div><main>\
              <section id=queue>{}</section><section id=lanes>{}</section><section id=host>{}</section>\
              <section id=events>{}</section></main><nav><a href=#queue>Queue</a><a href=#lanes>Lanes</a>\
              <a href=#host>Host</a><a href=#events>Events</a></nav><script src={root}a/{VER:08x}/serve.js></script><script src={root}a/{VER:08x}/herd.js></script></body></html>\n",
-            ctx.now, f[0].1, f[1].1, f[2].1, f[3].1, f[4].1
+            ctx.now, if paired { "" } else { self.pairb() }, f[0].1, f[1].1, f[2].1, f[3].1, f[4].1
         ))
     }
 
@@ -669,7 +674,7 @@ impl<'a> Server<'a> {
         let screen = l.pane.as_ref().and_then(|p| self.cached(ctx.now, 2, "herdr", &["pane", "read", p, "--source", "visible"])).unwrap_or_default();
         let rw = self.addr.is_some() && paired;
         let body = match lanes::pending(&screen).filter(|_| l.harness == "claude") {
-            _ if !paired => format!("<p class=m>{}</p><p class=m>pair this phone to answer: `herdsman serve pair`</p>", esc(&lanes::activity(&l.harness, &screen))),
+            _ if !paired => format!("<p class=m>{}</p><p class=m>pair this phone to answer{}</p>", esc(&lanes::activity(&l.harness, &screen)), self.pairb()),
             Some((q, opts)) => format!("<p>{}</p>", esc(&lanes::mask(&q)))
                 + &opts.iter().zip(1..).filter(|_| rw).map(|(o, n)| format!("<button type=button class=pick value={n} data-h={}>{n}. {}</button>", seen(&q, &opts), esc(&lanes::mask(o)))).collect::<String>(),
             None => format!("<pre>{}</pre>", esc(&lanes::tail(&screen, 6).join("\n"))),
@@ -942,19 +947,14 @@ impl<'a> Server<'a> {
             None => {}
         }
         if self.addr.is_some() && self.export.is_none() {
-            let (all, mt) = (devices::load(ctx), mtime(ctx));
+            let (all, mt) = (devices::load(ctx).into_iter().filter(|d| d.code.is_none()).collect::<Vec<_>>(), mtime(ctx));
             h += "<h2>Paired devices</h2>";
             if all.is_empty() {
-                h += "<p class=m>none yet: the reply box asks for a `herdsman serve pair` code</p>";
+                h += "<p class=m>none yet: tap Pair this phone, then `herdsman serve approve &lt;code&gt;` here</p>";
             }
             for d in all {
                 let when = format!("paired {} ago · used {} ago", age(ctx.now.saturating_sub(d.created)), age(ctx.now.saturating_sub(d.used)));
-                h += &format!(
-                    "<form method=post class=role>{}<input type=hidden name=hash value={}><span>{} <span class=m>{when}</span></span><button>Remove</button></form>",
-                    hidden("unpair", "", &mt),
-                    esc(&d.hash),
-                    esc(&d.label)
-                );
+                h += &format!("<form method=post class=role>{}<input type=hidden name=hash value={}><span>{} <span class=m>{when}</span></span><button>Remove</button></form>", hidden("unpair", "", &mt), esc(&d.hash), esc(&d.label));
             }
             // #18: the button shows only in the Home Screen app (serve.js); endpoints and keys stay on the Mac.
             let key = crate::webpush::vapid(&ctx.state).map(|k| crate::webpush::public(&k)).unwrap_or_default();

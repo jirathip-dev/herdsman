@@ -119,7 +119,7 @@ fn weather_param_works_on_loopback_only() {
 fn page_has_the_herd_button_and_horse_symbols() {
     let (c, r) = fixture("page");
     let page = get(&Server::new(&c, &r, Some(ADDR.into())), "/", ADDR, "");
-    assert!(page.contains("<button id=herd-on type=button aria-label=\"herd mode\">🐎</button></header>"));
+    assert!(page.contains("<button id=herd-on type=button aria-label=\"herd mode\">🐎</button>"));
     assert!(page.contains("/herd.js></script>") && std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/herd.js")).unwrap().contains("const H = $('#herd')"));
 }
 
