@@ -553,7 +553,7 @@ impl<'a> Server<'a> {
         Ok(vec![
             ("needs", self.needs_you(ctx, cfg.as_ref(), &events, &st, paired)),
             ("queue", self.queue_tab(ctx, cfg.as_ref(), &events, &st)),
-            ("lanes", self.lanes_tab(ctx, cfg.as_ref(), &events, &st, paired)),
+            ("lanes", "<p class=lh><button id=mode type=button aria-label=\"lane display mode\">horse</button></p>".to_string() + &self.lanes_tab(ctx, cfg.as_ref(), &events, &st, paired)),
             ("host", self.host_tab(ctx, cfg.as_ref(), &events)),
             ("events", events_tab(ctx, cfg.as_ref(), &events, &st, all)),
         ])
@@ -573,8 +573,7 @@ impl<'a> Server<'a> {
              <link rel=manifest href=/manifest.webmanifest><link rel=icon href=/icon-192.png><link rel=apple-touch-icon href=/icon-180.png>\
              <title>herdsman</title><style>{CSS}</style></head>\
              <body data-ts={} data-mode=horse{ro}><header><b>herdsman</b><span id=stale hidden></span><i id=dot class=a></i>\
-             <button id=rf type=button aria-label=refresh>↻</button><button id=mode type=button aria-label=\"lane display mode\">horse</button>\
-             </header><i id=ptr hidden>↻</i>{msg}<div id=needs>{}</div><main>\
+             <button id=rf type=button aria-label=refresh>↻</button></header><i id=ptr hidden>↻</i>{msg}<div id=needs>{}</div><main>\
              <section id=queue>{}</section><section id=lanes>{}</section><section id=host>{}</section>\
              <section id=events>{}</section></main><nav><a href=#queue>Queue</a><a href=#lanes>Lanes</a>\
              <a href=#host>Host</a><a href=#events>Events</a></nav><script>{JS}</script></body></html>\n",
@@ -665,7 +664,11 @@ impl<'a> Server<'a> {
                     let down = q.get(k + 1).map(|x| mv("▼ down", "after", x.issue)).unwrap_or_default();
                     card.push(format!("<span class=btns>{up}{down}</span>"));
                 }
-                body += &row("q", "", &format!("#{n}"), state, &a, &card);
+                let row = row("q", "", &format!("#{n}"), state, &a, &card);
+                body += &match titles(ctx, f, n) {
+                    Some(t) => row.replacen("</summary>", &format!("<span class=tl>{}</span></summary>", esc(&t)), 1),
+                    None => row,
+                };
             }
             if items.is_empty() {
                 body += "<p class=m>no open work</p>";
@@ -881,6 +884,22 @@ fn pr_line(ctx: &Ctx, fc: Option<&crate::config::Fleet>, fleet: &str, issue: u64
         parts.push(format!("rev <span class={}>{}</span> r{}", tone(v), esc(v), s.rounds));
     }
     parts.join(" · ")
+}
+
+/// The queue row's dim line from the caches only: the issue title, then the PR's when it differs; one 390 px line.
+fn titles(ctx: &Ctx, fleet: &str, issue: u64) -> Option<String> {
+    let spec = gh::cached_spec(ctx, fleet, issue).and_then(|v| v["title"].as_str().map(String::from));
+    let pr = gh::cached_pr(ctx, fleet, issue);
+    let pr = pr["number"].as_u64().zip(pr["title"].as_str()).filter(|p| Some(p.1) != spec.as_deref()).map(|(n, p)| format!("PR #{n} · {p}"));
+    let t = [spec, pr].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+    if t.is_empty() {
+        return None;
+    }
+    if t.chars().count() <= 50 {
+        return Some(t);
+    }
+    let cut: String = t.chars().take(51).collect();
+    Some(format!("{} …", cut.rsplit_once(' ').map_or(cut.as_str(), |c| c.0).trim_end_matches([' ', '·'])))
 }
 
 fn role_form(cfg: &Config, fleet: &str, role: &str, r: &Role, rw: bool, mt: &str) -> String {

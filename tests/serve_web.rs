@@ -362,6 +362,11 @@ fn page_fits_390px_without_horizontal_scroll() {
     let d = tmpdir("phone");
     let c = ctx(&d, &config());
     run(&c, &Fake::default(), &["queue", "sendmeter", "add", "17", "18", "12"]);
+    // #36: the Queue rows' title line (issue + differing PR title) stays one line at 390 px.
+    let cache = d.join("state/cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::write(cache.join("issue-sendmeter-12.json"), json!({"title": "Queue rows show issue and PR titles from the cached reads"}).to_string()).unwrap();
+    std::fs::write(cache.join("pr-sendmeter-12.json"), json!({"pr": {"number": 33, "title": "src: titles in Queue"}}).to_string()).unwrap();
     let long = "sendmeter-impl-12-with-a-very-long-agent-name-that-would-push-a-table-wide";
     append(&c.state, &Event::new(999_000, "sendmeter", Some(12), "spawn", json!({"role": "impl", "agent": long, "branch": "issue-12-a-very-long-branch-name-without-any-break-points-at-all"}))).unwrap();
     append(&c.state, &Event::new(999_100, "sendmeter", Some(12), "blocked", json!({"code": "CI_NOT_GREEN", "reason": "x".repeat(300)}))).unwrap();
@@ -373,6 +378,7 @@ fn page_fits_390px_without_horizontal_scroll() {
     assert!(!html.contains("<table") && !html.contains("<pre"), "no wide blocks");
     assert!(html.contains("width=device-width") && html.contains("overflow-wrap:anywhere"));
     assert!(html.contains("<details class=\"q\"><summary><span>#12</span>"), "rows are details");
+    assert!(html.contains("class=tl>Queue rows show issue and PR titles from the …"), "title line");
     for t in ["queue", "lanes", "host", "events"] {
         assert!(html.contains(&format!("<section id={t}>")) && html.contains(&format!("<a href=#{t}>")), "{t} tab");
     }

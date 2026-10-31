@@ -99,7 +99,7 @@ fn wait_exit_codes() {
     let (code, out) = wait(&r, "ci-green", "3600");
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("ci green"), "{out}");
-    assert_eq!(r.calls.borrow()[1..], ["sleep 30", "sleep 60", "gh pr view issue-12 -R jirathip-dev/sendmeter --json number,state,baseRefName,headRefOid,mergeable,statusCheckRollup"]);
+    assert_eq!(r.calls.borrow()[1..], ["sleep 30", "sleep 60", "gh pr view issue-12 -R jirathip-dev/sendmeter --json number,title,state,baseRefName,headRefOid,mergeable,statusCheckRollup"]);
     // A failed check: 1, for ci-green and ci-done.
     let red = pr_json("OPEN", run_ci("COMPLETED", "FAILURE"));
     assert_eq!(wait(&Fake::default().reply("gh pr view", &red), "ci-green", "3600").0, 1);
