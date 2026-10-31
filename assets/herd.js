@@ -160,7 +160,7 @@ function herdData(j) { if (!DBG.get('weather')) { data = j; draw(); } }
 async function herdPull() {
   if (H.hidden) return;
   try {
-    const w = DBG.get('weather'), r = await fetch('/herd.json' + (w ? '?weather=' + encodeURIComponent(w) : ''), { cache: 'no-store' });
+    const w = DBG.get('weather'), r = await fetch(R + 'herd.json' + (w ? '?weather=' + encodeURIComponent(w) : ''), { cache: 'no-store' });
     if (r.ok) { data = await r.json(); draw(); }
   } catch (e) {}
 }
@@ -261,4 +261,14 @@ function herd(on) {
 }
 $('#herd-on').onclick = () => herd(true);
 $('.hx').onclick = () => herd(false);
+// #39 demo: a weather switcher sets the host values client-side, as `/herd.json?weather=` does on loopback.
+const WX = { calm: [0.1, 'normal'], gusty: [0.7, 'normal'], storm: [1.3, 'normal'], fog: [0.3, 'warn'] };
+if (DEMO) H.insertAdjacentHTML('beforeend', `<p class=hwx>${Object.keys(WX).map(w => `<button type=button value=${w}>${w}</button>`).join('')}</p>`);
+H.addEventListener('click', e => {
+  const w = e.target.closest('.hwx button'), h = data && data.host;
+  if (!w || !h) return;
+  const [k, p] = WX[w.value], why = [p !== 'normal' && 'memory pressure ' + p, k > 1 && `load/cpu ${(k * h.limit).toFixed(2)} > ${h.limit}`].filter(Boolean);
+  weather(Object.assign(h, { load: k * h.limit, pressure: p, swapouts: 0, gate: why.join('; ') || null }));
+  $$('.hwx button').forEach(b => b.classList.toggle('on', b === w));
+});
 herd(get('herd') === '1');

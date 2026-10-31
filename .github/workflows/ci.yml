@@ -18,8 +18,10 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: test
         run: cargo test --locked
-      - name: docs leak gate (no ts.net hostname, chat ID or /Users/ path)
-        run: "! grep -rnE '[A-Za-z0-9-]\\.ts\\.net|telegram:-?[0-9]|/Users/' docs/"
+      - name: demo export (#39, synthetic data in demo/)
+        run: HERDSMAN_HOME=demo FLEET_CONFIG=demo/fleet.toml FLEET_STATE=demo/events.jsonl ./target/release/herdsman serve --export site --demo
+      - name: leak gate (no ts.net hostname, chat ID or /Users/ path in docs/, demo/ or the exported demo)
+        run: "! grep -rnE '[A-Za-z0-9-]\\.ts\\.net|telegram:-?[0-9]|/Users/' docs/ demo/ site/"
       - name: deps gate (direct deps ⊆ the allow-list in docs/serve.md)
         run: |
           extra=$(sed -n '/^\[dependencies\]/,/^\[/p' Cargo.toml | grep -oE '^[a-z0-9_-]+' | grep -vxE 'clap|serde|serde_json|toml|anyhow|thiserror|p256|aes-gcm|hkdf|sha2|base64' || true)
