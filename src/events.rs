@@ -170,7 +170,7 @@ pub fn last_spawn<'a>(events: &'a [Event], agent: &str) -> Option<&'a Event> {
 /// Events `herdsman check` and notifiers write about an issue; they are not activity.
 pub const PASSIVE: [&str; 5] = ["stall", "lane-dead", "ready-unmerged", "notify-failed", "account-capped"];
 
-/// Current per-issue state (`crate::STATES`).
+/// Current per-issue state (the states in `roles/usage-tail.md`).
 pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
     let mut m: BTreeMap<(String, u64), IssueState> = BTreeMap::new();
     for e in events {

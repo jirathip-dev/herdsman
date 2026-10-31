@@ -1,0 +1,3 @@
+- Work on branch `{branch}` only; never push to `{integration}` or main.
+- Design lanes take no part in `herdsman verdict` or `herdsman merge`; a PR, if any, is the owner's call.
+- Report: what you produced and where.

@@ -17,7 +17,7 @@ impl Harness for Hermes {
         let yaml = ctx.hermes.join(profile).join("config.yaml");
         let Ok(text) = std::fs::read_to_string(&yaml) else { return Ok(()) };
         let hook_cmd = serde_json::to_string(&hook_command(ctx, role))?;
-        let new = set_hooks(&drop_reasoning_effort(&text), &HERMES_HOOKS.replace("{{FLEET_HOOK}}", &hook_cmd));
+        let new = set_block(&drop_reasoning_effort(&text), "hooks:", &HERMES_HOOKS.replace("{{FLEET_HOOK}}", &hook_cmd));
         if new != text {
             std::fs::write(&yaml, new)?;
         }
@@ -95,11 +95,6 @@ pub fn set_mcp(ctx: &Ctx, profile: &str, servers: &serde_json::Map<String, Value
     Ok(())
 }
 
-/// Replace config.yaml's top-level `hooks:` block in place, as `set_block` does.
-pub fn set_hooks(text: &str, block: &str) -> String {
-    set_block(text, "hooks:", block)
-}
-
 /// Replace the top-level `key` block by `block` (appended when absent, removed when empty); other bytes kept.
 fn set_block(text: &str, key: &str, block: &str) -> String {
     let (mut out, mut skip, mut done) = (String::new(), false, false);
@@ -125,7 +120,7 @@ fn set_block(text: &str, key: &str, block: &str) -> String {
 }
 
 /// Drop the direct child `agent.reasoning_effort` (fleet.toml owns effort); every other byte is kept.
-pub fn drop_reasoning_effort(text: &str) -> String {
+fn drop_reasoning_effort(text: &str) -> String {
     let (mut out, mut in_agent, mut child) = (String::new(), false, None);
     for line in text.split_inclusive('\n') {
         let indent = line.len() - line.trim_start_matches([' ', '\t']).len();

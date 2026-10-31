@@ -30,31 +30,6 @@ pub fn refused<T>(code: &'static str, msg: impl Into<String>) -> Result<T> {
     Err(refuse(code, msg).into())
 }
 
-/// Every refusal code, for `herdsman help --agent`.
-pub const CODES: &[(&str, &str)] = &[
-    ("MAIN_TARGET", "integration or PR base is main/master; fleet never merges to main"),
-    ("NO_PR", "no open PR for the issue branch"),
-    ("BASE_MISMATCH", "PR base is not the fleet's integration branch"),
-    ("NO_VERDICT", "no review verdict recorded"),
-    ("STALE_VERDICT", "verdicts exist, but none for the PR's current head sha"),
-    ("VERDICT_FAIL", "latest verdict for the head sha is FAIL"),
-    ("ROUND_LIMIT", "review rounds exceed [limits].review_rounds (→ needs-human)"),
-    ("CI_NOT_GREEN", "a check at the head sha is missing, pending or failed"),
-    ("BAD_SHA", "verdict --sha is not 40 hex chars"),
-    ("STALE_SHA", "verdict --sha is not the branch head"),
-    ("HOST_BUSY", "spawn: memory pressure, swap-out or load/cpu over [limits]; --force overrides (logged)"),
-    ("LANE_LIVE", "spawn: a herdr agent is live in the worktree, or the log has an unfinished lane for it; --supersede"),
-    ("WORKTREE_DIRTY", "spawn: the worktree has unpushed or uncommitted work from no known lane; --supersede"),
-    ("MERGED", "spawn/adopt: the issue is merged; a merged issue never reopens"),
-    ("SERIAL_BUSY", "spawn: a `--serial` impl waits while another serial issue has a live impl/fix lane or sits at review/ready"),
-    ("SERIAL_UNMARKED", "merge: the PR touches the fleet's serial_paths but the issue was not queued `--serial`"),
-    ("CAP", "spawn: the fleet's optional max_impl / max_rev lane cap is reached (unset = no cap)"),
-    ("PAUSED", "spawn: the fleet is paused (`herdsman resume <fleet>`); impl/rev lanes wait, live lanes are untouched"),
-    ("BAD_VALUE", "set: a value is empty or has a quote/backslash/control char, or the model is not in `models`"),
-    ("STALE", "serve: fleet.toml changed since the page was rendered; reload and retry"),
-    ("MCP_FORBIDDEN", "spawn/profiles sync: a role's `mcp` names a server matching `mcp_deny` (default `*prod*`)"),
-];
-
 fn is_main(b: &str) -> bool {
     b == "main" || b == "master"
 }

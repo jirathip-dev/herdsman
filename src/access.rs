@@ -97,31 +97,19 @@ pub fn hhmm(r: &dyn Runner, ts: u64) -> String {
     }
 }
 
-/// `*`-wildcard match, case-insensitive.
-fn glob(pat: &str, s: &str) -> bool {
-    let (pat, s) = (pat.to_lowercase(), s.to_lowercase());
-    let parts: Vec<&str> = pat.split('*').collect();
-    let (first, last) = (parts[0], parts[parts.len() - 1]);
-    if parts.len() == 1 {
-        return pat == s;
+/// `*`-wildcard match on lowercased bytes (callers lowercase both sides).
+fn glob(g: &[u8], s: &[u8]) -> bool {
+    match g {
+        [] => s.is_empty(),
+        [b'*', rest @ ..] => (0..=s.len()).any(|i| glob(rest, &s[i..])),
+        [c, rest @ ..] => s.first() == Some(c) && glob(rest, &s[1..]),
     }
-    if !s.starts_with(first) || !s[first.len()..].ends_with(last) || s.len() < first.len() + last.len() {
-        return false;
-    }
-    let mut rest = &s[first.len()..s.len() - last.len()];
-    for p in &parts[1..parts.len() - 1] {
-        match rest.find(p) {
-            Some(i) => rest = &rest[i + p.len()..],
-            None => return false,
-        }
-    }
-    true
 }
 
 /// The role's MCP servers, copied by name from the repo's `.mcp.json` (`MCP_FORBIDDEN` if one matches `mcp_deny`).
 pub fn mcp_servers(cfg: &Config, f: &Fleet, role: &Role) -> Result<Map<String, Value>> {
     for n in &role.mcp {
-        if let Some(d) = cfg.mcp_deny.iter().find(|d| glob(d, n)) {
+        if let Some(d) = cfg.mcp_deny.iter().find(|d| glob(d.to_lowercase().as_bytes(), n.to_lowercase().as_bytes())) {
             return refused("MCP_FORBIDDEN", format!("MCP server `{n}` matches mcp_deny `{d}`; lanes never get it"));
         }
     }

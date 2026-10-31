@@ -26,10 +26,7 @@ fn fresh(c: &Value, now: u64) -> bool {
 
 fn store(p: &Path, v: &Value) -> Result<()> {
     std::fs::create_dir_all(p.parent().unwrap_or(p))?;
-    let tmp = p.with_extension("tmp");
-    std::fs::write(&tmp, v.to_string())?;
-    std::fs::rename(&tmp, p)?;
-    Ok(())
+    crate::config::write_atomic(p, &v.to_string())
 }
 
 /// The cached spec, if any; never calls GitHub (dry runs).

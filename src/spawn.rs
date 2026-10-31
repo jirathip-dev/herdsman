@@ -92,11 +92,6 @@ impl Plan {
         c
     }
 
-    /// Retitle the lane from the issue title (the spec fetched at spawn).
-    pub fn set_title(&mut self, issue_title: &str) {
-        self.title = lane_title(&self.head, issue_title);
-    }
-
     pub fn start_cmd(&self, ctx: &Ctx, pane: &str) -> Vec<String> {
         harness::get(&self.harness).start_cmd(ctx, self, pane)
     }
@@ -202,48 +197,27 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
     })
 }
 
+/// The issue lane's `.brief.md` (`roles/brief*.md` templates).
 fn brief(f: &Fleet, issue: u64, p: &Plan, title: &str, body: &str, fix: Option<&str>) -> String {
-    let contract = if p.role == "rev" {
-        format!(
-            "- Read-only: no edits, no commits, no push.\n- Review the diff `{}...HEAD` against the issue's acceptance criteria.\n\
-             - Write `{}/verdict.md`: first line `PASS` or `FAIL`, then findings (`blocking`/`non-blocking`, file:line).\n\
-             - Report the exact head sha you reviewed (`git rev-parse HEAD`).",
-            format_args!("origin/{}", f.integration),
-            p.worktree.display()
-        )
-    } else if p.role == "design" {
-        format!(
-            "- Work on branch `{}` only; never push to `{}` or main.\n\
-             - Design lanes take no part in `herdsman verdict` or `herdsman merge`; a PR, if any, is the owner's call.\n\
-             - Report: what you produced and where.",
-            p.branch, f.integration
-        )
-    } else {
-        format!(
-            "- Work on branch `{}` only. Commit, push it, open a PR to `{}` whose body says `Closes #{issue}`.\n\
-             - Never merge, never push to `{}` or main — merging happens only via `herdsman merge`.\n\
-             - Report: what changed, exact test commands + exit codes, head sha.",
-            p.branch, f.integration, f.integration
-        )
+    let (branch, integration) = (&p.branch, &f.integration);
+    let contract = match p.role.as_str() {
+        "rev" => format!(include_str!("../roles/brief-rev.md"), integration = integration, worktree = p.worktree.display()),
+        "design" => format!(include_str!("../roles/brief-design.md"), branch = branch, integration = integration),
+        _ => format!(include_str!("../roles/brief-impl.md"), branch = branch, integration = integration, issue = issue),
     };
     let fix = fix.map_or(String::new(), |v| format!("## Review findings to fix (latest FAIL verdict)\n\n{v}\n\n"));
     format!(
-        "# Brief — {} ({}#{issue})\n\n{}\n\n## Issue #{issue}: {title}\n\n{body}\n\n{fix}## Output contract\n\n{contract}\n",
-        p.agent,
-        f.repo,
-        role_prompt(&p.role)
+        include_str!("../roles/brief.md"),
+        agent = p.agent, repo = f.repo, issue = issue, role = role_prompt(&p.role),
+        title = title, body = body, fix = fix, contract = contract.trim_end()
     )
 }
 
 fn orch_brief(f: &Fleet, fleet: &str, p: &Plan) -> String {
     format!(
-        "# Brief — {} (fleet `{fleet}`)\n\n{}\n\n## Fleet\n\n- repo: `{}`\n- local checkout: `{}`\n\
-         - integration branch: `{}`\n\nStart with `herdsman board {fleet}`; take work only from `herdsman next {fleet}`.\n",
-        p.agent,
-        role_prompt("orch"),
-        f.repo,
-        f.local_path().display(),
-        f.integration
+        include_str!("../roles/brief-orch.md"),
+        agent = p.agent, fleet = fleet, role = role_prompt("orch"),
+        repo = f.repo, local = f.local_path().display(), integration = f.integration
     )
 }
 
@@ -387,7 +361,7 @@ pub fn spawn(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (flee
             let open = argv(&["worktree", "open", "--cwd", &local, "--path", &wt]);
             let created = json(r, "herdr", &if p.worktree.exists() { open } else { create_argv(&local, &p) })?;
             let (title, body) = (iss["title"].as_str().unwrap_or(""), iss["body"].as_str().unwrap_or(""));
-            p.set_title(title);
+            p.title = lane_title(&p.head, title);
             // A fix round's brief carries the findings of the latest verdict if it was FAIL.
             let last = events.iter().rev().find(|e| e.is("verdict", fleet, n));
             let fix = last.filter(|e| role == "impl" && e.str("verdict") == Some("FAIL")).and_then(|e| e.str("body"));

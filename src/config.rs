@@ -6,24 +6,23 @@ use std::path::{Path, PathBuf};
 
 pub const ROLES: [&str; 4] = ["orch", "impl", "rev", "design"];
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 pub struct Config {
-    #[serde(default)]
     pub fleet: BTreeMap<String, Fleet>,
-    #[serde(default)]
     pub limits: Limits,
-    #[serde(default)]
     pub notify: Vec<Notify>,
-    #[serde(default)]
     pub accounts: Accounts,
     /// MCP server names no lane is given (`*` wildcards, case-insensitive).
     #[serde(default = "mcp_deny")]
     pub mcp_deny: Vec<String>,
     /// The models `herdsman serve` offers per role (its model dropdown).
-    #[serde(default)]
     pub models: Vec<String>,
-    #[serde(default)]
     pub serve: Serve,
+}
+
+fn mcp_deny() -> Vec<String> {
+    vec!["*prod*".into()]
 }
 
 /// `[serve]`: extra `Host` names (e.g. the `*.ts.net` name of `tailscale serve`) a POST may come from.
@@ -50,10 +49,6 @@ impl Default for Accounts {
     fn default() -> Self {
         Accounts { accounts_env: None, cap_pattern: None, cap_reset_minutes: 300, names: BTreeMap::new() }
     }
-}
-
-fn mcp_deny() -> Vec<String> {
-    vec!["*prod*".into()]
 }
 
 #[derive(Debug, Deserialize)]

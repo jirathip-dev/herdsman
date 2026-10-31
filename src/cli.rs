@@ -2,9 +2,9 @@
 use crate::config::{self, home, Config};
 use crate::events::{fold, read, status_line};
 use crate::runner::{self, Runner};
-use crate::{access, check, devices, gate, gh, harness, hook, migrate, pause, protection, queue, queue_change, serve, set, spawn, Ctx, STATES};
+use crate::{access, check, devices, gate, gh, harness, hook, migrate, pause, protection, queue, queue_change, serve, set, spawn, Ctx};
 use anyhow::{bail, Result};
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand};
 use serde_json::json;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -14,14 +14,6 @@ use std::path::PathBuf;
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum Verdict {
-    #[value(name = "PASS")]
-    Pass,
-    #[value(name = "FAIL")]
-    Fail,
 }
 
 #[derive(Subcommand)]
@@ -84,8 +76,8 @@ enum Cmd {
     Verdict {
         fleet: String,
         issue: u64,
-        #[arg(value_enum)]
-        verdict: Verdict,
+        #[arg(value_parser = ["PASS", "FAIL"])]
+        verdict: String,
         /// Full 40-hex head sha that was reviewed
         #[arg(long)]
         sha: String,
@@ -255,14 +247,11 @@ enum ProfilesCmd {
 }
 
 
-/// The one usage doc both harnesses get. Generated from the CLI definition.
+/// The one usage doc both harnesses get: the commands generated from the CLI definition, the rest from `roles/usage-*.md`.
 pub fn usage_doc() -> String {
     let mut cmd = Cli::command();
     cmd.build();
-    let mut s = String::from(
-        "# herdsman — usage for agents\n\nAct only through `herdsman`. It owns state (event log) and refuses anything that\n\
-         breaks a rule. A refusal is final: report it, never work around it.\n\n## Commands\n",
-    );
+    let mut s = String::from(include_str!("../roles/usage-head.md"));
     // The owner's commands; the sections below name them.
     let owner = ["accounts", "pause", "resume", "serve"];
     let subs = cmd.get_subcommands().filter(|c| !c.is_hide_set() && !owner.contains(&c.get_name()));
@@ -276,10 +265,6 @@ pub fn usage_doc() -> String {
             let h = a.get_help().map(|h| h.to_string()).unwrap_or_default();
             s += &format!("  --{}  {h}\n", a.get_long().unwrap());
         }
-    }
-    s += &format!("\n## Issue states\n\n{STATES}\n\n## Refusal codes (exit 3, `REFUSED <CODE>: why`)\n\n");
-    for (c, why) in gate::CODES {
-        s += &format!("- {c}: {why}\n");
     }
     s + include_str!("../roles/usage-tail.md")
 }
@@ -399,10 +384,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 Cmd::Accounts { cmd: Some(AccountsCmd::Reset { name }) } => access::reset(ctx, &cfg, out, &name)?,
                 Cmd::Protection => return protection::protection(&cfg, r, out),
                 Cmd::Clean { fleet, yes } => check::clean(ctx, &cfg, r, out, fleet.as_deref(), None, yes)?,
-                Cmd::Verdict { fleet, issue, verdict, sha, file } => {
-                    let pass = matches!(verdict, Verdict::Pass);
-                    gate::verdict(ctx, &cfg, r, out, (&fleet, issue), pass, &sha, &file)?
-                }
+                Cmd::Verdict { fleet, issue, verdict, sha, file } => gate::verdict(ctx, &cfg, r, out, (&fleet, issue), verdict == "PASS", &sha, &file)?,
                 Cmd::Merge { fleet, issue } => gate::merge(ctx, &cfg, r, out, &fleet, issue)?,
                 Cmd::Brief { fleet, issue } => {
                     let v = gh::spec(ctx, r, cfg.fleet(&fleet)?, &fleet, issue, false)?;

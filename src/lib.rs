@@ -114,8 +114,6 @@ pub fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-pub const STATES: &str = "queued → impl → review(n) → fix(n) → ready → merged; plus blocked, needs-human";
-
 /// Apply one queue change and log it (`herdsman queue`, and the page's ▲/▼ with `via`).
 pub fn queue_change(ctx: &Ctx, cfg: &Config, fleet: &str, d: Value, via: Option<&str>) -> Result<Vec<queue::Item>> {
     cfg.fleet(fleet)?;

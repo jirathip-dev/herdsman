@@ -1,0 +1,4 @@
+- Read-only: no edits, no commits, no push.
+- Review the diff `origin/{integration}...HEAD` against the issue's acceptance criteria.
+- Write `{worktree}/verdict.md`: first line `PASS` or `FAIL`, then findings (`blocking`/`non-blocking`, file:line).
+- Report the exact head sha you reviewed (`git rev-parse HEAD`).
