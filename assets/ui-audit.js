@@ -51,8 +51,8 @@
       await canned(401, LONG.pair, () => $('#push').click());
       if (!$('#push').disabled || st() !== 'pair this phone first') early.push(`unpaired: [enable alerts] disabled ${$('#push').disabled}, p.st "${st()}"`);
       $('#push').hidden = false;
-      $('#push').scrollIntoView({ block: 'center', behavior: 'instant' });
-      setTimeout(() => { const p = $('#push'), c = getComputedStyle(p), g = p.getBoundingClientRect(); early.push(`DIAG ${p.outerHTML} ws=${c.whiteSpace} w=${c.width} mw=${c.maxWidth} sw=${p.scrollWidth} cw=${p.clientWidth} sh=${p.scrollHeight} ch=${p.clientHeight} rect=${g.left|0},${g.right|0} font=${c.fontFamily}/${c.fontSize} iw=${innerWidth} vis=${p.checkVisibility({ visibilityProperty: true })}`); }, 2500);
+      // `--screenshot` captures the document's top: the shot drops the needs cards so Alerts is in it (the check keeps them).
+      if (!DBG.get('check')) { $('#needs').hidden = true; scrollTo(0, 0); }
     },
     events: () => tab('events'),
     herd1: () => herd(true),
@@ -87,6 +87,7 @@
   function measure() {
     $$('[inert]').forEach(e => { e.inert = false; });
     const roots = (ROOTS[V] || (() => [B]))(), bad = [];
+    if (innerWidth !== 390) bad.push(`viewport ${innerWidth} px wide, not 390`); // #68: new-headless Chrome keeps windows ≥ 500 px
     const all = sel => roots.flatMap(r => [...(r.matches(sel) ? [r] : []), ...r.querySelectorAll(sel)]).filter(seen);
     const ctl = all(CTL), rows = all(ROW);
     for (const e of ctl) {
