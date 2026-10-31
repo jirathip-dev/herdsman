@@ -4,8 +4,8 @@ use crate::config::{Config, Role};
 use crate::events::{age, append, fold, plain, read, Event, IssueState};
 use crate::gate::{refused, Refusal};
 use crate::host::{self, Host};
-use crate::runner::{argv, ok, Out, Runner};
-use crate::{devices, gh, lanes, queue, Ctx};
+use crate::runner::{Out, Runner};
+use crate::{devices, gh, herdr, lanes, queue, Ctx};
 use anyhow::{bail, Context, Result};
 use serde_json::json;
 use std::cell::RefCell;
@@ -301,7 +301,7 @@ impl<'a> Server<'a> {
         let mut changed = kicked || log != w.log || now >= w.rendered + 15;
         w.log = log;
         if now >= w.herdr.0 + 2 {
-            let out = self.r.run("herdr", &argv(&["agent", "list"])).ok().filter(|o| o.code == 0).map(|o| o.stdout);
+            let out = herdr::agent_list(self.r);
             changed |= hash(&out) != w.herdr.1;
             w.herdr = (now, hash(&out));
             self.cache.lock().unwrap_or_else(|e| e.into_inner()).insert("herdr agent list".into(), (now, out));
@@ -334,9 +334,9 @@ impl<'a> Server<'a> {
         self.cache.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| !k.starts_with("herdr pane read"));
     }
 
-    /// stdout of `prog args` if it ran OK within the last `ttl` seconds (else run it now).
-    fn cached(&self, now: u64, ttl: u64, prog: &str, args: &[&str]) -> Option<String> {
-        ok(&Memo(self.r, &self.cache, now, if self.fresh { ttl / 3 } else { ttl }), prog, args).ok()
+    /// The runner whose reads that ran OK within the last `ttl` seconds come from the cache (else run now).
+    fn cached(&self, now: u64, ttl: u64) -> Memo<'_> {
+        Memo(self.r, &self.cache, now, if self.fresh { ttl / 3 } else { ttl })
     }
 
     /// The full HTTP response to one request.
@@ -487,7 +487,7 @@ impl<'a> Server<'a> {
     fn pick(&self, ctx: &Ctx, dev: &devices::Device, f: &BTreeMap<String, String>) -> Result<String> {
         let (agent, choice) = (f.get("agent").map_or("", String::as_str), f.get("choice").map_or("", String::as_str));
         let (l, fleet, pane) = self.lane(ctx, agent)?;
-        let screen = || crate::runner::ok(self.r, "herdr", &["pane", "read", &pane, "--source", "visible"]);
+        let screen = || herdr::read(self.r, &pane);
         let Some((q, opts)) = lanes::pending(&screen()?).filter(|p| l.harness == "claude" && !p.1.is_empty()) else {
             return refused("BAD_VALUE", format!("no menu on {agent}'s pane: menu changed — refreshed; answer with the reply box"));
         };
@@ -500,7 +500,7 @@ impl<'a> Server<'a> {
         if f.get("h") != Some(&seen(&q, &opts).to_string()) {
             return refused("STALE", "menu changed — refreshed");
         }
-        crate::runner::ok(self.r, "herdr", &["pane", "send-keys", &pane, choice])?;
+        herdr::keys(self.r, &pane, choice)?;
         let d = serde_json::json!({"via": "web", "agent": agent, "device": dev.label, "choice": choice});
         append(&ctx.state, &Event::new(ctx.now, &fleet, l.issue, "answer", d))?;
         self.r.sleep(1);
@@ -523,14 +523,7 @@ impl<'a> Server<'a> {
         if text.chars().any(|c| (c < ' ' && c != '\n') || c == '\x7f') {
             return refused("BAD_VALUE", "a message has no control characters (newlines are fine)");
         }
-        // No `--`: herdr 0.9 reads the 2nd positional as literal text (even `-x`), and a `--` there would be sent as text.
-        let first = if l.harness == "dsh" { argv(&["pane", "send-text", pane, text]) } else { argv(&["agent", "prompt", agent, text]) };
-        for a in [first, argv(&["pane", "send-keys", pane, "Enter"])] {
-            let o = self.r.run("herdr", &a)?;
-            if o.code != 0 {
-                bail!("herdr {} {}: {}", a[0], a[1], o.stderr.trim());
-            }
-        }
+        herdr::reply(self.r, l.harness == "dsh", agent, pane, text)?;
         let d = serde_json::json!({"via": "web", "agent": agent, "device": dev.label, "chars": n});
         append(&ctx.state, &Event::new(ctx.now, fleet, l.issue, "prompt", d))?;
         Ok(format!("sent to {agent}"))
@@ -562,7 +555,7 @@ impl<'a> Server<'a> {
         let (cfg, events) = (Config::load(&ctx.config).ok()?, read(&ctx.state).ok()?);
         let l = self.lanes(ctx.now, &cfg, &events, &fold(&events))?.into_iter().find(|l| Some(&l.name) == q.get("agent"))?;
         let want = (before + lines).to_string();
-        let screen = self.cached(ctx.now, 5, "herdr", &["pane", "read", l.pane.as_deref()?, "--source", "recent", "--lines", &want])?;
+        let screen = herdr::recent(&self.cached(ctx.now, 5), l.pane.as_deref()?, &want).ok()?;
         let all = lanes::tail(&screen, before + lines);
         let page = &all[..all.len().saturating_sub(before)];
         // `recent` is herdr's whole window: a short read (or the 2000 clamp) means nothing older.
@@ -671,7 +664,7 @@ impl<'a> Server<'a> {
     /// (or the last 6 masked lines) and a Reply button that opens the lane's sheet. Unpaired: no
     /// pane text, only the 1-line activity and a pairing hint.
     fn blocked(&self, ctx: &Ctx, l: &lanes::Lane, paired: bool) -> String {
-        let screen = l.pane.as_ref().and_then(|p| self.cached(ctx.now, 2, "herdr", &["pane", "read", p, "--source", "visible"])).unwrap_or_default();
+        let screen = l.pane.as_ref().and_then(|p| herdr::read(&self.cached(ctx.now, 2), p).ok()).unwrap_or_default();
         let rw = self.addr.is_some() && paired;
         let body = match lanes::pending(&screen).filter(|_| l.harness == "claude") {
             _ if !paired => format!("<p class=m>{}</p><p class=m>pair this phone to answer{}</p>", esc(&lanes::activity(&l.harness, &screen)), self.pairb()),
@@ -684,14 +677,14 @@ impl<'a> Server<'a> {
         format!("<div class=ask data-ask=\"{}\"><p><b>needs you</b> <span class=m>{}</span></p>{body}{reply}</div>", esc(&l.name), esc(&who))
     }
 
-    /// `herdr <args>` JSON, read at most every 10 s (None when herdr cannot be read).
-    fn herdr_json(&self, now: u64, args: &[&str]) -> Option<serde_json::Value> {
-        serde_json::from_str(&self.cached(now, 10, "herdr", args)?).ok()
+    /// `herdr agent|workspace list` JSON, read at most every 10 s (None when herdr cannot be read).
+    fn herdr_json(&self, now: u64, what: &str) -> Option<serde_json::Value> {
+        herdr::list(&self.cached(now, 10), what).ok()
     }
 
     /// Names of the live herdr agents (None when herdr cannot be read).
     fn live(&self, now: u64) -> Option<BTreeSet<String>> {
-        let v = self.herdr_json(now, &["agent", "list"])?;
+        let v = self.herdr_json(now, "agent")?;
         Some(v["result"]["agents"].as_array()?.iter().filter_map(|a| a["name"].as_str().map(String::from)).collect())
     }
 
@@ -787,9 +780,9 @@ impl<'a> Server<'a> {
 
     /// herdr's agents joined with the log (None when herdr cannot be read).
     fn lanes(&self, now: u64, cfg: &Config, events: &[Event], st: &States) -> Option<Vec<lanes::Lane>> {
-        let list = self.herdr_json(now, &["agent", "list"])?;
+        let list = self.herdr_json(now, "agent")?;
         let agents = list["result"]["agents"].as_array().cloned().unwrap_or_default();
-        let wsl = self.herdr_json(now, &["workspace", "list"]).unwrap_or_default();
+        let wsl = self.herdr_json(now, "workspace").unwrap_or_default();
         let ws: BTreeMap<String, String> = wsl["result"]["workspaces"].as_array().into_iter().flatten()
             .filter_map(|w| Some((w["workspace_id"].as_str()?.into(), w["label"].as_str()?.into())))
             .collect();
@@ -798,7 +791,7 @@ impl<'a> Server<'a> {
 
     fn waits(&self, ctx: &Ctx, cfg: &Config, events: &[Event], all: &[lanes::Lane]) -> Vec<crate::waiting::Waiting> {
         let live: Vec<_> = all.iter().map(|l| json!({"name": l.name, "agent_status": l.state})).collect();
-        crate::waiting::scan(ctx, cfg, &Memo(self.r, &self.cache, ctx.now, if self.fresh { 10 } else { 30 }), events, &live, false).into_iter().map(|x| x.1).collect()
+        crate::waiting::scan(ctx, cfg, &self.cached(ctx.now, 30), events, &live, false).into_iter().map(|x| x.1).collect()
     }
 
     /// #37: Herd mode's data (`/herd.json`, the `/live` `herd` event): per fleet the lanes as the unpaired Lanes rows
@@ -855,7 +848,7 @@ impl<'a> Server<'a> {
     }
 
     fn lane_row(&self, ctx: &Ctx, cfg: &Config, l: &lanes::Lane, s: Option<&IssueState>, paired: bool, waits: &[crate::waiting::Waiting]) -> String {
-        let screen = l.pane.as_ref().and_then(|p| self.cached(ctx.now, 30, "herdr", &["pane", "read", p, "--source", "visible"]));
+        let screen = l.pane.as_ref().and_then(|p| herdr::read(&self.cached(ctx.now, 30), p).ok());
         let a = if l.since > 0 { age(ctx.now.saturating_sub(l.since)) } else { String::new() };
         let title = l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| gh::cached_spec(ctx, f, n)).and_then(|v| v["title"].as_str().map(String::from));
         let issue = l.issue.map(|n| format!("#{n}")).unwrap_or_default();

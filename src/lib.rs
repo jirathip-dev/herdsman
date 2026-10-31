@@ -8,6 +8,7 @@ pub mod events;
 pub mod gate;
 pub mod gh;
 pub mod harness;
+pub mod herdr;
 pub mod hook;
 pub mod host;
 pub mod lanes;
@@ -226,8 +227,8 @@ pub fn answer(ctx: &Ctx, cfg: &Config, r: &dyn runner::Runner, out: &mut dyn Wri
     let agent = ask.str("agent").unwrap_or_default();
     let pane = events::last_spawn(&events, agent).and_then(|e| e.str("pane")).context(format!("{agent} has no pane: {id} stays open"))?;
     emit(&ctx.state, cfg, Event::new(ctx.now, fleet, ask.issue, "decision", with_via(json!({"id": id, "choice": text, "by": by}), via)))?;
-    runner::ok(r, "herdr", &["agent", "prompt", agent, &format!("DECISION {id}: {text}")])?;
-    runner::ok(r, "herdr", &["pane", "send-keys", pane, "Enter"])?;
+    herdr::prompt(r, agent, &format!("DECISION {id}: {text}"))?;
+    herdr::keys(r, pane, "Enter")?;
     Ok(writeln!(out, "{fleet} {id}: {text} -> {agent}")?)
 }
 

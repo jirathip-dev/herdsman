@@ -1,15 +1,10 @@
 //! Host-load gate for `herdsman spawn` (an unreadable signal admits) and the live-agent view.
 use crate::config::Limits;
-use crate::runner::{argv, json, Runner};
+pub use crate::herdr::agents;
+use crate::runner::{argv, Runner};
 use anyhow::Result;
 use serde_json::Value;
 use std::path::Path;
-
-/// Live herdr agents (`herdr agent list`).
-pub fn agents(r: &dyn Runner) -> Result<Vec<Value>> {
-    let v = json(r, "herdr", &["agent", "list"])?;
-    Ok(v["result"]["agents"].as_array().cloned().unwrap_or_default())
-}
 
 /// Live agents named `name` or running inside `dir`.
 pub fn live_in<'a>(agents: &'a [Value], name: &str, dir: &Path) -> Vec<&'a Value> {

@@ -1,5 +1,6 @@
 //! Claude Code: per-role settings.json (PreToolUse hook) + role.md; the kick goes in as argv.
-use super::{agent_start, hook_command, wait_working, Harness};
+use super::{hook_command, Harness};
+use crate::herdr;
 use crate::runner::Runner;
 use crate::spawn::{profile_dir, role_prompt, Plan};
 use crate::Ctx;
@@ -56,15 +57,15 @@ impl Harness for Claude {
         // `--mcp-config` is variadic: `--strict-mcp-config` ends it before the kick.
         a.extend(["--mcp-config".into(), p.mcp_file.to_string_lossy().into(), "--strict-mcp-config".into()]);
         a.push(p.kick.clone());
-        agent_start(p, "claude", pane, a)
+        herdr::start_argv(&p.agent, "claude", pane, a)
     }
 
     /// Claude gets the kick as argv, so it only waits.
     fn kick_cmds(&self, p: &Plan, _pane: &str) -> Vec<Vec<String>> {
-        vec![wait_working(p, "20000")]
+        vec![herdr::wait_working_argv(&p.agent, "20000")]
     }
 
     fn kick(&self, r: &dyn Runner, p: &Plan, pane: &str) -> Result<bool> {
-        Ok(r.run("herdr", &self.kick_cmds(p, pane)[0])?.code == 0)
+        Ok(herdr::exec(r, &self.kick_cmds(p, pane)[0])?.code == 0)
     }
 }
