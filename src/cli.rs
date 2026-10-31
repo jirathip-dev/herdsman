@@ -77,6 +77,34 @@ enum Cmd {
     },
     /// Merge the issue's PR into the integration branch if every gate passes; writes the one closing comment, closes the issue
     Merge { fleet: String, issue: u64 },
+    /// Hold for a decision: log it, notify the fleet with numbered options and the answer command, print its id
+    Ask {
+        fleet: String,
+        issue: String,
+        question: String,
+        /// One choice (at most 4)
+        #[arg(long = "option", value_name = "TEXT")]
+        options: Vec<String>,
+        /// The recommended option's number
+        #[arg(long, value_name = "N")]
+        recommend: Option<usize>,
+    },
+    /// Answer an open ask (option number or free text); prompts the asking agent `DECISION <id>: <text>`
+    Answer {
+        fleet: String,
+        id: String,
+        choice: String,
+        /// owner | conductor
+        #[arg(long, default_value = "owner", value_parser = ["owner", "conductor"])]
+        by: String,
+    },
+    /// The open asks, oldest first, with age
+    Asks {
+        fleet: Option<String>,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
     /// Per-issue state, lane and last-event age
     Status {
         fleet: Option<String>,
@@ -126,7 +154,7 @@ enum Cmd {
         #[arg(long)]
         read_only: bool,
     },
-    /// Alert once per state on stall, lane-dead and ready-unmerged issues; idempotent, safe from cron
+    /// Alert once per state on stall, lane-dead, ready-unmerged, orch-holding and ask-waiting; idempotent, safe from cron
     Check,
     /// Each `[accounts]` account: ok / capped until hh:mm, and the lanes on it (names only, never tokens)
     Accounts {
@@ -333,6 +361,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
             let boards: Vec<_> = all.iter().map(|f| queue::board(&events, f, ctx.now)).collect();
             write!(out, "{}", boards.join("\n"))?;
         }
+        Cmd::Asks { fleet, json } => crate::asks(ctx, out, fleet.as_deref(), json)?,
         Cmd::Serve { cmd: Some(ServeCmd::Pair), .. } => writeln!(out, "pairing code {} (5 min, one use)", devices::new_code(ctx)?)?,
         Cmd::Serve { addr, read_only, .. } => serve::serve(ctx, r, &addr, read_only)?,
         Cmd::Queue { fleet, cmd: QueueCmd::Ls { json } } => {
@@ -368,6 +397,8 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     let issue = lane(&issue)?;
                     spawn::adopt(ctx, &cfg, r, out, (&fleet, issue, &role), &pane)?
                 }
+                Cmd::Ask { fleet, issue, question, options, recommend } => crate::ask(ctx, &cfg, out, (&fleet, lane(&issue)?), &question, &options, recommend)?,
+                Cmd::Answer { fleet, id, choice, by } => crate::answer(ctx, &cfg, r, out, (&fleet, &id), &choice, (&by, None))?,
                 Cmd::Check => check::check(ctx, &cfg, r, out)?,
                 Cmd::Accounts { cmd: None } => access::list(ctx, &cfg, r, out)?,
                 Cmd::Accounts { cmd: Some(AccountsCmd::Reset { name }) } => access::reset(ctx, &cfg, out, &name)?,

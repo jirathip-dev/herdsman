@@ -1,4 +1,8 @@
 
+## Decisions
+
+Never hold silently. If you stop for any decision, run `herdsman ask` with ≤4 options and your recommendation first, then wait. Read a `DECISION` line as final.
+
 ## Issue states
 
 queued → impl → review(n) → fix(n) → ready → merged; plus blocked, needs-human
@@ -23,7 +27,8 @@ queued → impl → review(n) → fix(n) → ready → merged; plus blocked, nee
 - SERIAL_UNMARKED: merge: the PR touches the fleet's serial_paths but the issue was not queued `--serial`
 - CAP: spawn: the fleet's optional max_impl / max_rev lane cap is reached (unset = no cap)
 - PAUSED: spawn: the fleet is paused (`herdsman resume <fleet>`); impl/rev lanes wait, live lanes are untouched
-- BAD_VALUE: set: a value is empty or has a quote/backslash/control char, or the model is not in `models`
+- BAD_VALUE: set: a value is empty or has a quote/backslash/control char, or the model is not in `models`; ask: an empty question, over 4 options
+- NO_SUCH_ASK / ALREADY_ANSWERED: answer: the fleet has no such ask id, or it was answered already
 - STALE: serve: fleet.toml changed since the page was rendered; reload and retry
 - MCP_FORBIDDEN: spawn/profiles sync: a role's `mcp` names a server matching `mcp_deny` (default `*prod*`)
 
@@ -47,7 +52,8 @@ an `account-capped` one waits `cap_reset_minutes` or `herdsman accounts reset <n
 
 ## Events
 
-`herdsman check` emits `stall`, `lane-dead`, `ready-unmerged`, `account-capped` (limit banner) once per state; `herdsman merge` emits
+`herdsman check` emits `stall`, `lane-dead`, `ready-unmerged`, `account-capped` (limit banner), `orch-holding` (orch idle >15 min,
+startable work, no open ask) and `ask-waiting` (an ask open >30 min) once per state; `herdsman merge` emits
 `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain line, or raw event JSON with `format = "json"`. A fleet's own `[[fleet.<name>.notify]]` (same fields)
 replaces the global `[[notify]]` for its events; `notify_global = true` in `[fleet.<name>]` sends to both.
 Owner-only: `herdsman pause|resume <fleet>` (PAUSED) and `herdsman serve`, the phone page (its writes log `"via":"web"`).

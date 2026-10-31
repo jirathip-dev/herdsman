@@ -68,3 +68,6 @@ nav a.on{color:var(--fg);box-shadow:inset 0 2px var(--g)}
 .reply textarea,.pairf input{flex:1;min-width:0;font:inherit;color:var(--fg);background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px;min-height:44px;resize:none}
 .pairf p{flex-basis:100%;margin:0;font-size:12px}
 .st{flex:none;margin:0;font-size:12px;min-height:1.5em}
+.ask{border:1px solid var(--r);background:color-mix(in srgb,var(--r) 15%,transparent);border-radius:8px;padding:8px;margin:8px 0}
+.ask b{color:var(--r)}.ask form{display:flex;flex-wrap:wrap;gap:6px}.ask input[name=text]{flex:1;min-width:8em;font:inherit}
+.ask form button[name]{order:-1}

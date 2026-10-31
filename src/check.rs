@@ -1,7 +1,7 @@
 //! `herdsman check` (alerts, each once per state) and `herdsman clean` (reclaim merged or closed lanes).
 use crate::access;
 use crate::config::Config;
-use crate::events::{age, emit, fold, last_spawn, plain, read, Event, IssueState};
+use crate::events::{age, emit, fold, last_spawn, open_asks, plain, read, Event, IssueState, PASSIVE};
 use crate::gate::gate;
 use crate::gh;
 use crate::host;
@@ -65,19 +65,43 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
             }
         }
         for (kind, key, reason) in hits {
-            if events.iter().any(|e| e.is(kind, &s.fleet, s.issue) && e.str("key") == Some(&key)) {
-                continue;
-            }
             let mut d = json!({"key": key, "reason": reason});
             if kind == "account-capped" {
                 d["account"] = json!(capped);
             }
-            let ev = Event::new(ctx.now, &s.fleet, Some(s.issue), kind, d);
-            writeln!(out, "{}", plain(&ev))?;
-            emit(&ctx.state, cfg, ev)?;
+            fire(ctx, cfg, out, &events, (&s.fleet, Some(s.issue)), kind, d)?;
         }
     }
+    let open = open_asks(&events);
+    for a in open.iter().filter(|a| ctx.now.saturating_sub(a.ts) > 30 * 60) {
+        let why = format!("{} unanswered for {}: {}", a.str("id").unwrap_or("?"), age(ctx.now.saturating_sub(a.ts)), a.str("question").unwrap_or("?"));
+        fire(ctx, cfg, out, &events, (&a.fleet, a.issue), "ask-waiting", json!({"key": a.str("id"), "reason": why}))?;
+    }
+    // An idle orch with startable work and no open ask is holding silently.
+    for fleet in cfg.fleet.iter().filter(|(n, f)| !f.paused && !open.iter().any(|a| a.fleet == **n)).map(|f| f.0) {
+        let orch = agents.iter().flatten().find(|a| a["name"] == format!("{fleet}-orch"));
+        let last = events.iter().filter(|e| e.fleet == *fleet && !PASSIVE.contains(&e.kind.as_str())).map(|e| e.ts).max().unwrap_or(0);
+        let idle = ctx.now.saturating_sub(last);
+        if idle <= 15 * 60 || !orch.is_some_and(|a| matches!(a["agent_status"].as_str(), Some("idle" | "done"))) {
+            continue;
+        }
+        let (code, n) = crate::queue::next(&events, fleet);
+        let ready = || fold(&events).into_values().find(|s| s.fleet == *fleet && s.state == "ready" && mergeable(ctx, r, cfg, s).is_some());
+        let Some(what) = (code == 0).then(|| format!("#{n} startable")).or_else(|| ready().map(|s| format!("#{} ready to merge", s.issue))) else { continue };
+        let why = format!("{what}, orch idle {}, no ask", age(idle));
+        fire(ctx, cfg, out, &events, (fleet, None), "orch-holding", json!({"key": last.to_string(), "reason": why}))?;
+    }
     Ok(())
+}
+
+/// Log and print one alert unless one of its kind already carries `d`'s `key`.
+fn fire(ctx: &Ctx, cfg: &Config, out: &mut dyn Write, events: &[Event], (fleet, issue): (&str, Option<u64>), kind: &str, d: serde_json::Value) -> Result<()> {
+    if events.iter().any(|e| e.kind == kind && e.fleet == fleet && e.issue == issue && e.data.get("key") == d.get("key")) {
+        return Ok(());
+    }
+    let ev = Event::new(ctx.now, fleet, issue, kind, d);
+    writeln!(out, "{}", plain(&ev))?;
+    emit(&ctx.state, cfg, ev)
 }
 
 /// After `herdsman merge`: close the issue's clean lane panes, then `herdsman clean --yes` them.

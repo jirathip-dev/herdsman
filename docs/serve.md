@@ -26,6 +26,11 @@ Sends pass the same Host/Origin checks, are limited to 10 a minute per device, a
 chars, or a control character other than newline). Removing a device also needs a paired cookie. Each send logs `{"type":"prompt","via":"web","agent","device","chars"}`, never the
 text. Secure cookies need https (`tailscale serve`) or localhost.
 
+Open asks (`herdsman ask`) show as a red **needs you** card above every tab: the question, option
+buttons (recommended first) and a free-text box. Answering POSTs `op=answer` (`herdsman answer … --by owner`,
+logged `"via":"web"`) under the same Host/Origin checks and needs a paired device (401 otherwise). In the
+Queue tab the asked issue shows `⏸ waiting: decision`.
+
 Lane modes: `horse` (default), `ascii` (a 3-line horse, 2-frame gallop when working) and
 `glyph`. The vector horses are ported from Corral (jirathip-dev/corral,
 `ios/FleetNotifier/UI/Herd/HerdArt.swift` and `ios/tools/herd-art/horsesvg.py`, MIT ©
