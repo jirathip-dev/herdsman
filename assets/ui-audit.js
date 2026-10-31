@@ -41,12 +41,15 @@
       push.dataset.key = 'AA';
       $('#host').append(Object.assign(document.createElement('h2'), { textContent: 'Alerts' }), push);
       tidy($('#host'));
-      window.Notification = { requestPermission: async () => 'granted' };
+      Object.defineProperty(window, 'Notification', { value: { requestPermission: async () => 'granted' } });
       const sub = { toJSON: () => ({ endpoint: 'e', keys: { p256dh: 'p', auth: 'a' } }) };
       Object.defineProperty(navigator, 'serviceWorker', { value: { ready: Promise.resolve({ pushManager: { subscribe: async () => sub } }) } });
+      const st = () => ($('#push + p.st') || {}).textContent;
       await canned(400, LONG.sub, () => $('#push').click());
+      if (st() !== LONG.sub) early.push(`alerts error: p.st reads "${st()}", not the reply`);
       mid('alerts error');
       await canned(401, LONG.pair, () => $('#push').click());
+      if (!$('#push').disabled || st() !== 'pair this phone first') early.push(`unpaired: [enable alerts] disabled ${$('#push').disabled}, p.st "${st()}"`);
       $('#push').hidden = false;
       $('#push').scrollIntoView({ block: 'center', behavior: 'instant' });
     },
