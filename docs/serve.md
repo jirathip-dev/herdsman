@@ -65,7 +65,7 @@ an HttpOnly, Secure, SameSite=Strict `hd=` cookie with a random token for 10 min
 nothing until `herdsman serve approve <code>` on the Mac (`NO_SUCH_CODE` / `EXPIRED` otherwise, single
 use; `serve pending` lists requests). The approval is logged, so the waiting page's live Events frag
 changes and the page POSTs `/pair/claim`, which keeps the same cookie for a year. At most 3 requests
-are open, 2 per peer address. Only the token's SHA-256 is kept, in `<state>/serve/devices.json`
+are open, 2 per peer address, and a new code never repeats an open one. Only the token's SHA-256 is kept, in `<state>/serve/devices.json`
 (0600); the Host tab lists paired devices with a Remove button.
 Sends pass the same Host/Origin checks, are limited to 10 a minute per device, and are refused
 `PAUSED` (paused fleet), `REV_READONLY` (reviewer lanes) or `BAD_VALUE` (empty, over 2,000

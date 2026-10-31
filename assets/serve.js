@@ -454,15 +454,17 @@ $('.reply').onsubmit = async e => {
 };
 // #59: Pair this phone (header, blocked cards, the sheet): POST `pair/request` shows a code; its 10 min HttpOnly cookie is this
 // browser's alone. The Mac approves it (`serve approve`, logged: the live Events frag arrives, or ↻), then `pair/claim` keeps it a year.
+// The panel flows under the header (or the sheet's Pair button), never over a card; a tap closes it; it expires with the code.
 B.insertAdjacentHTML('beforeend', '<div id=pairp class=pairp hidden></div>');
 const pp = $('#pairp');
-let pairing = false;
+let pairing = false, ttl;
 async function claim() {
   if (!pairing) return;
   pairing = false;
   const r = await fetch(R + 'pair/claim', { method: 'POST' }).catch(() => null);
   if (!r || !r.ok) { pairing = true; return; }
   nopair = false;
+  clearTimeout(ttl);
   pp.className = 'pairp g';
   pp.replaceChildren(el('p', '', (await r.text()).trim()));
   $$('.pairb').forEach(b => b.hidden = true);
@@ -472,14 +474,18 @@ async function claim() {
   if (agent) poll();
 }
 document.addEventListener('click', async e => {
-  if (e.target.closest('#pairp')) { if (!pairing) pp.hidden = true; return; }
-  if (!e.target.closest('.pairb')) return;
+  if (!e.target.closest('.pairb')) { if (e.target.closest('#pairp')) { pairing = false; clearTimeout(ttl); pp.hidden = true; } return; }
   const r = await fetch(R + 'pair/request', { method: 'POST' }).catch(err => ({ ok: false, text: () => 'error: ' + err.message })), t = (await r.text()).trim();
   pairing = r.ok;
   pp.className = 'pairp' + (r.ok ? '' : ' r');
+  if (!e.target.closest('#pairp')) (e.target.closest('.pairf') || $('header')).after(pp);
   pp.hidden = false;
-  if (!r.ok) return pp.replaceChildren(el('p', '', t));
-  pp.replaceChildren(el('p', 'code', t), el('p', 'm', `Approve on the Mac: herdsman serve approve ${t} · or tell the conductor 'pair ${t}'`));
+  clearTimeout(ttl);
+  if (r.ok) pp.replaceChildren(el('p', 'code', t), el('p', 'm', `Approve on the Mac: herdsman serve approve ${t} · or tell the conductor 'pair ${t}'`));
+  else pp.replaceChildren(el('p', '', t));
+  pp.scrollIntoView({ block: 'nearest' });
+  if (!r.ok) return;
+  ttl = setTimeout(() => { pairing = false; pp.className = 'pairp r'; pp.replaceChildren(el('span', '', 'code expired — '), $('.pairb').cloneNode(true)); }, 6e5);
 });
 // Pull to refresh from the top (×0.5 resistance, past 70 px); never with the sheet open or a field
 // focused; the axis locks after 10 px so a sideways swipe never pulls. In Herd mode: the current page.

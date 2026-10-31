@@ -395,7 +395,7 @@ impl<'a> Server<'a> {
             // #59: the request's `hd=` token (10 min) works once `serve approve` clears its code; `/pair/claim` then keeps it a year.
             ("POST", "/pair/request") => match devices::request(ctx, &kind(head), header(head, "x-peer").unwrap_or_default()) {
                 Ok(Some((code, t))) => (extra = format!("Set-Cookie: hd={t}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Strict\r\n"), ("200 OK", "text/plain", format!("{code}\n").into_bytes())).1,
-                Ok(None) => ("429 Too Many Requests", "text/plain", text("3 pairing requests open (2 per address): approve one or wait 10 min\n")),
+                Ok(None) => ("429 Too Many Requests", "text/plain", text("3 pairing requests open (2 per address), or a code clash: approve one, tap Pair again or wait 10 min\n")),
                 Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
             },
             ("POST", "/pair/claim") => match self.device(ctx, head) {

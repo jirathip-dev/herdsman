@@ -56,13 +56,12 @@ pub fn pending(ctx: &Ctx) -> Vec<Device> {
     load(ctx).into_iter().filter(|d| d.code.is_some() && d.created + 600 > ctx.now).collect()
 }
 
-/// A pairing request: (its code, the `hd=` token for the asking browser alone); None while 3 are open, or 2 from `ip`.
+/// A pairing request: (its code, unique among the open ones; the `hd=` token for the asking browser alone); None while 3 are open, 2 from `ip`, or on a code clash.
 pub fn request(ctx: &Ctx, label: &str, ip: &str) -> Result<Option<(String, String)>> {
     let (mut all, b, token) = (load(ctx), random(4)?, random(32)?.iter().map(|b| format!("{b:02x}")).collect::<String>());
     all.retain(|d| d.code.is_none() || d.created + 3600 > ctx.now);
-    let open = pending(ctx);
-    if open.len() >= 3 || open.iter().filter(|d| d.ip == ip).count() >= 2 { return Ok(None) }
-    let (code, hash) = (format!("{:06}", u32::from_be_bytes([b[0], b[1], b[2], b[3]]) % 1_000_000), sha256(token.as_bytes()));
+    let (open, code, hash) = (pending(ctx), format!("{:06}", u32::from_be_bytes([b[0], b[1], b[2], b[3]]) % 1_000_000), sha256(token.as_bytes()));
+    if open.len() >= 3 || open.iter().filter(|d| d.ip == ip).count() >= 2 || open.iter().any(|d| d.code.as_ref() == Some(&code)) { return Ok(None) }
     all.push(Device { label: format!("{label} {}", &hash[..4]), hash, created: ctx.now, used: ctx.now, code: Some(code.clone()), ip: ip.into() });
     store(ctx, &all)?;
     append(&ctx.state, &Event::new(ctx.now, "herdsman", None, "pair-request", json!({"device": label})))?;
