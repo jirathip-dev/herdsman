@@ -35,6 +35,24 @@
       mid('clean refused');
       await canned(502, LONG.send, () => $('.reply').requestSubmit());
     },
+    // #83: the demo's parked lane (no pane, its work on PR #15): the card's parked line, [clean] disabled with its
+    // reason in p.st, [stop]/[kill] hidden, and nothing in the sheet in the red (danger) colour.
+    'sheet-parked': async () => {
+      tab('lanes');
+      const row = $('.lane[data-agent="docs-impl-7"]');
+      if (!row) return early.push('no parked lane docs-impl-7 in the demo');
+      row.scrollIntoView({ block: 'start', behavior: 'instant' });
+      open(row);
+      await wait();
+      await canned(409, 'REFUSED UNSAFE_CLEAN: docs-impl-7: only after merge (PR #15 open)', cleanable);
+      const probe = S.appendChild(Object.assign(document.createElement('i'), { className: 'r' })), red = getComputedStyle(probe).color;
+      probe.remove();
+      if (st.textContent !== 'clean: only after merge (PR #15 open)') early.push(`p.st reads "${st.textContent}", not clean's reason`);
+      if (!$('.top').textContent.includes('parked · work on PR #15')) early.push('the card has no `parked · work on PR #15` line');
+      for (const op of ['stop', 'kill']) if (seen($(`[data-op=${op}]`))) early.push(`[${op}] shown on a lane with no pane`);
+      if (!$('[data-op=clean]').disabled) early.push('[clean] enabled before merge');
+      for (const e of [S, ...S.querySelectorAll('*')].filter(seen)) if (e.matches('.r') || getComputedStyle(e).color === red) early.push(`red in the sheet: ${e.outerHTML.slice(0, 60)}`);
+    },
     // #70: the handle is ≥ 56 px; a −200 px pointer drag moves the sheet mid-drag, release snaps to a detent,
     // and close leaves it shown, sliding off-screen, for a frame before `hidden` (the slide exists). Virtual time
     // (--virtual-time-budget) runs no frames and freezes transitions: rAF is a 16 ms timer here, and the slide is
@@ -131,7 +149,7 @@
   let toasted = null;
   const dragged = [];
   const HP = { herd1: 0, herd2: 1, 'herd-night': 0, 'herd-night-storm': 0 }; // the views measuring one Herd page
-  const ROOTS = { sheet: () => [$('#sheet')], ...Object.fromEntries(Object.entries(HP).map(([v, n]) => [v, () => [hp(n), $('.hlt'), $('.hx'), $('.hwx')]])) };
+  const ROOTS = { sheet: () => [$('#sheet')], 'sheet-parked': () => [$('#sheet')], ...Object.fromEntries(Object.entries(HP).map(([v, n]) => [v, () => [hp(n), $('.hlt'), $('.hx'), $('.hwx')]])) };
   const CTL = 'button:not(.lr,.hh,.hqh), .pk, [role=button]', ROW = 'summary, .lr, .hh, .hqh', NAME = '.nw, .hl b';
   const CHOICE = '.ask button[name=choice], .ask .pick'; // amendment A: wraps, ≤ 4 lines, instead of 28 px
   // A closed <details> keeps its content's boxes (content-visibility), so ask the browser what is shown.

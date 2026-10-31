@@ -50,7 +50,7 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
    `inset`) with a px value outside the token block, a font size that is not a `--fs` token, a control
    `height` that is not `--ctl`, or an inline `style=` with px in the rendered page fails (`file:line value`).
 2. **Browser audit** — the `ui` CI job: headless Chrome opens the exported demo at 390×844, DPR 3,
-   on Queue, Queue with a row open, Lanes, a Lanes sheet, the sheet dragged, Host, Events, Herd page 1 and page 2 (by day), Herd at night and at night in a storm.
+   on Queue, Queue with a row open, Lanes, a Lanes sheet, a parked lane's sheet, the sheet dragged, Host, Events, Herd page 1 and page 2 (by day), Herd at night and at night in a storm.
    `assets/ui-audit.js` (only in the `--demo` export, `?audit=<view>&check=1`) fails on a control
    not 28 px tall (a choice: over 4 lines), text not 11/13 px (inputs 16), a tap area under 44 px, sideways scroll
    (on Herd pages too: no box past the page's sides), a name over 2 lines, text overflowing its box without an
@@ -69,6 +69,9 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
    iframe (virtual time runs no reload) and fails unless it comes back at night.
    `toast` (#66) submits a ▲ form through the page's fetch path with a fixture redirect and fails unless the
    one-line toast showed, is gone 5 s later, and `location.search` has no `msg`.
+   `sheet-parked` (#83) opens the demo's parked lane (no pane, its work on an open PR) and fails unless the card
+   has its `parked · work on PR #n` line, `[clean]` is disabled with its reason in `p.st`, `[stop]` and `[kill]`
+   are hidden, and nothing in the sheet is in the red (danger) colour.
    #68: on every view, a box whose content is wider than it (`scrollWidth > clientWidth + 1`, tap rings off)
    fails unless it ellipsises or scrolls by design, and so does any box past the screen's right edge. `host` and
    `sheet` run each inline control's failure path with a canned long reply (Alerts: an error, then the old 401

@@ -273,7 +273,8 @@ more.onclick = async () => {
   more.hidden = !j.more;
   chat.scrollTop += chat.scrollHeight - h;
 };
-function say(msg, ok) { st.textContent = msg; st.className = 'st ' + (ok ? 'g' : 'r'); }
+// `ok` null: a neutral note, e.g. why a control is disabled (#83).
+function say(msg, ok) { st.textContent = msg; st.className = 'st ' + (ok == null ? 'm' : ok ? 'g' : 'r'); }
 // Stop/Kill/Clean call `/act`; kill and clean dry-run first (kill shows what is lost, clean why it is unsafe).
 const act = (op, confirm) => post('act', { agent, op, confirm: confirm ? '1' : '' });
 async function run(op) {
@@ -297,7 +298,7 @@ async function cleanable() {
   const b = $('[data-op=clean]'), r = await act('clean', false), msg = (await r.text()).trim();
   b.disabled = !r.ok;
   b.title = r.ok ? '' : msg;
-  if (!r.ok && r.status !== 401 && !st.textContent) say('clean: ' + msg.split(': ').pop(), false);
+  if (!r.ok && r.status !== 401 && !st.textContent) say('clean: ' + msg.split(': ').pop(), null);
 }
 function open(e) {
   agent = e.dataset.agent;
