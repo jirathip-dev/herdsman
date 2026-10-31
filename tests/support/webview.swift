@@ -1,6 +1,7 @@
 // Render a page in WebKit at a phone width; print `scrollWidth viewportWidth` of the body
 // with every <details> open, and optionally save a full-height PNG (with `js`: run it
 // after the tab/mode switch and save one 844 px tall screen, e.g. an open sheet).
+// Numbers the js leaves in `window.measure` are printed after the two widths.
 // swift webview.swift <page.html> <width> <tab> <mode> [out.png] [js]
 import AppKit
 import WebKit
@@ -20,11 +21,11 @@ final class Nav: NSObject, WKNavigationDelegate {
         let js = """
         tab('\(tab)'); mode('\(mode)'); \(extra);
         \(png == nil ? "document.querySelectorAll('details').forEach(d => d.open = true);" : "document.querySelectorAll('section').forEach(s => { const d = s.querySelector('details'); if (d) d.open = true; });")
-        [document.body.scrollWidth, document.documentElement.clientWidth, document.documentElement.scrollHeight]
+        [document.body.scrollWidth, document.documentElement.clientWidth, document.documentElement.scrollHeight, ...(window.measure || [])]
         """
         w.evaluateJavaScript(js) { r, e in
             guard let v = r as? [Double] else { print("js error: \(String(describing: e))"); exit(2) }
-            print(Int(v[0]), Int(v[1]))
+            print(([Int(v[0]), Int(v[1])].map { "\($0)" } + v.dropFirst(3).map { "\($0)" }).joined(separator: " "))
             guard let png else { exit(0) }
             w.setFrameSize(NSSize(width: width, height: extra.isEmpty ? CGFloat(v[2]) : 844))
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

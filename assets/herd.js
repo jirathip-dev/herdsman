@@ -1,6 +1,6 @@
 // #37 Herd mode: Corral's Herd screen (jirathip-dev/corral ios/FleetNotifier/UI/Herd: RanchEnvironment,
 // RanchWind, HerdArt; MIT © jirathip-dev). One full-screen page per fleet (swipe ←→, Others last), the
-// ranch on top, the pasture below in bands; queued issues wait at the gate. Data: `/herd.json`, then the
+// ranch strip on top, the pasture below in bands; queued issues wait at the gate above them. Data: `/herd.json`, then the
 // `/live` stream's `herd` event (polled by refresh() while it is down). Host load is the weather.
 // One requestAnimationFrame loop on one clock drives every motion, current page only, paused when hidden.
 const NS = 'http://www.w3.org/2000/svg', M64 = (1n << 64n) - 1n;
@@ -134,13 +134,11 @@ function draw() {
     p.querySelector('.hs .dots').textContent = list.map((_, i) => i === n ? '●' : '○').join('');
     const count = states => lanes.filter(l => states.includes(l.state)).length;
     p.querySelector('.sum').textContent = `${count(['blocked', 'dead'])} blocked · ${count(['working'])} working · ${count(['idle', 'unknown'])} idle · ${count(['done'])} done`;
-    let h = '';
+    // Queued horses get their own row above the working band; a band with no horses is not drawn.
+    let h = queue.length ? `<div class="band b-queue"><h4>queued <span>${queue.length}</span></h4><div class=gate>${queue.map(queued).join('')}</div></div>` : '';
     for (const [name, states] of BANDS) {
-      const ls = lanes.filter(l => states.includes(l.state)), gate = name === 'working' && queue.length;
-      if (!ls.length && !gate) continue;
-      h += `<div class="band b-${name.split('/')[0]}"><h4>${name} <span>${ls.length}</span>${gate ? ` <span>· ${queue.length} queued</span>` : ''}</h4><div class=row>`;
-      if (gate) h += `<div class=gate>${queue.map(queued).join('')}</div>`;
-      h += `<div class=field>${ls.map(horse).join('')}</div></div></div>`;
+      const ls = lanes.filter(l => states.includes(l.state));
+      if (ls.length) h += `<div class="band b-${name.split('/')[0]}"><h4>${name} <span>${ls.length}</span></h4><div class=field>${ls.map(horse).join('')}</div></div>`;
     }
     p.querySelector('.hb').innerHTML = h || '<p class=empty>no horses here</p>';
     p._queue = queue;
