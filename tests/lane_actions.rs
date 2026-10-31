@@ -56,7 +56,7 @@ fn kill_pushes_wip_then_closes_and_logs() {
     assert_eq!(code, 0, "{out}");
     assert!(out.contains(&format!("killed {LANE}: work pushed to wip/{LANE}-20261031-1200")), "{out}");
     let at = |p: &str| r.index(&format!("git -C {wt} {p}")).unwrap_or_else(|| panic!("no git {p}"));
-    assert!(at("add -A -- . :(exclude).brief.md") < at("commit -q --no-verify -m wip: kill snapshot"));
+    assert!(at("add -A") < at("reset -q -- .brief.md") && at("reset -q -- .brief.md") < at("commit -q --no-verify -m wip: kill snapshot"));
     assert!(at("commit") < at(&format!("push origin HEAD:refs/heads/wip/{LANE}-20261031-1200")));
     assert!(at("push") < r.index("herdr pane close w1:p2").unwrap());
     // Never main/staging, never force: the one push names the wip ref.
@@ -109,6 +109,85 @@ fn kill_skips_lockfile_checksums_but_not_secrets() {
         assert!(code == 3 && out.contains("REFUSED SECRET_IN_WIP"), "{bad}: {out}");
         assert!(!r.called(&format!("git -C {wt} push")) && !r.called("herdr pane close"), "{bad}");
     }
+}
+
+/// Real git for the lane's worktree (a clone of a bare origin, `.brief.md` gitignored, the lane
+/// scratch written), failing any git call containing `fail`; herdr and date are faked.
+struct RealGit(Fake, &'static str);
+
+impl herdsman::runner::Runner for RealGit {
+    fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<herdsman::runner::Out> {
+        if prog != "git" {
+            return self.0.run(prog, args);
+        }
+        self.0.calls.borrow_mut().push(format!("git {}", args.join(" ")));
+        if !self.1.is_empty() && args.join(" ").contains(self.1) {
+            return Ok(herdsman::runner::Out { code: 1, stdout: String::new(), stderr: "forced".into() });
+        }
+        herdsman::runner::Real.run(prog, args)
+    }
+}
+
+fn repo(wt: &str, fail: &'static str) -> RealGit {
+    let origin = format!("{wt}.git");
+    let sh = |a: &[&str]| assert!(std::process::Command::new("git").args(a).output().unwrap().status.success(), "{a:?}");
+    sh(&["init", "-q", "--bare", &origin]);
+    sh(&["clone", "-q", &origin, wt]);
+    for (k, v) in [("user.name", "t"), ("user.email", "t@t"), ("commit.gpgsign", "false")] {
+        sh(&["-C", wt, "config", k, v]);
+    }
+    std::fs::write(format!("{wt}/.gitignore"), ".brief.md\n").unwrap();
+    sh(&["-C", wt, "add", "-A"]);
+    sh(&["-C", wt, "commit", "-qm", "init"]);
+    sh(&["-C", wt, "push", "-q", "origin", "HEAD"]);
+    for f in [".brief.md", ".addendum.md", ".mcp.lane.json", "verdict.md"] {
+        std::fs::write(format!("{wt}/{f}"), "scratch").unwrap();
+    }
+    RealGit(Fake::default().reply("date -r", "20261031-1200\n").reply("herdr pane", ""), fail)
+}
+
+fn status(wt: &str) -> String {
+    let o = std::process::Command::new("git").args(["-C", wt, "status", "--porcelain", "--ignored"]).output().unwrap();
+    String::from_utf8(o.stdout).unwrap()
+}
+
+#[test]
+fn kill_counts_lane_scratch_as_clean_and_never_pushes_it() {
+    let (c, wt) = lane("kill-scratch");
+    let r = repo(&wt, "");
+    let before = status(&wt);
+    assert!(run(&c, &r, &["kill", LANE]).1.starts_with(&format!("{LANE} · impl · nothing unpushed · pane closes")));
+    let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
+    assert_eq!((code, out.trim()), (0, &*format!("{LANE} · impl · nothing unpushed · pane closes, worktree kept\nkilled {LANE}")));
+    assert!(r.0.called("herdr pane close w1:p2") && !r.0.called(&format!("git -C {wt} push")) && !r.0.called(&format!("git -C {wt} add")));
+    assert_eq!(status(&wt), before);
+}
+
+#[test]
+fn kill_snapshots_only_the_real_dirty_file() {
+    let (c, wt) = lane("kill-real");
+    let r = repo(&wt, "");
+    std::fs::write(format!("{wt}/real.rs"), "fn x() {}\n").unwrap();
+    assert!(run(&c, &r, &["kill", LANE]).1.contains("0 unpushed commit(s), 1 dirty file(s)"));
+    let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
+    assert_eq!(code, 0, "{out}");
+    let o = std::process::Command::new("git").args(["-C", &format!("{wt}.git"), "show", "--name-only", "--format=", &format!("wip/{LANE}-20261031-1200")]).output().unwrap();
+    assert_eq!(String::from_utf8(o.stdout).unwrap().trim(), "real.rs");
+    assert!(r.0.called("herdr pane close w1:p2"));
+}
+
+#[test]
+fn kill_restores_the_index_when_the_snapshot_fails() {
+    let (c, wt) = lane("kill-snapfail");
+    let r = repo(&wt, "diff --cached");
+    std::fs::write(format!("{wt}/real.rs"), "fn x() {}\n").unwrap();
+    let before = status(&wt);
+    let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
+    assert_eq!(code, 3, "{out}");
+    assert!(out.contains("REFUSED SNAPSHOT_FAILED"), "{out}");
+    assert!(r.0.called(&format!("git -C {wt} add -A")) && !r.0.called(&format!("git -C {wt} push")) && !r.0.called("herdr pane close"));
+    assert_eq!(status(&wt), before);
+    assert_eq!(kinds(&c, "lane-killed"), 0);
 }
 
 #[test]

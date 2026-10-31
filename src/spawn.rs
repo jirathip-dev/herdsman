@@ -259,8 +259,13 @@ fn free_pane(r: &dyn Runner, ws: &str, wt: &Path) -> Result<String> {
     Ok(s["result"]["pane"]["pane_id"].as_str().context("pane split: no pane_id")?.into())
 }
 
-/// Untracked files fleet itself writes into a worktree.
-pub const OWN_FILES: [&str; 4] = [".brief.md", "verdict.md", ".role-prompt.md", ".mcp.lane.json"];
+/// Lane scratch: untracked files fleet itself writes into a worktree (some gitignored). Never dirty work.
+pub const OWN_FILES: [&str; 6] = [".brief.md", ".addendum.md", ".role-prompt.md", ".mcp.lane.json", "verdict.md", ".review-brief.md"];
+
+/// `git status --porcelain` lines that are not lane scratch.
+pub fn changes(st: &str) -> usize {
+    st.lines().filter(|l| !OWN_FILES.iter().any(|f| l.trim_end() == format!("?? {f}"))).count()
+}
 
 /// Why a worktree must not be reused or removed: uncommitted changes (`OWN_FILES` aside) or unpushed commits.
 pub fn dirty(r: &dyn Runner, wt: &Path) -> Option<String> {
@@ -269,7 +274,7 @@ pub fn dirty(r: &dyn Runner, wt: &Path) -> Option<String> {
         Ok(s) => s,
         Err(e) => return Some(format!("unreadable git status ({e:#})")),
     };
-    let changed = st.lines().filter(|l| !OWN_FILES.iter().any(|f| l.trim_end() == format!("?? {f}"))).count();
+    let changed = changes(&st);
     if changed > 0 {
         return Some(format!("{changed} uncommitted change(s)"));
     }
