@@ -1,7 +1,7 @@
 //! Host-load gate for `herdsman spawn` (an unreadable signal admits) and the live-agent view.
 use crate::config::Limits;
 pub use crate::herdr::agents;
-use crate::runner::{argv, Runner};
+use crate::runner::{ok, Runner};
 use anyhow::Result;
 use serde_json::Value;
 use std::path::Path;
@@ -21,8 +21,7 @@ pub struct Host {
 }
 
 fn stdout(r: &dyn Runner, prog: &str, args: &[&str]) -> Option<String> {
-    let o = r.run(prog, &argv(args)).ok()?;
-    (o.code == 0).then_some(o.stdout)
+    ok(r, prog, args).ok()
 }
 
 fn swapouts(r: &dyn Runner) -> Option<f64> {
