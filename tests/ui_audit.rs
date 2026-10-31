@@ -32,7 +32,12 @@ fn every_control_passes_the_audit_at_390px() {
     let r = Fake::default().reply("herdr agent list", &list.to_string()).reply("herdr pane read", MENU);
     let s = Server::new(&c, &r, Some(ADDR.into()));
     let page = req(&s, "GET", "/", "", &pair(&s, &c, "Mozilla/5.0 (iPhone)", T));
-    let html = &page[page.find("<!doctype").unwrap()..];
+    // #60: the parts the live page loads on demand, spliced in as the page shows them once loaded.
+    let part = |p: &str| { let r = req(&s, "GET", p, "", ""); r[r.find("\r\n\r\n").unwrap() + 4..].to_string() };
+    let html = page[page.find("<!doctype").unwrap()..]
+        .replace("<summary><span>roles</span></summary></details>", &format!("<summary><span>roles</span></summary>{}</details>", part("/frag?id=roles&fleet=sendmeter")))
+        .replace("<section id=events></section>", &format!("<section id=events>{}</section>", part("/frag?id=events")));
+    let html = &html;
     assert!(html.contains("▲ up") && html.contains("class=pick") && html.contains("<select name=model"), "fixture has arrows, a menu and pickers");
     let herd = req(&s, "GET", "/herd.json?weather=calm", "", "");
     let herd = &herd[herd.find("\r\n\r\n").unwrap() + 4..];
