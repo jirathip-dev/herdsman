@@ -179,14 +179,9 @@ fn card(lines: &[String]) -> String {
 
 /// One narrow 3-field row (`a`, state, age) that expands to the stacked card `lines`.
 fn row(class: &str, lead: &str, a: &str, state: &str, age: &str, lines: &[String]) -> String {
-    let card = card(lines);
-    format!(
-        "<details class=\"{class}\"><summary>{lead}<span>{}</span><span class={}>{}</span><span class=m>{}</span></summary>{card}</details>",
-        esc(a),
-        tone(state),
-        esc(state),
-        esc(age)
-    )
+    let (card, a, tone, state, age) = (card(lines), esc(a), tone(state), esc(state), esc(age));
+    format!("<details class=\"{class}\"><summary>{lead}<span>{a}</span><span class={tone}>{state}</span><span class=m>{age}</span></summary>\
+        {card}</details>")
 }
 
 /// The non-empty fields, ` · `-joined (no `-` placeholders).
@@ -373,7 +368,10 @@ impl<'a> Server<'a> {
             _ if guarded && !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("GET", "/live") => ("503 Service Unavailable", "text/plain", text("8 live clients already: the page polls instead\n")),
             ("GET", "/") => self.page(ctx, &form(query), self.device(ctx, head).is_some()).map_or_else(fail, |b| ("200 OK", HTML, b.into_bytes())),
-            ("GET", "/frag") => self.part(ctx, &form(query)).map_or(("404 Not Found", "text/plain", text("no such part\n")), |h| ("200 OK", HTML, h.into_bytes())),
+            ("GET", "/frag") => match self.part(ctx, &form(query)) {
+                Some(h) => ("200 OK", HTML, h.into_bytes()),
+                None => ("404 Not Found", "text/plain", text("no such part\n")),
+            },
             ("GET", "/lane") if self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("pair this device to read transcripts\n")),
             ("GET", "/lane") => match self.transcript(ctx, &form(query)) {
                 Some(j) => ("200 OK", JSON, j.into_bytes()),
@@ -408,7 +406,8 @@ impl<'a> Server<'a> {
             },
             ("POST", "/push/unsubscribe") => {
                 let id = form(body.trim()).get("id").cloned().unwrap_or_default();
-                return see(&format!("/?msg={}", enc(&crate::webpush::remove(&ctx.state, &[id]).map_or_else(|e| shown(&e), |n| format!("{n} alert device removed")))));
+                let msg = crate::webpush::remove(&ctx.state, &[id]).map_or_else(|e| shown(&e), |n| format!("{n} alert device removed"));
+                return see(&format!("/?msg={}", enc(&msg)));
             }
             ("POST", p @ ("/send" | "/answer" | "/act")) => {
                 let (status, msg) = self.send(ctx, head, &form(body.trim()), p);
@@ -418,13 +417,8 @@ impl<'a> Server<'a> {
             _ => ("405 Method Not Allowed", "text/plain", text("GET or POST only\n")),
         };
         let allow = if self.addr.is_some() { "GET, POST" } else { "GET" };
-        let mut res = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nAllow: {allow}\r\n{extra}Cache-Control: {cache}\r\nConnection: close\r\n\r\n",
-            body.len()
-        )
-        .into_bytes();
-        res.extend(body);
-        res
+        let head = format!("HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nAllow: {allow}\r\n", body.len());
+        [format!("{head}{extra}Cache-Control: {cache}\r\nConnection: close\r\n\r\n").into_bytes(), body].concat()
     }
 
     /// `Host` names the bind address or a `[serve].allowed_hosts` name, and any `Origin` is one of those.
@@ -763,10 +757,11 @@ impl<'a> Server<'a> {
                 body += &format!("<details class=done><summary><span>done today: {}</span></summary>{rows}</details>", done.len());
             }
             // #60: the live page loads a fleet's role forms when the row is opened (`/frag`); an export inlines them.
-            body += &match self.export {
-                Some(_) => format!("<details class=roles><summary><span>roles</span></summary>{}</details>", roles(cfg, f, fc, rw, &mt)),
-                None => format!("<details class=roles data-src=\"frag?id=roles&amp;fleet={}\"><summary><span>roles</span></summary></details>", enc(f)),
+            let (src, inline) = match self.export {
+                Some(_) => (String::new(), roles(cfg, f, fc, rw, &mt)),
+                None => (format!(" data-src=\"frag?id=roles&amp;fleet={}\"", enc(f)), String::new()),
             };
+            body += &format!("<details class=roles{src}><summary><span>roles</span></summary>{inline}</details>");
             let button = |op: &str, label: &str| if rw { format!("<form method=post>{}<button>{label}</button></form>", hidden(op, f, &mt)) } else { String::new() };
             if fc.paused {
                 let lanes: Vec<&&IssueState> = mine.iter().filter(|s| s.active_lane().is_some()).collect();
@@ -777,11 +772,9 @@ impl<'a> Server<'a> {
                     (n, 0) => format!("{n} lane{}", if n == 1 { "" } else { "s" }),
                     (n, d) => format!("{n} lanes ({d} dead)"),
                 };
-                h += &format!(
-                    "<details class=paused><summary><span>{} · <span class=r>paused</span> · {what}</span></summary>{}{body}</details>",
-                    esc(f),
-                    button("resume", "Resume")
-                );
+                let (name, resume) = (esc(f), button("resume", "Resume"));
+                h += &format!("<details class=paused><summary><span>{name} · <span class=r>paused</span> · {what}</span></summary>\
+                    {resume}{body}</details>");
                 continue;
             }
             h += &format!("<h2><span>{}</span>{}</h2>", esc(f), button("pause", "Pause"));
@@ -896,15 +889,10 @@ impl<'a> Server<'a> {
         let tone = if sup.is_some() { "m" } else { tone };
         let since = w.filter(|_| sup.is_none()).map_or(l.since, |w| w.since);
         let a = if since > 0 { age(ctx.now.saturating_sub(since)) } else { String::new() };
+        let (name, role, av, state) = (esc(&l.name), esc(&l.role), avatar(&l.name, &l.state), esc(&l.state));
         format!(
-            "<div class=lane data-agent=\"{}\" data-role={}><button type=button class=lr>{}<span class=\"nw el\">{}</span><span class=\"nw {}\">{} {a}</span>\
-             {why}<span class=act>{act}</span></button><div class=card hidden>{card}</div></div>",
-            esc(&l.name),
-            esc(&l.role),
-            avatar(&l.name, &l.state),
-            esc(&l.name),
-            tone,
-            esc(&l.state)
+            "<div class=lane data-agent=\"{name}\" data-role={role}><button type=button class=lr>{av}<span class=\"nw el\">{name}</span>\
+             <span class=\"nw {tone}\">{state} {a}</span>{why}<span class=act>{act}</span></button><div class=card hidden>{card}</div></div>"
         )
     }
 
@@ -972,12 +960,9 @@ impl<'a> Server<'a> {
             let key = crate::webpush::vapid(&ctx.state).map(|k| crate::webpush::public(&k)).unwrap_or_default();
             h += &format!("<h2>Alerts</h2><button id=push type=button hidden data-key={}>Enable alerts</button>", base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, key));
             for s in crate::webpush::load(&ctx.state) {
-                h += &format!(
-                    "<form method=post action=/push/unsubscribe class=role><input type=hidden name=id value={}><span>{} <span class=m>alerts on {} ago</span></span><button>Remove</button></form>",
-                    s.id(),
-                    esc(&s.label),
-                    age(ctx.now.saturating_sub(s.created))
-                );
+                let (id, label, on) = (s.id(), esc(&s.label), age(ctx.now.saturating_sub(s.created)));
+                h += &format!("<form method=post action=/push/unsubscribe class=role><input type=hidden name=id value={id}>\
+                    <span>{label} <span class=m>alerts on {on} ago</span></span><button>Remove</button></form>");
             }
         }
         h
@@ -1089,13 +1074,9 @@ fn role_form(cfg: &Config, fleet: &str, role: &str, r: &Role, rw: bool, mt: &str
         s + "</select>"
     };
     let models: Vec<&str> = cfg.models.iter().map(String::as_str).collect();
-    format!(
-        "<form method=post class=role>{}<input type=hidden name=role value={}>{head}{}{}<button>Set</button></form>",
-        hidden("set", fleet, mt),
-        esc(role),
-        select("model", &r.model, &model, &models),
-        select("effort", &r.effort, &effort, crate::harness::efforts(&r.harness)),
-    )
+    let (set, role) = (hidden("set", fleet, mt), esc(role));
+    let (model, effort) = (select("model", &r.model, &model, &models), select("effort", &r.effort, &effort, crate::harness::efforts(&r.harness)));
+    format!("<form method=post class=role>{set}<input type=hidden name=role value={role}>{head}{model}{effort}<button>Set</button></form>")
 }
 
 /// Noise folded into one count per run of consecutive events unless `all`.
@@ -1129,12 +1110,8 @@ fn events_tab(ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States, al
             }
         }
         let via = if e.str("via") == Some("web") { " <span class=m>(web)</span>" } else { "" };
-        h += &format!(
-            "<p class=ev><span class=m>{}</span> {}{via} {}</p>",
-            age(ctx.now.saturating_sub(e.ts)),
-            esc(&plain(e)),
-            links.join(" ")
-        );
+        let (at, line, links) = (age(ctx.now.saturating_sub(e.ts)), esc(&plain(e)), links.join(" "));
+        h += &format!("<p class=ev><span class=m>{at}</span> {line}{via} {links}</p>");
     }
     if !all {
         h += "<p><a href=\"?all=1\">all events, unfolded</a></p>";

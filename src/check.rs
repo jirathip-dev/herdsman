@@ -229,14 +229,8 @@ pub fn clean(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
 }
 
 /// The fleet's closed issue numbers, read once per fleet per run; a failed read is reported and counts as none.
-fn closed_issues<'a>(
-    ctx: &Ctx,
-    cfg: &Config,
-    r: &dyn Runner,
-    out: &mut dyn Write,
-    memo: &'a mut BTreeMap<String, Vec<u64>>,
-    fleet: &str,
-) -> &'a Vec<u64> {
+fn closed_issues<'a>(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, memo: &'a mut BTreeMap<String, Vec<u64>>, fleet: &str)
+    -> &'a Vec<u64> {
     if !memo.contains_key(fleet) {
         let got = cfg.fleet(fleet).and_then(|f| gh::closed(ctx, r, f, fleet, ctx.now));
         let list = got.unwrap_or_else(|e| {
