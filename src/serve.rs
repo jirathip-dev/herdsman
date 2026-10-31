@@ -232,9 +232,8 @@ type View = (Option<String>, &'static str, String, String);
 fn view(ctx: &Ctx, l: &lanes::Lane, waits: &[crate::waiting::Waiting]) -> View {
     let title = l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| gh::cached_title(ctx, f, n));
     let (tone, shown) = wait_of(l, waits).map_or_else(|| (tone(&l.state), l.state.clone()), |w| (w.tone(ctx.now), w.label(ctx.now)));
-    let pr = l.issue.zip(l.fleet.as_ref()).map(|(n, f)| gh::cached_pr(ctx, f, n)).unwrap_or_default();
-    let open = pr["number"].as_u64().filter(|_| pr["state"] == "OPEN");
-    let on = |h: &String| open.map_or(format!("pushed {}", h.trim()), |n| format!("work on PR #{n}"));
+    let pr = l.issue.zip(l.fleet.as_ref()).map(|(n, f)| gh::cached_pr(ctx, f, n)).filter(|p| p["state"] == "OPEN");
+    let on = |h: &str| pr.as_ref().map_or(format!("pushed {}", h.trim()), |p| format!("work on PR #{}", p["number"]));
     let (tone, shown) = l.parked.as_ref().map_or((tone, shown), |h| ("m", format!("parked · {}", on(h))));
     (title, tone, shown, ago(ctx.now, l.since))
 }
@@ -389,19 +388,15 @@ impl<'a> Server<'a> {
             ("POST", _) if self.addr.is_none() => ("405 Method Not Allowed", "text/plain", text("read-only: GET only\n")),
             _ if guarded && !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("GET", "/live") => ("503 Service Unavailable", "text/plain", text("8 live clients already: the page polls instead\n")),
-            ("GET", "/") => match self.page(ctx, &form(query), self.device(ctx, head).is_some()) {
-                Ok(b) => ("200 OK", HTML, b.into_bytes()),
-                Err(e) => fail(e),
-            },
-            ("GET", "/frag") => match self.part(ctx, &form(query)) {
-                Some(h) => ("200 OK", HTML, h.into_bytes()),
-                None => ("404 Not Found", "text/plain", text("no such part\n")),
-            },
+            ("GET", "/") => self.page(ctx, &form(query), self.device(ctx, head).is_some())
+                .map_or_else(fail, |b| ("200 OK", HTML, b.into_bytes())),
+            ("GET", "/frag") => self.part(ctx, &form(query))
+                .map_or(("404 Not Found", "text/plain", text("no such part\n")), |h| ("200 OK", HTML, h.into_bytes())),
             ("GET", "/lane") if self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("pair this device to read transcripts\n")),
-            ("GET", "/lane") => match self.transcript(ctx, &form(query)) {
-                Some(j) => ("200 OK", JSON, j.into_bytes()),
-                None => ("404 Not Found", "text/plain", text("no such agent pane\n")),
-            },
+            ("GET", "/lane") => self.transcript(ctx, &form(query)).map_or(
+                ("404 Not Found", "text/plain", text("no such agent pane\n")),
+                |j| ("200 OK", JSON, j.into_bytes()),
+            ),
             ("GET", "/herd.json") => {
                 let loopback = header(head, "host").is_some_and(|h| ["127.0.0.1", "localhost", "[::1]"].iter().any(|l| names(l, h)));
                 let weather = form(query).get("weather").filter(|_| loopback).cloned();
@@ -492,10 +487,7 @@ impl<'a> Server<'a> {
         let (pick, act) = (path == "/answer", path == "/act");
         let res = if pick { self.pick(ctx, &dev, f) } else if act { self.act(ctx, &dev, f) } else { self.prompt(ctx, &dev, f) };
         if pick || act { self.purge(); self.kick.store(true, Relaxed); }
-        match res {
-            Ok(msg) => ("200 OK", msg),
-            Err(e) => ("409 Conflict", shown(&e)),
-        }
+        res.map_or_else(|e| ("409 Conflict", shown(&e)), |msg| ("200 OK", msg))
     }
 
     /// The live fleet lane `agent` with its fleet and pane; refused PAUSED when its fleet is.
@@ -736,7 +728,6 @@ impl<'a> Server<'a> {
         // The state of an open lane herdr shows no pane for: `dead`, or `parked` (#83).
         let ls = self.lanes(now, cfg, events, st).unwrap_or_default();
         let gone = |s: &IssueState| s.active_lane().and_then(|x| ls.iter().find(|l| l.name == x.1 && l.pane.is_none()));
-        let dead = |s: &IssueState| gone(s).is_some_and(|l| l.state == "dead");
         let mut h = String::new();
         for (f, fc) in &cfg.fleet {
             let q = queue::view(events, st, f);
@@ -749,11 +740,11 @@ impl<'a> Server<'a> {
             let mut body = String::new();
             for &(n, blocked_by, k) in &items {
                 let s = st.get(&(f.clone(), n));
-                let is_dead = s.is_some_and(dead);
                 let waiting = crate::events::open_asks(events).iter().any(|e| e.fleet == *f && e.issue == Some(n));
                 let logged = s.map_or("queued", |s| s.state.as_str());
                 let shown = if waiting { "⏸ waiting: decision" } else { logged };
                 let state = s.and_then(gone).map_or(shown, |l| l.state.as_str());
+                let is_dead = state == "dead";
                 let a = ago(now, s.map_or(0, |s| s.last_ts));
                 let lane = s.and_then(|s| s.lane.as_deref()).unwrap_or_default();
                 let mut card = vec![esc(&join(&[&format!("#{n} {logged}"), lane, &a])), pr_line(ctx, Some(fc), f, n, s)];
@@ -804,7 +795,7 @@ impl<'a> Server<'a> {
             let button = |op: &str, label: &str| if rw { format!("<form method=post>{}<button>{label}</button></form>", hidden(op, f, &mt)) } else { String::new() };
             if fc.paused {
                 let lanes: Vec<&&IssueState> = mine.iter().filter(|s| s.active_lane().is_some()).collect();
-                let nd = lanes.iter().filter(|s| dead(s)).count();
+                let nd = lanes.iter().filter(|s| gone(s).is_some_and(|l| l.state == "dead")).count();
                 let what = match (lanes.len(), nd) {
                     (0, _) => "no lane".to_string(),
                     (n, d) if d == n => format!("{n} lane{} (dead)", if n == 1 { "" } else { "s" }),
@@ -844,8 +835,7 @@ impl<'a> Server<'a> {
     }
 
     fn waits(&self, ctx: &Ctx, cfg: &Config, events: &[Event], all: &[lanes::Lane]) -> Vec<crate::waiting::Waiting> {
-        let agent = |l: &lanes::Lane| json!({"name": l.name, "agent_status": l.state, "pane_id": l.pane});
-        let live: Vec<_> = all.iter().map(agent).collect();
+        let live: Vec<_> = all.iter().map(|l| json!({"name": l.name, "agent_status": l.state})).collect();
         crate::waiting::scan(ctx, cfg, &self.cached(ctx.now, 30), events, &live, false).into_iter().map(|x| x.1).collect()
     }
 
@@ -869,13 +859,8 @@ impl<'a> Server<'a> {
         };
         let fleets: Vec<_> = cfg.fleet.keys().map(|f| json!({"name": f, "lanes": lanes(Some(f)), "queue": queued(f)})).collect();
         let lim = &cfg.limits;
-        let forced = match weather {
-            Some("calm") => Some((0.1, "normal")),
-            Some("gusty") => Some((0.7, "normal")),
-            Some("storm") => Some((1.3, "normal")),
-            Some("fog") => Some((0.3, "warn")),
-            _ => None,
-        };
+        let sky = [("calm", 0.1, "normal"), ("gusty", 0.7, "normal"), ("storm", 1.3, "normal"), ("fog", 0.3, "warn")];
+        let forced = sky.iter().find(|w| Some(w.0) == weather).map(|w| (w.1, w.2));
         let h = forced.map_or_else(|| self.sample(), |(k, p)| Host { load_per_cpu: Some(k * lim.load_per_cpu), pressure: Some(p.into()), swapout: Some(0.0) });
         let host = json!({"load": h.load_per_cpu, "limit": lim.load_per_cpu, "pressure": h.pressure, "swapouts": h.swapout, "swap_limit": lim.swapout_rate, "gate": host::admit(&h, lim).err()});
         Ok(json!({"fleets": fleets, "others": lanes(None), "host": host}))

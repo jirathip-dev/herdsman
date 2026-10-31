@@ -107,7 +107,7 @@ pub fn scan(ctx: &Ctx, cfg: &Config, r: &dyn Runner, events: &[Event], agents: &
         let mut w = waiting_on(events, &s, head, &pr, &f.required_checks, path.as_deref().zip(word.as_deref()));
         // #83: a paused fleet's lane with no pane and a clean, pushed worktree is parked until `resume`.
         let safe = || wt.is_some_and(|wt| crate::spawn::dirty(r, std::path::Path::new(wt)).is_none());
-        if f.paused && !agents.iter().any(|a| a["name"] == lane.as_str() && !a["pane_id"].is_null()) && safe() {
+        if f.paused && !agents.iter().any(|a| a["name"] == lane.as_str() && a["agent_status"] != "parked") && safe() {
             let pr = pr["number"].as_u64().map_or(String::new(), |p| format!(" (resume to review PR #{p})"));
             (w.who, w.what, w.next_cmd) = ("none", format!("parked: fleet paused{pr}"), None);
         }

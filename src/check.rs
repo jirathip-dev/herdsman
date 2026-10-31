@@ -186,9 +186,8 @@ pub fn clean(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
         } else if closed_issues(ctx, cfg, r, out, &mut closed, &e.fleet).contains(&n) {
             "issue closed"
         } else if lane.is_some() {
-            let pr = gh::cached_pr(ctx, &e.fleet, n);
-            let open = pr["number"].as_u64().filter(|_| pr["state"] == "OPEN").map(|p| format!(" (PR #{p} open)"));
-            return unsafe_lane(&format!("only after merge{}", open.unwrap_or_default()));
+            let p = Some(gh::cached_pr(ctx, &e.fleet, n)).filter(|p| p["state"] == "OPEN").map(|p| p["number"].clone());
+            return unsafe_lane(&p.map_or("only after merge".into(), |n| format!("only after merge (PR #{n} open)")));
         } else {
             continue;
         };

@@ -162,10 +162,7 @@ pub fn activity(harness: &str, screen: &str) -> String {
         _ => lines.iter().rev().find(|l| !chrome(l)),
     };
     let m = mask(line.copied().unwrap_or_default());
-    match m.chars().count() {
-        n if n > 60 => m.chars().take(59).collect::<String>() + "…",
-        _ => m,
-    }
+    if m.chars().count() > 60 { m.chars().take(59).collect::<String>() + "…" } else { m }
 }
 
 /// The pane's last `n` non-empty lines, masked.

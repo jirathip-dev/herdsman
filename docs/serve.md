@@ -39,8 +39,12 @@ A POST must name the bind address (or a `[serve].allowed_hosts` name, e.g. the
 `tailscale serve` `*.ts.net` host) in `Host`/`Origin`, and is refused `STALE` when
 fleet.toml changed since the page was rendered.
 
-Lanes are grouped like Corral: state sections blocked → working → idle → done → dead, each
-split into fleet subgroups (alphabetical, Others last), newest-changed first. Tapping a lane
+Lanes are grouped like Corral: state sections blocked → working → idle → done → parked → dead, each
+split into fleet subgroups (alphabetical, Others last), newest-changed first. A lane the log has open
+but herdr shows no pane for is `parked` (neutral, `parked · work on PR #n` or `parked · pushed <sha>`)
+when its worktree is clean with nothing unpushed, and `dead` (red, with the log/pane mismatch line)
+when work is at risk. On a paused fleet a parked lane reads `parked: fleet paused (resume to review
+PR #n)`; once resumed, the usual `pushed <sha>, waiting for orch to spawn review` applies. Tapping a lane
 opens a bottom sheet that slides up to 78 % and drags like an iOS sheet (it follows the finger from the
 56 px handle, or from the conversation's top; snaps to 50 %, 78 % or full by position and flick; below 50 %, a
 down flick, the backdrop or Esc slide it closed) with
@@ -57,7 +61,8 @@ conversation" with the code entry.
 The sheet header has **Stop** (`herdsman stop`: Esc, the agent pauses), **Kill** (a confirm shows
 `herdsman kill`'s dry-run line, e.g. `impl-42 · impl · 3 unpushed commit(s), 0 dirty file(s) →
 wip/… · pane closes, worktree kept`) and **Clean** (`herdsman clean <fleet> --lane <agent>`;
-disabled with the reason, e.g. "not merged", "live agent"). Each POSTs `/act {agent, op, confirm}`:
+disabled with the reason under the actions, e.g. "only after merge (PR #42 open)", "live agent";
+a lane with no pane hides Stop and Kill). Each POSTs `/act {agent, op, confirm}`:
 a paired device, the Host/Origin checks and the 10-a-minute limit, logged
 `{"type":"act","via":"web","agent","device","op"}` (dry runs are not logged). Typing `/` first in
 the reply box lists `/stop`, `/kill`, `/clean` (the actions) and `/compact`, `/clear`, `/status`
