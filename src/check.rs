@@ -320,12 +320,9 @@ pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
         let diff = git(&["diff", "--cached"])? + &git(&["log", "-p", "--format=", "HEAD", "--not", "--remotes"])?;
         // Added hunk lines only (a file header runs `diff --git` → `@@`), minus hash-shaped lockfile checksums.
         let hash = |l: &str| {
-            let l = l.trim().trim_end_matches(',');
-            if let Some(h) = l.strip_prefix("checksum = \"").and_then(|v| v.strip_suffix('"')) {
-                return h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-            }
-            let Some((alg, b)) = l.strip_prefix("\"integrity\": \"sha").and_then(|v| v.strip_suffix('"')?.split_once('-')) else { return false };
-            [("256", 44), ("384", 64), ("512", 88)].contains(&(alg, b.len())) && b.bytes().all(|c| c.is_ascii_alphanumeric() || b"+/=".contains(&c))
+            let l = l.trim().trim_end_matches(',').strip_suffix('"').unwrap_or_default();
+            l.strip_prefix("checksum = \"").is_some_and(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+                || l.strip_prefix("\"integrity\": \"sha").and_then(|v| v.split_once('-')).is_some_and(|(a, b)| [("256", 44), ("384", 64), ("512", 88)].contains(&(a, b.len())) && b.bytes().all(|c| c.is_ascii_alphanumeric() || b"+/=".contains(&c)))
         };
         let mut head = false;
         let diff: String = diff.lines().filter(|l| { head = (head || l.starts_with("diff --git ")) && !l.starts_with("@@"); !head }).filter_map(|l| l.strip_prefix('+')).filter(|l| !hash(l)).collect::<Vec<_>>().join("\n");

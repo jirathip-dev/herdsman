@@ -161,6 +161,11 @@ enum Cmd {
         #[arg(long)]
         read_only: bool,
     },
+    /// Web push to the page's subscribed devices
+    Push {
+        #[command(subcommand)]
+        cmd: PushCmd,
+    },
     /// Alert once per state on stall, lane-dead, ready-unmerged, orch-holding, ask-waiting; nudge an idle orch; idempotent, safe from cron
     Check,
     /// Each `[accounts]` account: ok / capped until hh:mm, and the lanes on it (names only, never tokens)
@@ -265,6 +270,12 @@ enum QueueCmd {
 enum ServeCmd {
     /// Print a one-time 6-digit code (5 min) that pairs a phone's reply box
     Pair,
+}
+
+#[derive(Subcommand)]
+enum PushCmd {
+    /// Send a test alert to every subscribed device (needs a `type = "webpush"` notifier for its `sub`)
+    Test,
 }
 
 #[derive(Subcommand)]
@@ -387,6 +398,13 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
         Cmd::Asks { fleet, json } => crate::asks(ctx, out, fleet.as_deref(), json)?,
         Cmd::Serve { cmd: Some(ServeCmd::Pair), .. } => writeln!(out, "pairing code {} (5 min, one use)", devices::new_code(ctx)?)?,
         Cmd::Serve { addr, read_only, .. } => serve::serve(ctx, r, &addr, read_only)?,
+        Cmd::Push { cmd: PushCmd::Test } => {
+            let cfg = Config::load(&ctx.config)?;
+            let n = cfg.notify.iter().chain(cfg.fleet.values().flat_map(|f| &f.notify)).find(|n| n.webpush());
+            let Some(sub) = n.and_then(|n| n.sub.as_deref()) else { bail!("no `type = \"webpush\"` notifier in fleet.toml (docs/serve.md)") };
+            let ev = crate::events::Event::new(ctx.now, "herdsman", None, "push-test", json!({"reason": "test alert"}));
+            writeln!(out, "{}", crate::webpush::send(&ctx.state, sub, &ev)?)?;
+        }
         Cmd::Queue { fleet, cmd: QueueCmd::Ls { json } } => {
             let rows = queue::ls_json(&read(&ctx.state)?, &fleet);
             if json {
