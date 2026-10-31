@@ -20,8 +20,7 @@ impl Harness for Claude {
         std::fs::write(dir.join("settings.json"), settings)?;
         std::fs::write(dir.join("role.md"), format!("{}\n\n{usage}", role_prompt(role)))?;
         std::fs::write(dir.join("fleet.md"), usage)?;
-        writeln!(out, "synced {} ({role})", dir.display())?;
-        Ok(())
+        Ok(writeln!(out, "synced {} ({role})", dir.display())?)
     }
 
     fn ready(&self, ctx: &Ctx, _r: &dyn Runner, p: &Plan) -> Result<()> {

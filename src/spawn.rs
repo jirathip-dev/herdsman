@@ -437,8 +437,7 @@ pub fn adopt(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (flee
     let mut d = lane_data(&p, pane, ws);
     d["adopted"] = json!(true);
     emit(&ctx.state, cfg, Event::new(ctx.now, fleet, issue, "spawn", d))?;
-    writeln!(out, "adopted {pane} as {} ({} @ {})", p.agent, p.branch, p.worktree.display())?;
-    Ok(())
+    Ok(writeln!(out, "adopted {pane} as {} ({} @ {})", p.agent, p.branch, p.worktree.display())?)
 }
 
 fn print_plan(out: &mut dyn Write, pj: &Value, as_json: bool) -> Result<()> {

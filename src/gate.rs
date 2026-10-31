@@ -116,8 +116,7 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
     if st.as_ref().is_some_and(|s| s.state == "merged") {
         let m = events.iter().find(|e| e.is("merged", fleet, issue));
         let s = |k| m.and_then(|e| e.str(k)).unwrap_or("?");
-        writeln!(out, "already merged → {} (PR #{})", s("merge_sha"), s("pr"))?;
-        return Ok(());
+        return Ok(writeln!(out, "already merged → {} (PR #{})", s("merge_sha"), s("pr"))?);
     }
     let branch = branch_of(st.as_ref(), issue);
     let pr = if is_main(&f.integration) {
