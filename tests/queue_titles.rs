@@ -96,3 +96,43 @@ const page = (status, body) => async () => ({ ok: status === 200, status, body, 
     let o = std::process::Command::new("node").arg(d.join("t.js")).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), r#"[502,0,"DOWN",200,"v1",200,"v1",200,"v2",5]"#, "{}", String::from_utf8_lossy(&o.stderr));
 }
+
+/// #73 gate 2 for #67, deterministic: sw.js's own `fetch` listener under node with a synthetic navigate
+/// Request (no browser, no SW timing). A navigation to a JSON read (or any non-page URL) gets the page:
+/// the cached copy, else the network's `/`; the same URLs fetched (not navigated) pass through untouched.
+#[test]
+fn sw_answers_a_navigation_to_a_json_read_with_the_page() {
+    if std::process::Command::new("node").arg("--version").output().is_err() {
+        assert!(std::env::var_os("CI").is_none(), "node is required in CI for the sw gate");
+        eprintln!("skipping: no node here");
+        return;
+    }
+    let sw = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sw.js")).unwrap();
+    let harness = r#"
+const on = {}, store = new Map(), asked = [];
+globalThis.self = { addEventListener: (k, f) => on[k] = f, skipWaiting: () => {} };
+globalThis.location = { origin: 'http://h' };
+globalThis.caches = { open: async () => ({ put: async (k, v) => store.set(k, v), addAll: async () => {} }), match: async k => store.get(k) };
+globalThis.fetch = async u => (asked.push(String(u)), { ok: true, status: 200, body: 'net:' + u, clone() { return this; } });
+"#;
+    let run = r#"
+const go = async (path, mode) => {
+  let p = null; on.fetch({ request: { url: 'http://h' + path, method: 'GET', mode }, respondWith: x => p = x, waitUntil: () => {} });
+  return p ? (await p).body : 'PASS';
+};
+(async () => {
+  const urls = ['/frags', '/herd.json?weather=calm', '/lane?agent=x', '/live', '/a/@V/nope.js'], out = [];
+  for (const u of urls) out.push(await go(u, 'navigate'));
+  out.push(asked.join(' '));
+  store.set('/', { body: 'cached-page' });
+  for (const u of urls) out.push(await go(u, 'navigate'));
+  for (const u of urls.slice(0, 4)) out.push(await go(u, 'cors'));
+  console.log(JSON.stringify(out));
+})();
+"#;
+    let d = tmpdir("sw-nav");
+    std::fs::write(d.join("t.js"), format!("{harness}\n{sw}\n{run}")).unwrap();
+    let o = std::process::Command::new("node").arg(d.join("t.js")).output().unwrap();
+    let want = r#"["net:/","net:/","net:/","net:/","net:/","/ / / / /","cached-page","cached-page","cached-page","cached-page","cached-page","PASS","PASS","PASS","PASS"]"#;
+    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), want, "{}", String::from_utf8_lossy(&o.stderr));
+}
