@@ -11,7 +11,6 @@ self.addEventListener('activate', e => e.waitUntil(caches.keys().then(ks => Prom
 self.addEventListener('fetch', e => {
   const u = new URL(e.request.url);
   if (e.request.method !== 'GET' || u.origin !== location.origin) return;
-  if (e.request.mode === 'navigate' && u.pathname !== P) return e.respondWith(caches.match(P).then(m => m || fetch(P)));
   if ([P + 'lane', P + 'live', P + 'herd.json', P + 'frags'].includes(u.pathname) || u.search) return;
   if (u.pathname === P) {
     const net = fetch(e.request).then(r => {
