@@ -30,7 +30,7 @@
 {"ts":1793426488,"fleet":"acme-web","issue":41,"type":"spawn","role":"impl","agent":"acme-web-impl-41","harness":"claude","model":"opus","effort":"xhigh","branch":"issue-41"}
 {"ts":1793427088,"fleet":"acme-web","issue":38,"type":"spawn","role":"rev","agent":"acme-web-rev-38","harness":"hermes"}
 {"ts":1793427688,"fleet":"acme-web","issue":44,"type":"spawn","role":"impl","agent":"acme-web-impl-44","harness":"claude","model":"opus","effort":"xhigh","branch":"issue-44"}
-{"ts":1793428588,"fleet":"acme-api","issue":21,"type":"needs-decision","id":"q1","question":"Rate-limit the public search endpoint per API key or per client IP?","options":["per API key","per client IP","both, key first"],"recommend":1,"agent":"acme-api-orch"}
+{"ts":1793428588,"fleet":"acme-api","issue":21,"type":"needs-decision","id":"q1","question":"Rate-limit the public search endpoint per API key or per client IP?","options":["per API key","per client IP","both, key first: throttle each API key at 600 requests a minute, then each client IP at 120 a minute for anonymous traffic behind shared NAT"],"recommend":1,"agent":"acme-api-orch"}
 {"ts":1793429528,"fleet":"acme-web","type":"queue","issues":[45,46,47],"op":"add"}
 {"ts":1793429528,"fleet":"acme-web","type":"queue","issues":[47],"on":46,"op":"block"}
 {"ts":1793429528,"fleet":"acme-api","type":"queue","issues":[21,22],"op":"add"}

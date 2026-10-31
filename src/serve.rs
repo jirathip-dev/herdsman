@@ -641,7 +641,8 @@ impl<'a> Server<'a> {
             let s = |k| a.str(k).unwrap_or_default();
             let mut opts: Vec<(u64, &str)> = a.data["options"].as_array().into_iter().flatten().zip(1..).map(|(o, n)| (n, o.as_str().unwrap_or("?"))).collect();
             opts.sort_by_key(|o| Some(o.0) != a.data["recommend"].as_u64());
-            let btns: String = opts.iter().map(|(n, o)| format!("<button name=choice value={n}>{n}. {}</button>", esc(o))).collect();
+            let rec = |n: &u64| if Some(*n) == a.data["recommend"].as_u64() { " <small>(recommended)</small>" } else { "" };
+            let btns: String = opts.iter().map(|(n, o)| format!("<button name=choice value={n}>{n}. {}{}</button>", esc(o), rec(n))).collect();
             let form = format!("<form method=post>{}<input type=hidden name=id value=\"{}\"><input name=text aria-label=answer placeholder=\"or type an answer\"><button>Send</button>{btns}</form>", hidden("answer", &a.fleet, &mtime(ctx)), esc(s("id")));
             let who = join(&[&a.fleet, &a.issue.map_or(String::new(), |n| format!("#{n}")), s("agent"), &age(ctx.now.saturating_sub(a.ts))]);
             format!("<div class=ask><p><b>needs you</b> <span class=m>{}</span></p><p>{}</p>{}</div>", esc(&who), esc(s("question")), if self.addr.is_some() { form } else { String::new() })
@@ -982,6 +983,8 @@ pub fn export(ctx: &Ctx, r: &dyn Runner, dir: &std::path::Path, demo: bool) -> R
     let s = Server { export: Some(demo), host: Arc::new(Mutex::new(host::sample(r))), ..Server::new(ctx, r, demo.then(|| "demo".into())) };
     let (page, herd) = (s.page(ctx, &BTreeMap::new(), demo)?.replace("<form method=post", "<form inert"), s.herd(ctx, None)?.to_string());
     let (sw, v) = (SW.replace("@V", &format!("{VER:08x}")), format!("a/{VER:08x}/"));
+    // #63: the demo-only `?audit=<view>` UI gate (scripts/ui-audit.sh); never in the live page.
+    let page = if demo { page.replace("</body>", &format!("<script>{}</script></body>", include_str!("../assets/ui-audit.js"))) } else { page };
     std::fs::create_dir_all(dir.join("lane"))?;
     std::fs::create_dir_all(dir.join(&v))?;
     let files = [("index.html", page.as_bytes()), ("herd.json", herd.as_bytes()), ("sw.js", sw.as_bytes())].map(|(n, b)| (n.to_string(), b));
