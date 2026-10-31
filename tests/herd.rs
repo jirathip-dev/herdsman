@@ -161,7 +161,7 @@ fn herd_snapshots_fit_390px() {
 }
 
 /// #58: the ranch is a ~22% strip, empty bands are not drawn, every lane horse is one size in every
-/// band and queued ones are 60% of it in their own row above working. 390 px, `?weather=calm`:
+/// band (#65: Corral's fixed 132 px) and queued ones are 53 px (40 %) in their own row above working. 390 px, `?weather=calm`:
 /// (a) 0 blocked · 1 working · 13 queued · 7 idle · 11 done, (b) only 1 done, (c) every band.
 #[test]
 fn herd_horses_are_one_size_at_390px() {
@@ -218,11 +218,11 @@ fn herd_horses_are_one_size_at_390px() {
         // 22svh of the 844 px window (≥ 120 px), not 45%.
         assert!((ranch - 0.22 * 844.0).abs() <= 1.0, "{name}: ranch {ranch}px");
         assert_eq!(n, bands, "{name}: bands drawn");
-        // Two lane horses per row at 390 px, the same in every band present; queued ≈ 0.6×.
+        // #65: Corral's 132 px in every band present; queued 53 px.
         let lane: Vec<f64> = [working, idle, done, blocked].into_iter().filter(|&x| x >= 0.0).collect();
-        assert!(lane.iter().all(|&x| (x - 195.0).abs() <= 1.0), "{name}: lane horse widths {lane:?}");
+        assert!(lane.iter().all(|&x| (x - 132.0).abs() <= 1.0), "{name}: lane horse widths {lane:?}");
         if queued >= 0.0 {
-            assert!((queued / lane[0] - 0.6).abs() <= 0.01, "{name}: queued {queued} vs lane {}", lane[0]);
+            assert!((queued - 53.0).abs() <= 1.0, "{name}: queued {queued}");
         }
     }
 }

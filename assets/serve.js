@@ -40,20 +40,37 @@ const live = () => es && es.readyState === 1;
 const head = e => { while ((e = e.previousElementSibling)) if (e.tagName === 'H2') return e.textContent; return ''; };
 const key = e => e.dataset.agent || head(e) + (e.querySelector('summary>span') || e).textContent;
 const sig = e => (e.querySelector('summary,.lr') || e).textContent.replace(/\b\d+[smhd]\b/g, '');
+// #65: an update patches the live tree to the new one: rows (`details`, `.lane`) matched by key(), the rest by
+// position; equal nodes are left alone, `open` is the user's. So the page keeps its scroll, open rows and focus.
+const rk = n => n.nodeType === 1 && n.matches('details,.lane') ? key(n) : '';
+function morph(a, b) {
+  if (a.nodeType !== 1) { if (a.data !== b.data) a.data = b.data; return; }
+  if (a.isEqualNode(b)) return;
+  for (const { name } of [...a.attributes]) if (!b.hasAttribute(name) && name !== 'open') a.removeAttribute(name);
+  for (const { name, value } of b.attributes) if (a.getAttribute(name) !== value) a.setAttribute(name, value);
+  const rows = new Map(), rest = [], kids = [...b.childNodes];
+  for (const c of a.childNodes) { const k = rk(c); if (k && !rows.has(k)) rows.set(k, c); else if (!k) rest.push(c); }
+  kids.forEach((n, i) => {
+    const k = rk(n), j = k ? -1 : rest.findIndex(c => c.nodeName === n.nodeName);
+    let o = k ? rows.get(k) : rest[j];
+    if (k) rows.delete(k); else if (j >= 0) rest.splice(j, 1);
+    if (o) morph(o, n); else o = n;
+    if (a.childNodes[i] !== o) a.insertBefore(o, a.childNodes[i] || null);
+  });
+  while (a.childNodes.length > kids.length) a.lastChild.remove();
+}
 function frag(id, html) {
   const el = document.getElementById(id);
   if (!el) return;
   const rows = e => new Map([...e.querySelectorAll('details,.lane')].map(r => [key(r), r]));
-  const old = rows(el);
-  el.innerHTML = html;
-  rows(el).forEach((r, k) => {
-    const o = old.get(k);
-    if (o && o.open) r.open = true;
-    if (!o || sig(o) !== sig(r)) r.classList.add('fl');
-  });
+  const old = new Map([...rows(el)].map(([k, r]) => [k, sig(r)])), nu = el.cloneNode(false), y = scrollY;
+  nu.innerHTML = html;
+  tidy(nu);
+  morph(el, nu);
+  if (scrollY !== y) scrollTo(0, y);
+  rows(el).forEach((r, k) => { if (old.get(k) !== sig(r)) r.classList.add('fl'); });
   last = Date.now();
   alerts();
-  tidy(el);
   if (id === 'lanes') mode(B.dataset.mode);
 }
 // Enable alerts: Home Screen app only (iOS allows push there alone); subscribe with the VAPID key, POST it.

@@ -106,13 +106,62 @@ const MARK = { working: '○', idle: '◦', unknown: '?', done: '✓', blocked: 
 const BANDS = [['working', ['working']], ['idle', ['idle', 'unknown']], ['done', ['done']], ['blocked/dead', ['blocked', 'dead']]];
 let data = null, wind = 0, storm = false, saved = get('herdp'), placed = false;
 
+// #65: Corral's label card, 2 lines: the name, then state mark + word + age (the issue title is the tooltip).
 function horse(l, k) {
-  const coat = hx(l.coat), text = l.title ? `<b>${hx(l.title)}</b><span class=m>${hx(l.name)}</span>` : `<b>${hx(l.name)}</b>`;
-  return `<button type=button class="hh ${hx(l.state)}" data-agent="${hx(l.name)}" data-k=${k}><svg viewBox="0 0 132 100" style="${coat}"><use href="#hp${POSE[l.state] || 2}"/></svg>` +
-    `<span class=hl>${text}<span><i class=${hx(l.tone)}>${MARK[l.state] || '?'} ${hx(l.shown)}</i>${l.age ? ' · ' + hx(l.age) : ''}</span></span></button>`;
+  return `<button type=button class="hh ${hx(l.state)}" data-agent="${hx(l.name)}" data-k=${k}${l.title ? ` title="${hx(l.title)}"` : ''}><svg viewBox="0 0 132 100" style="${hx(l.coat)}"><use href="#hp${POSE[l.state] || 2}"/></svg>` +
+    `<span class=hl><b>${hx(l.name)}</b><span><i class=${hx(l.tone)}>${MARK[l.state] || '?'} ${hx(l.shown)}</i>${l.age ? ' · ' + hx(l.age) : ''}</span></span></button>`;
 }
 const queued = q => `<button type=button class=hqh data-i=${q.issue}><svg viewBox="0 0 132 100" style="${hx(q.coat)}"><use href="#hp2"/></svg>` +
-  `<span>#${q.issue}${q.blocked_by ? ` ⛔#${q.blocked_by}` : ''}</span></button>`;
+  `<span>#${q.issue}${q.blocked_by ? `<br>⛔#${q.blocked_by}` : ''}</span></button>`;
+const tpl = h => { const t = document.createElement('template'); t.innerHTML = h; return t.content.firstElementChild; };
+const attrs = (a, b) => {
+  for (const { name } of [...a.attributes]) if (!b.hasAttribute(name)) a.removeAttribute(name);
+  for (const { name, value } of b.attributes) if (a.getAttribute(name) !== value) a.setAttribute(name, value);
+};
+// #65: the horse keyed `key` (taken from `have`), patched in place to `h`: button and coat attributes, pose, label.
+function keyed(have, key, h) {
+  let n = have.get(key);
+  have.delete(key);
+  if (!n) n = tpl(h);
+  else if (n._h !== h) {
+    const x = tpl(h);
+    attrs(n, x);
+    attrs(n.firstChild, x.firstChild); // the coat (also drops a stopped trot's transform)
+    n.firstChild.firstChild.setAttribute('href', x.firstChild.firstChild.getAttribute('href'));
+    n.lastChild.innerHTML = x.lastChild.innerHTML;
+  }
+  n._h = h;
+  return n;
+}
+// #65: an update patches the page in place, so its scroll never moves: horses are keyed by agent (queued ones by
+// issue), re-parented between bands, added or removed one by one; a band only comes or goes with its first or last horse.
+function patch(hb, lanes, queue) {
+  const have = new Map([...hb.querySelectorAll('.hh')].map(n => [n.dataset.agent, n]));
+  const haveq = new Map([...hb.querySelectorAll('.hqh')].map(n => [n.dataset.i, n]));
+  const groups = [['queue', 'queued', queue, haveq, q => String(q.issue), queued, 'gate'],
+    ...BANDS.map(([name, states]) => [name.split('/')[0], name, lanes.filter(l => states.includes(l.state)), have, l => l.name, horse, 'field'])];
+  // Gone horses leave first, so a kept one never steps around them.
+  const want = new Set(groups.flatMap(g => g[2].map(g[4])));
+  for (const m of [have, haveq]) for (const [k, n] of m) if (!want.has(k)) { n.remove(); m.delete(k); }
+  let at = null;
+  const drop = [];
+  for (const [cls, name, items, map, id, make, box] of groups) {
+    let b = hb.querySelector(':scope > .b-' + cls);
+    if (!items.length) { if (b) drop.push(b); continue; }
+    if (!b) {
+      b = tpl(`<div class="band b-${cls}"><h4>${name} <span></span></h4><div class=${box}></div></div>`);
+      if (at) at.after(b); else hb.prepend(b);
+    }
+    const c = b.querySelector('h4 span');
+    if (c.textContent !== String(items.length)) c.textContent = items.length;
+    const f = b.lastChild;
+    items.forEach((it, i) => { const n = keyed(map, id(it), make(it, i)); if (f.children[i] !== n) f.insertBefore(n, f.children[i] || null); });
+    at = b;
+  }
+  drop.forEach(b => b.remove());
+  const e = hb.querySelector(':scope > .empty');
+  if (at) { if (e) e.remove(); } else if (!e) hb.append(tpl('<p class=empty>no horses here</p>'));
+}
 
 function page(key) {
   const p = document.createElement('section');
@@ -133,19 +182,17 @@ function draw() {
   list.forEach(([key, lanes, queue], n) => {
     const p = pages.get(key) || page(key);
     pages.set(key, p);
-    PG.append(p);
+    // Never re-append a placed page: a detached scroller forgets its scrollTop (#65, the snap to the top).
+    if (PG.children[n] !== p) PG.insertBefore(p, PG.children[n] || null);
     p.querySelector('.hs b').textContent = key;
     p.querySelector('.hs .n').textContent = `· ${lanes.length} here`;
     p.querySelector('.hs .dots').textContent = list.map((_, i) => i === n ? '●' : '○').join('');
     const count = states => lanes.filter(l => states.includes(l.state)).length;
-    p.querySelector('.sum').textContent = `${count(['blocked', 'dead'])} blocked · ${count(['working'])} working · ${count(['idle', 'unknown'])} idle · ${count(['done'])} done`;
+    p.querySelector('.sum').textContent = `${count(['blocked', 'dead'])} blocked · ${count(['working'])} working · ${count(['idle', 'unknown'])} idle · ${count(['done'])} done · ${queue.length} queued`;
     // Queued horses get their own row above the working band; a band with no horses is not drawn.
-    let h = queue.length ? `<div class="band b-queue"><h4>queued <span>${queue.length}</span></h4><div class=gate>${queue.map(queued).join('')}</div></div>` : '';
-    for (const [name, states] of BANDS) {
-      const ls = lanes.filter(l => states.includes(l.state));
-      if (ls.length) h += `<div class="band b-${name.split('/')[0]}"><h4>${name} <span>${ls.length}</span></h4><div class=field>${ls.map(horse).join('')}</div></div>`;
-    }
-    p.querySelector('.hb').innerHTML = h || '<p class=empty>no horses here</p>';
+    const top = p.scrollTop;
+    patch(p.querySelector('.hb'), lanes, queue);
+    if (p.scrollTop !== top) p.scrollTo({ top, behavior: 'instant' });
     p._queue = queue;
     p._walk = [...p.querySelectorAll('.hh.working svg')];
   });

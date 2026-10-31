@@ -102,13 +102,15 @@ The 🐎 button in the header switches to **Herd mode**, a port of Corral's Herd
 `RanchEnvironment.swift`, `RanchWind.swift`; MIT © jirathip-dev): full screen, no tabs, one page
 per registered fleet (swipe left/right; an Others page only when unregistered agents run), ✕
 returns to the tabs. The mode and the page are kept in `localStorage`. Each page: a strip with
-`repo · N here`, page dots and `0 blocked · 3 working · 2 idle · 4 done`; the fleet's needs-you
+`repo · N here`, page dots and `0 blocked · 3 working · 2 idle · 4 done · 5 queued` (queue items waiting on another issue count as queued, not blocked); the fleet's needs-you
 cards (same per-audience rules as the tabs); Corral's ranch (sky, clouds, hills, barn, fence,
 trees, grass); then the pasture in bands (working in gait, idle, done, blocked/dead in red),
-each horse with a cream label (issue title, agent, state as the Lanes row shows it incl. the
-#46 waiting reason, age) and a coat stable per name. Queued issues stand at a gate left of the
-working band, smaller, in queue order, `#issue` and `⛔#blocker`; tapping one shows its title and
-blocker. Tapping a horse opens the Lanes sheet (card, transcript, Stop/Kill/Clean, reply).
+each horse at Corral's size (a fixed 132×100 px drawing in a 156 px slot; rows wrap centred: 2 on a
+phone, 4 at 768 px, 6 at 1024 px) with a cream label at most 164 px wide, 2 lines (agent; state as
+the Lanes row shows it incl. the #46 waiting reason, and age; the issue title is its tooltip) and a
+coat stable per name. Queued issues stand at a gate above the working band, 40 % size (53×40 px in a
+60 px slot, up to 6 a row on a phone), in queue order, `#issue` with `⛔#blocker` on a second line;
+tapping one shows its title and blocker. Tapping a horse opens the Lanes sheet (card, transcript, Stop/Kill/Clean, reply).
 
 Data: `GET /herd.json` (same Host/Origin check; only the fields an unpaired Lanes row shows, never
 pane text): `{fleets:[{name, lanes:[{name, issue, title, role, harness, model, effort, account,
@@ -118,10 +120,16 @@ admits, else its reason). While Herd is open the page reads it once, then takes 
 stream's `event: herd` (the same body, re-read every 10 s while a client listens); with the
 stream down, the `/?frag=all` poll reads it too. Pull to refresh works on a Herd page.
 
+**Updates never move the scroll (#65).** A Herd update patches each page in place: horses are keyed by
+agent (queued ones by issue), relabelled and reposed in place, re-parented between bands, and added or
+removed one by one; a band comes or goes only with its first or last horse. The tabs' sections are
+patched the same way (rows by key, `open` kept), and `scrollY` is restored in the same frame. Only pull to
+refresh and ↻ start from the top. Gate 2's `herd-scroll` / `queue-scroll` views prove it (docs/ui.md).
+
 Weather is the host: wind = load/cpu ÷ limit (0..1) scales Corral's `RanchWind` canopy/grass
 sway ×1..3 and the cloud drift; a refusing spawn gate is a storm (dark sky, rain, manes blown,
-lightning at most every 20 s); memory pressure `warn`/`critical` is light/thick fog; a caption
-shows `load 0.39 · mem normal · swap 0`. One `requestAnimationFrame` loop drives all motion
+lightning at most every 20 s); memory pressure `warn`/`critical` is light/thick fog; a solid 28 px
+bar at the bottom shows `load 0.39 · mem normal · swap 0`, and the page is padded past it. One `requestAnimationFrame` loop drives all motion
 (current page only, paused when hidden); horses are `<use>` instances. Under
 `prefers-reduced-motion` nothing moves and the weather is a tint only. Debug:
 `/?weather=calm|gusty|storm|fog` forces the host values on a loopback `Host` only (ignored
