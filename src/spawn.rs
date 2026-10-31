@@ -149,7 +149,7 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
             if st.as_ref().is_some_and(|s| s.state == "merged") {
                 return refused("MERGED", format!("{fleet}#{issue} is merged; a merged issue never reopens"));
             }
-            let impl_branch = st.as_ref().and_then(|s| s.branch.clone()).unwrap_or_else(|| format!("issue-{issue}"));
+            let impl_branch = crate::gate::branch_of(st.as_ref(), issue);
             let (agent, branch, base, head) = if role == "rev" {
                 let k = st.as_ref().map_or(0, |s| s.rounds) + 1;
                 let head = format!("{fleet} · rev #{issue} r{k}");
@@ -166,10 +166,7 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
     };
     let kick = format!("Read {} and execute it fully.", brief.display());
     let lane = format!("{fleet}:{}:{role}", issue.map_or("-".into(), |n| n.to_string()));
-    let account = match r.harness.as_str() {
-        "claude" => access::pick(cfg, &read(&ctx.state)?, r, ctx.now)?,
-        _ => None,
-    };
+    let account = if r.harness == "claude" { access::pick(cfg, &read(&ctx.state)?, r, ctx.now)? } else { None };
     let mcp_file = match issue {
         None => brief.with_file_name(format!("orch-{fleet}.mcp.json")),
         Some(_) => worktree.join(".mcp.lane.json"),
@@ -226,7 +223,10 @@ fn create_argv(local: &str, p: &Plan) -> Vec<String> {
     let wt = p.worktree.to_string_lossy();
     match p.role.as_str() {
         "orch" => argv(&["workspace", "create", "--cwd", local, "--label", &p.agent, "--no-focus"]),
-        _ => argv(&["worktree", "create", "--cwd", local, "--branch", &p.branch, "--base", &p.base, "--path", &wt, "--label", &p.agent, "--no-focus"]),
+        _ => argv(&[
+            "worktree", "create", "--cwd", local, "--branch", &p.branch, "--base", &p.base,
+            "--path", &wt, "--label", &p.agent, "--no-focus",
+        ]),
     }
 }
 
@@ -280,17 +280,31 @@ pub fn dirty(r: &dyn Runner, wt: &Path) -> Option<String> {
     }
 }
 
-#[derive(Default)]
+/// `spawn`'s flags.
+#[derive(Default, clap::Args)]
 pub struct Opts {
+    /// Print the plan; change nothing
+    #[arg(long)]
     pub dry_run: bool,
+    /// Machine-readable output
+    #[arg(long)]
     pub json: bool,
-    /// Spawn even when the host is busy (logged as an `override` event).
+    /// Spawn although the host is busy (logs an `override` event)
+    #[arg(long)]
     pub force: bool,
-    /// Kill the live/unfinished lane in the way and spawn anyway (logged).
+    /// Kill the live agent / unfinished lane in the way, then spawn (logged)
+    #[arg(long)]
     pub supersede: bool,
 }
 
-pub fn spawn(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (fleet, issue, role): (&str, Option<u64>, &str), o: &Opts) -> Result<bool> {
+pub fn spawn(
+    ctx: &Ctx,
+    cfg: &Config,
+    r: &dyn Runner,
+    out: &mut dyn Write,
+    (fleet, issue, role): (&str, Option<u64>, &str),
+    o: &Opts,
+) -> Result<bool> {
     let f = cfg.fleet(fleet)?;
     if f.paused && matches!(role, "impl" | "rev") {
         return refused("PAUSED", format!("{fleet} is paused; `herdsman resume {fleet}` first"));
@@ -442,7 +456,14 @@ fn lane_data(p: &Plan, pane: &str, ws: &str) -> Value {
 }
 
 /// `herdsman adopt`: log the lane running in `pane` and name its agent as planned; nothing is started.
-pub fn adopt(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (fleet, issue, role): (&str, Option<u64>, &str), pane: &str) -> Result<()> {
+pub fn adopt(
+    ctx: &Ctx,
+    cfg: &Config,
+    r: &dyn Runner,
+    out: &mut dyn Write,
+    (fleet, issue, role): (&str, Option<u64>, &str),
+    pane: &str,
+) -> Result<()> {
     let p = plan(ctx, cfg, fleet, issue, role)?;
     let info = harness_in(r, pane).with_context(|| format!("no harness running in pane {pane}"))?;
     ok(r, "herdr", &["agent", "rename", pane, &p.agent])?;

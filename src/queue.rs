@@ -1,7 +1,7 @@
 //! The per-fleet work queue (`queue` events): `herdsman queue`, `next` and `board`.
 use crate::events::{age, fold, Event, IssueState};
 use anyhow::{anyhow, ensure, Result};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -14,18 +14,16 @@ pub struct Item {
 
 /// A queue change, as logged: `op` is add | mv | rm | block.
 pub fn op(op: &str, issues: &[u64], top: bool, before: Option<u64>, after: Option<u64>, on: Option<u64>) -> Value {
-    let mut d = Map::new();
-    d.insert("op".into(), json!(op));
-    d.insert("issues".into(), json!(issues));
+    let mut d = json!({"op": op, "issues": issues});
     for (k, v) in [("before", before), ("after", after), ("on", on)] {
         if let Some(v) = v {
-            d.insert(k.into(), json!(v));
+            d[k] = json!(v);
         }
     }
     if top {
-        d.insert("top".into(), json!(true));
+        d["top"] = json!(true);
     }
-    Value::Object(d)
+    d
 }
 
 /// Apply one change; Err leaves `q` untouched.
@@ -61,8 +59,7 @@ pub fn apply(q: &mut Vec<Item>, d: &Value) -> Result<()> {
             q.splice(at..at, moved);
         }
         "rm" => {
-            let i = pos(q, issues[0])?;
-            q.remove(i);
+            q.remove(pos(q, issues[0])?);
         }
         "block" => {
             let on = d["on"].as_u64().ok_or_else(|| anyhow!("block needs --on"))?;
@@ -119,9 +116,10 @@ pub fn next(events: &[Event], fleet: &str) -> (i32, String) {
 
 pub fn ls_json(events: &[Event], fleet: &str) -> Value {
     let st = fold(events);
-    let rows: Vec<Value> = view(events, &st, fleet).iter().enumerate().map(|(k, i)| json!({"pos": k + 1, "issue": i.issue, "state": state(&st, fleet, i.issue), "blocked_by": i.blocked_by, "serial": i.serial}))
-        .collect();
-    Value::Array(rows)
+    let row = |(k, i): (usize, &Item)| {
+        json!({"pos": k + 1, "issue": i.issue, "state": state(&st, fleet, i.issue), "blocked_by": i.blocked_by, "serial": i.serial})
+    };
+    Value::Array(view(events, &st, fleet).iter().enumerate().map(row).collect())
 }
 
 pub const WIDTH: usize = 60;

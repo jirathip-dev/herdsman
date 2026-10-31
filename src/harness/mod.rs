@@ -65,6 +65,11 @@ fn agent_start(p: &Plan, kind: &str, pane: &str, args: Vec<String>) -> Vec<Strin
     c
 }
 
+/// Try numbers `0..n`, sleeping `secs` before every try but the first.
+fn attempts(r: &dyn Runner, n: u32, secs: u64) -> impl Iterator<Item = u32> + '_ {
+    (0..n).inspect(move |&i| if i > 0 { r.sleep(secs) })
+}
+
 /// `herdr agent wait` until the kick shows as working or blocked.
 fn wait_working(p: &Plan, ms: &str) -> Vec<String> {
     argv(&["agent", "wait", &p.agent, "--until", "working", "--until", "blocked", "--timeout", ms])

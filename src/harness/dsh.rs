@@ -1,5 +1,5 @@
 //! dsh-TUI lanes (docs/dsh.md): a per-role patch layer, a pinned `dsh-tui` typed into the shell, a git pre-push hook.
-use super::Harness;
+use super::{attempts, Harness};
 use crate::runner::{argv, json, ok, Runner};
 use crate::spawn::Plan;
 use crate::Ctx;
@@ -96,10 +96,7 @@ impl Harness for Dsh {
         }
         r.run("herdr", &c[3])?;
         let typed: String = p.kick.chars().take(20).collect();
-        for attempt in 0..3 {
-            if attempt > 0 {
-                r.sleep(5);
-            }
+        for attempt in attempts(r, 3, 5) {
             if attempt == 0 || !r.run("herdr", &c[1])?.stdout.contains(&typed) {
                 r.run("herdr", &c[4])?;
             }
@@ -114,10 +111,7 @@ impl Harness for Dsh {
 
 /// Re-read the pane (1 s apart, `tries` times) until dsh-TUI reports one of `want`.
 fn poll(r: &dyn Runner, get: &[String], want: &[&str], tries: u32) -> bool {
-    for i in 0..tries {
-        if i > 0 {
-            r.sleep(1);
-        }
+    for _ in attempts(r, tries, 1) {
         let pane = json(r, "herdr", get).map(|v| v["result"]["pane"].clone()).unwrap_or_default();
         if pane["agent"] == LABEL && want.iter().any(|w| pane["agent_status"] == *w) {
             return true;

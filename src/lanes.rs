@@ -69,8 +69,17 @@ pub fn join(cfg: &Config, worktrees: &Path, events: &[Event], st: &States, agent
 
 fn from_spawn(e: &Event, l: Lane) -> Lane {
     let s = |k: &str| e.str(k).map(String::from);
-    let (role, harness) = (s("role").unwrap_or_default(), s("harness").unwrap_or_default());
-    Lane { fleet: Some(e.fleet.clone()), issue: e.issue, role, harness, model: s("model"), effort: s("effort"), account: s("account"), since: e.ts, ..l }
+    Lane {
+        fleet: Some(e.fleet.clone()),
+        issue: e.issue,
+        role: s("role").unwrap_or_default(),
+        harness: s("harness").unwrap_or_default(),
+        model: s("model"),
+        effort: s("effort"),
+        account: s("account"),
+        since: e.ts,
+        ..l
+    }
 }
 
 /// Section order on the page; any other herdr state (unknown) counts as idle.

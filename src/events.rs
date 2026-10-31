@@ -98,10 +98,7 @@ pub fn emit(state: &Path, cfg: &Config, ev: Event) -> Result<()> {
 
 /// One human-readable line, e.g. `sendmeter #1037 merged → staging 8ed4a06 (PR #1041)`.
 pub fn plain(ev: &Event) -> String {
-    let who = match ev.issue {
-        Some(n) => format!("{} #{n}", ev.fleet),
-        None => ev.fleet.clone(),
-    };
+    let who = ev.issue.map_or(ev.fleet.clone(), |n| format!("{} #{n}", ev.fleet));
     let s = |k: &str| ev.str(k).unwrap_or("?");
     match ev.kind.as_str() {
         "merged" => {
@@ -200,9 +197,7 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
                 if e.str("role") == Some("rev") {
                     s.state = format!("review({})", s.rounds + 1);
                 } else {
-                    if let Some(b) = e.str("branch") {
-                        s.branch = Some(b.into());
-                    }
+                    s.branch = e.str("branch").map(String::from).or(s.branch.take());
                     s.state = if s.rounds == 0 { "impl".into() } else { format!("fix({})", s.rounds) };
                 }
             }

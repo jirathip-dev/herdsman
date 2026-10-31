@@ -48,18 +48,8 @@ enum Cmd {
         issue: String,
         #[arg(value_parser = config::ROLES)]
         role: String,
-        /// Print the plan; change nothing
-        #[arg(long)]
-        dry_run: bool,
-        /// Machine-readable output
-        #[arg(long)]
-        json: bool,
-        /// Spawn although the host is busy (logs an `override` event)
-        #[arg(long)]
-        force: bool,
-        /// Kill the live agent / unfinished lane in the way, then spawn (logged)
-        #[arg(long)]
-        supersede: bool,
+        #[command(flatten)]
+        o: spawn::Opts,
     },
     /// Record a lane already running in a herdr pane (repair a spawn that was never logged)
     Adopt {
@@ -368,9 +358,8 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     }
                 }
                 Cmd::Profiles { cmd: ProfilesCmd::Sync { check: false } } => spawn::profiles_sync(ctx, &cfg, &usage_doc(), out)?,
-                Cmd::Spawn { fleet, issue, role, dry_run, json, force, supersede } => {
+                Cmd::Spawn { fleet, issue, role, o } => {
                     let issue = lane(&issue)?;
-                    let o = spawn::Opts { dry_run, json, force, supersede };
                     if !spawn::spawn(ctx, &cfg, r, out, (&fleet, issue, &role), &o)? {
                         return Ok(4);
                     }
@@ -384,7 +373,10 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 Cmd::Accounts { cmd: Some(AccountsCmd::Reset { name }) } => access::reset(ctx, &cfg, out, &name)?,
                 Cmd::Protection => return protection::protection(&cfg, r, out),
                 Cmd::Clean { fleet, yes } => check::clean(ctx, &cfg, r, out, fleet.as_deref(), None, yes)?,
-                Cmd::Verdict { fleet, issue, verdict, sha, file } => gate::verdict(ctx, &cfg, r, out, (&fleet, issue), verdict == "PASS", &sha, &file)?,
+                Cmd::Verdict { fleet, issue, verdict, sha, file } => {
+                    let pass = verdict == "PASS";
+                    gate::verdict(ctx, &cfg, r, out, (&fleet, issue), pass, &sha, &file)?
+                }
                 Cmd::Merge { fleet, issue } => gate::merge(ctx, &cfg, r, out, &fleet, issue)?,
                 Cmd::Brief { fleet, issue } => {
                     let v = gh::spec(ctx, r, cfg.fleet(&fleet)?, &fleet, issue, false)?;
@@ -392,7 +384,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     writeln!(out, "# Issue #{issue}: {}\n\n{}", s("title"), s("body"))?;
                 }
                 Cmd::Pr { fleet, issue, json } => {
-                    let branch = gate::branch_of(&gate::issue_state(ctx, &fleet, issue)?, issue);
+                    let branch = gate::branch_of(gate::issue_state(ctx, &fleet, issue)?.as_ref(), issue);
                     let pr = gh::pr(ctx, r, cfg.fleet(&fleet)?, (&fleet, issue), &branch, ctx.now)?;
                     if json {
                         writeln!(out, "{}", serde_json::to_string_pretty(&pr)?)?;
@@ -404,7 +396,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     }
                 }
                 Cmd::Wait { fleet, issue, until, timeout } => {
-                    let branch = gate::branch_of(&gate::issue_state(ctx, &fleet, issue)?, issue);
+                    let branch = gate::branch_of(gate::issue_state(ctx, &fleet, issue)?.as_ref(), issue);
                     return gh::wait(ctx, r, out, cfg.fleet(&fleet)?, (&fleet, issue), &branch, until, timeout);
                 }
                 Cmd::Queue { fleet, cmd } => {
@@ -422,9 +414,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                         QueueCmd::Block { issue, on } => queue::op("block", &[issue], false, None, None, Some(on)),
                         QueueCmd::Ls { .. } => unreachable!(),
                     };
-                    let q = queue_change(ctx, &cfg, &fleet, d, None)?;
-                    let order: Vec<String> = q.iter().map(|i| format!("#{}", i.issue)).collect();
-                    writeln!(out, "{fleet} queue: {}", if order.is_empty() { "empty".into() } else { order.join(" ") })?;
+                    writeln!(out, "{}", queue_change(ctx, &cfg, &fleet, d, None)?)?;
                 }
                 _ => unreachable!(),
             }

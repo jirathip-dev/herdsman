@@ -228,7 +228,7 @@ impl<'a> Server<'a> {
                 ("401 Unauthorized", "text/plain", text("only a paired device may remove devices\n"))
             }
             ("POST", "/") => {
-                let msg = self.post(ctx, &form(body.trim()));
+                let msg = self.write(ctx, &form(body.trim())).unwrap_or_else(|e| shown(&e));
                 let loc = format!("/?msg={}", enc(&msg));
                 return format!("HTTP/1.1 303 See Other\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes();
             }
@@ -330,11 +330,7 @@ impl<'a> Server<'a> {
         Some(serde_json::json!({"harness": l.harness, "lines": lanes::tail(&screen, 40)}).to_string())
     }
 
-    /// Run one form write; the line shown on the page (CLI output, or `REFUSED <CODE>: …`).
-    fn post(&self, ctx: &Ctx, f: &BTreeMap<String, String>) -> String {
-        self.write(ctx, f).unwrap_or_else(|e| shown(&e))
-    }
-
+    /// Run one form write; the line shown on the page (CLI output, or `REFUSED <CODE>: …` via `shown`).
     fn write(&self, ctx: &Ctx, f: &BTreeMap<String, String>) -> Result<String> {
         let g = |k: &str| f.get(k).map_or("", String::as_str);
         if g("mtime") != mtime(ctx) {
@@ -346,9 +342,7 @@ impl<'a> Server<'a> {
                 let n = |k: &str| g(k).parse::<u64>().ok();
                 let issue = n("issue").context("no issue")?;
                 let d = queue::op("mv", &[issue], false, n("before"), n("after"), None);
-                let q = crate::queue_change(ctx, &Config::load(&ctx.config)?, fleet, d, Some("web"))?;
-                let order: Vec<String> = q.iter().map(|i| format!("#{}", i.issue)).collect();
-                writeln!(out, "{fleet} queue: {}", order.join(" "))?;
+                writeln!(out, "{}", crate::queue_change(ctx, &Config::load(&ctx.config)?, fleet, d, Some("web"))?)?;
             }
             op @ ("pause" | "resume") => crate::pause(ctx, &mut out, fleet, op == "pause", Some("web"))?,
             "set" => {

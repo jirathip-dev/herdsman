@@ -114,13 +114,14 @@ pub fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// Apply one queue change and log it (`herdsman queue`, and the page's ▲/▼ with `via`).
-pub fn queue_change(ctx: &Ctx, cfg: &Config, fleet: &str, d: Value, via: Option<&str>) -> Result<Vec<queue::Item>> {
+/// Apply one queue change and log it (`herdsman queue`, and the page's ▲/▼ with `via`); the new order as shown.
+pub fn queue_change(ctx: &Ctx, cfg: &Config, fleet: &str, d: Value, via: Option<&str>) -> Result<String> {
     cfg.fleet(fleet)?;
     let mut q = queue::replay(&read(&ctx.state)?, fleet);
     queue::apply(&mut q, &d)?;
     emit(&ctx.state, cfg, Event::new(ctx.now, fleet, None, "queue", with_via(d, via)))?;
-    Ok(q)
+    let order: Vec<String> = q.iter().map(|i| format!("#{}", i.issue)).collect();
+    Ok(format!("{fleet} queue: {}", if order.is_empty() { "empty".into() } else { order.join(" ") }))
 }
 
 /// `herdsman set` (and the page's model/effort dropdowns, with `via`): `wanted` is (key, new value).

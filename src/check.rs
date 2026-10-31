@@ -17,7 +17,7 @@ use std::path::Path;
 /// Head sha of an open PR that passes every merge gate, if any.
 fn mergeable(ctx: &Ctx, r: &dyn Runner, cfg: &Config, s: &IssueState) -> Option<String> {
     let f = cfg.fleet(&s.fleet).ok()?;
-    let branch = s.branch.clone().unwrap_or_else(|| format!("issue-{}", s.issue));
+    let branch = crate::gate::branch_of(Some(s), s.issue);
     let pr = gh::pr(ctx, r, f, (&s.fleet, s.issue), &branch, ctx.now).ok()?;
     (pr["state"] == "OPEN").then_some(())?;
     gate(f, &pr, Some(s), cfg.limits.review_rounds).ok()
@@ -161,7 +161,14 @@ pub fn clean(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
 }
 
 /// The fleet's closed issue numbers, read once per fleet per run; a failed read is reported and counts as none.
-fn closed_issues<'a>(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, memo: &'a mut BTreeMap<String, Vec<u64>>, fleet: &str) -> &'a Vec<u64> {
+fn closed_issues<'a>(
+    ctx: &Ctx,
+    cfg: &Config,
+    r: &dyn Runner,
+    out: &mut dyn Write,
+    memo: &'a mut BTreeMap<String, Vec<u64>>,
+    fleet: &str,
+) -> &'a Vec<u64> {
     if !memo.contains_key(fleet) {
         let got = cfg.fleet(fleet).and_then(|f| gh::closed(ctx, r, f, fleet, ctx.now));
         let list = got.unwrap_or_else(|e| {

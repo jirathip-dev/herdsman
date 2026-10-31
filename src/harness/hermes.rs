@@ -1,5 +1,5 @@
 //! Hermes: the `hooks:` key + its consent in the role's existing profile; the kick is typed at the `❯` prompt.
-use super::{agent_start, hook_command, wait_working, Harness};
+use super::{agent_start, attempts, hook_command, wait_working, Harness};
 use crate::runner::{argv, Runner};
 use crate::spawn::Plan;
 use crate::Ctx;
@@ -48,10 +48,7 @@ impl Harness for Hermes {
     fn kick(&self, r: &dyn Runner, p: &Plan, pane: &str) -> Result<bool> {
         let c = self.kick_cmds(p, pane);
         r.run("herdr", &c[0])?;
-        for attempt in 0..3 {
-            if attempt > 0 {
-                r.sleep(10);
-            }
+        for _ in attempts(r, 3, 10) {
             r.run("herdr", &c[1])?;
             r.run("herdr", &c[2])?;
             if r.run("herdr", &c[3])?.code == 0 {

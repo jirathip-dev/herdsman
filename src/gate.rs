@@ -38,12 +38,21 @@ pub fn issue_state(ctx: &Ctx, fleet: &str, issue: u64) -> Result<Option<IssueSta
     Ok(fold(&read(&ctx.state)?).remove(&(fleet.to_string(), issue)))
 }
 
-pub fn branch_of(st: &Option<IssueState>, issue: u64) -> String {
-    st.as_ref().and_then(|s| s.branch.clone()).unwrap_or_else(|| format!("issue-{issue}"))
+pub fn branch_of(st: Option<&IssueState>, issue: u64) -> String {
+    st.and_then(|s| s.branch.clone()).unwrap_or_else(|| format!("issue-{issue}"))
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn verdict(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (fleet, issue): (&str, u64), pass: bool, sha: &str, file: &str) -> Result<()> {
+pub fn verdict(
+    ctx: &Ctx,
+    cfg: &Config,
+    r: &dyn Runner,
+    out: &mut dyn Write,
+    (fleet, issue): (&str, u64),
+    pass: bool,
+    sha: &str,
+    file: &str,
+) -> Result<()> {
     let f = cfg.fleet(fleet)?;
     if sha.len() != 40 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
         return refused("BAD_SHA", format!("--sha {sha} must be a full 40-hex commit sha"));
@@ -51,7 +60,7 @@ pub fn verdict(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (fl
     let body = std::fs::read_to_string(file).with_context(|| format!("cannot read verdict file {file}"))?;
     anyhow::ensure!(!body.trim().is_empty(), "verdict file {file} is empty");
     let st = issue_state(ctx, fleet, issue)?;
-    let branch = branch_of(&st, issue);
+    let branch = branch_of(st.as_ref(), issue);
     let api = format!("repos/{}/branches/{}", f.repo, branch);
     let head = ok(r, "gh", &["api", &api, "--jq", ".commit.sha"])?.trim().to_string();
     if !head.eq_ignore_ascii_case(sha) {
@@ -118,7 +127,7 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
         writeln!(out, "already merged → {} (PR #{})", s("merge_sha"), s("pr"))?;
         return Ok(());
     }
-    let branch = branch_of(&st, issue);
+    let branch = branch_of(st.as_ref(), issue);
     let pr = if is_main(&f.integration) {
         json!({"baseRefName": f.integration})
     } else {
