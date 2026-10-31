@@ -604,9 +604,13 @@ impl<'a> Server<'a> {
                 h += &format!("<p class=kv>{} · <b class={}>{}</b>{usage}</p><p class=m>{}</p>", esc(name), tone(cap.split(' ').next().unwrap_or_default()), esc(&cap), esc(&hours));
             }
         }
-        if let Some((b, low)) = cfg.and_then(|c| crate::usage::deepseek(ctx, c, self.r)) {
-            let (class, word) = if low { ("a", "low") } else { ("g", "ok") };
-            h += &format!("<p class=kv>deepseek · {} {:.2} · <b class={class}>{word}</b></p>", esc(&b.currency), b.total);
+        match cfg.and_then(|c| crate::usage::deepseek(ctx, c, self.r)) {
+            Some(Ok((b, low))) => {
+                let (class, word) = if low { ("a", "low") } else { ("g", "ok") };
+                h += &format!("<p class=kv>deepseek · {} {:.2} · <b class={class}>{word}</b></p>", esc(&b.currency), b.total);
+            }
+            Some(Err(hint)) => h += &format!("<p class=m>deepseek · {}</p>", esc(&hint)),
+            None => {}
         }
         if self.addr.is_some() {
             let (all, mt) = (devices::load(ctx), mtime(ctx));

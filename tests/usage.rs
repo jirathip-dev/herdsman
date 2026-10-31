@@ -81,13 +81,20 @@ fn balance_and_usage_fixtures_parse() {
 
 #[test]
 fn secret_in_config_is_refused() {
-    let d = tmpdir("usage-secret");
-    let c = ctx(&d, &format!("{CONFIG}\n[providers.deepseek]\nkey_env = \"{DS_KEY}\"\n"));
-    let (code, out) = run(&c, &Fake::default(), &["accounts"]);
-    assert_eq!(code, 3, "{out}");
-    assert!(out.contains("SECRET_IN_CONFIG") && out.contains("providers.deepseek.key_env") && !out.contains(DS_KEY), "{out}");
-    let ok = ctx(&tmpdir("usage-nosecret"), &format!("{CONFIG}\n[providers.deepseek]\nkey_env = \"DEEPSEEK_API_KEY\"\n"));
-    assert_eq!(run(&ok, &Fake::default(), &["accounts"]).0, 0);
+    const JWT: &str = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJlZml4dHVyZQ";
+    for (i, secret) in [DS_KEY, JWT].into_iter().enumerate() {
+        let c = ctx(&tmpdir(&format!("usage-secret-{i}")), &format!("{CONFIG}\n[providers.deepseek]\nkey_env = \"{secret}\"\n"));
+        let (code, out) = run(&c, &Fake::default(), &["accounts"]);
+        assert_eq!(code, 3, "{out}");
+        assert!(out.contains("SECRET_IN_CONFIG") && out.contains("providers.deepseek.key_env") && !out.contains(secret), "{out}");
+    }
+    // Long env-var names, paths and model ids are not secrets.
+    let legit = format!(
+        "{CONFIG}\nmodels = [\"deepseek-ai/DeepSeek-V3.2-Exp-instruct-20261031-preview\"]\n[accounts]\naccounts_env = \"/Users/someone/.config/claude-accounts/a1b2c3d4e5f6/tokens-for-personal-account.env\"\nA = \"CLAUDE_CODE_OAUTH_TOKEN_ACCOUNT_A1_PERSONAL\"\n[providers.deepseek]\nkey_env = \"DEEPSEEK_API_KEY\"\n"
+    );
+    let ok = ctx(&tmpdir("usage-nosecret"), &legit);
+    let (code, out) = run(&ok, &Fake::default(), &["accounts"]);
+    assert_eq!(code, 0, "{out}");
 }
 
 /// A config with accounts A/B (lane tokens in `tokens.env`, which also holds the DeepSeek key) and A's usage login.
@@ -106,15 +113,30 @@ fn creds(expires_ms: u64) -> String {
     json!({"claudeAiOauth": {"accessToken": ACCESS, "refreshToken": REFRESH, "expiresAt": expires_ms, "scopes": ["user:profile"]}}).to_string()
 }
 
+/// `security`'s attribute dump of the login's item (account `owner`).
+const ATTRS: &str = "keychain: \"/Users/owner/Library/Keychains/login.keychain-db\"\nattributes:\n    \"acct\"<blob>=\"owner\"\n    \"svce\"<blob>=\"x\"\n";
+
 fn no_secret(what: &str, text: &str) {
     for s in [DS_KEY, ACCESS, REFRESH, NEW_ACCESS] {
         assert!(!text.contains(s), "{what} leaks a secret: {text}");
     }
 }
 
-/// Every secret went to stdin only: never argv, the event log, a cache file or the page.
-fn assert_no_leaks(c: &herdsman::Ctx, r: &Stdin, page: &str) {
-    no_secret("argv", &r.0.calls.borrow().join("\n"));
+/// Every secret went to stdin only: never argv, CLI output, the event log, a cache file or the page. Every
+/// Keychain call names the configured login's hashed item, never the default `Claude Code-credentials`.
+fn assert_no_leaks(c: &herdsman::Ctx, r: &Stdin, outs: &[&str], page: &str) {
+    let calls = r.0.calls.borrow().join("\n");
+    no_secret("argv", &calls);
+    let svc = herdsman::usage::keychain_service(&c.config.parent().unwrap().parent().unwrap().join("logins/A"));
+    for call in r.0.calls.borrow().iter().filter(|l| l.starts_with("security find")) {
+        assert!(call.ends_with(&format!("-s {svc}")), "{call}");
+    }
+    for script in r.1.borrow().iter().filter(|s| s.contains("generic-password")) {
+        assert!(script.contains(&format!("-s \"{svc}\"")), "{script}");
+    }
+    for o in outs {
+        no_secret("CLI output", o);
+    }
     no_secret("event log", &std::fs::read_to_string(&c.state).unwrap_or_default());
     for f in std::fs::read_dir(c.state.parent().unwrap().join("usage")).unwrap() {
         no_secret("cache", &std::fs::read_to_string(f.unwrap().path()).unwrap_or_default());
@@ -130,7 +152,8 @@ fn meter_balance_and_lane_hours_show_without_leaking_secrets() {
     let c = ctx(&d, &config(&d));
     let r = stdin(
         Fake::default()
-            .reply("security find-generic-password", &creds(2_000_000_000_000))
+            .reply("security find-generic-password -s", ATTRS)
+            .reply("security find-generic-password -w", &creds(2_000_000_000_000))
             .reply("curl -sS -m 15 -D - -K - https://api.anthropic.com/api/oauth/usage", &http(200, "", USAGE))
             .reply("curl -sS -m 15 -D - -K - https://api.deepseek.com/user/balance", &http(200, "", r#"{"balance_infos":[{"currency":"USD","total_balance":"2.28"}]}"#))
             .reply("date -r", "Mon 19\n"),
@@ -149,7 +172,7 @@ fn meter_balance_and_lane_hours_show_without_leaking_secrets() {
     assert_eq!(r.0.count("curl"), n);
     assert!(page.contains("<meter min=0 max=100 low=75 high=89.9 optimum=0 value=50>") && page.contains("herdsman lane-hours"), "{page}");
     assert!(page.contains("deepseek · USD 2.28 · <b class=a>low</b>"), "{page}");
-    assert_no_leaks(&c, &r, &page);
+    assert_no_leaks(&c, &r, &[&out], &page);
 
     // `check` alerts once per crossing below warn_below.
     let (_, out) = run(&c, &r, &["check"]);
@@ -164,7 +187,8 @@ fn rate_limited_meter_backs_off_past_retry_after() {
     let mut c = ctx(&d, &config(&d));
     let r = stdin(
         Fake::default()
-            .reply("security find-generic-password", &creds(2_000_000_000_000))
+            .reply("security find-generic-password -s", ATTRS)
+            .reply("security find-generic-password -w", &creds(2_000_000_000_000))
             .reply("curl -sS -m 15 -D - -K - https://api.anthropic.com", &http(429, "retry-after: 3000\r\n", "{}")),
     );
     let m = herdsman::usage::meter(&c, &herdsman::config::Config::load(&c.config).unwrap(), &r, "A").unwrap();
@@ -184,38 +208,97 @@ fn expired_login_refreshes_or_falls_back_to_login_needed() {
     let c = ctx(&d, &config(&d));
     let r = stdin(
         Fake::default()
-            .reply("security find-generic-password", &creds(1000))
+            .reply("security find-generic-password -s", ATTRS)
+            .reply("security find-generic-password -w", &creds(1000))
             .reply("curl -sS -m 15 -D - -K - https://platform.claude.com", &http(400, "", r#"{"error":"invalid_grant"}"#)),
     );
     let (code, out) = run(&c, &r, &["accounts"]);
     assert_eq!(code, 0, "{out}");
     let dir = d.join("logins/A");
     assert!(out.contains(&format!("usage: login needed (claude /login in {})", dir.display())) && out.contains("herdsman lane-hours"), "{out}");
+    assert!(!r.0.called("security -i"), "a failed refresh writes nothing");
     let page = String::from_utf8_lossy(&Server::new(&c, &r, None).respond("GET / HTTP/1.1\r\nHost: x\r\n\r\n", c.now)).into_owned();
     assert!(page.contains("usage: login needed"), "{page}");
-    assert_no_leaks(&c, &r, &page);
+    assert_no_leaks(&c, &r, &[&out], &page);
+}
 
-    // A good refresh is stored back through `security -i` on stdin, then used.
-    let d = tmpdir("usage-refresh");
-    let c = ctx(&d, &config(&d));
+/// An expired login whose refresh succeeds; `stored` is what the Keychain holds when re-read after the write-back.
+fn refreshed(d: &Path, stored: &str) -> (herdsman::Ctx, Stdin) {
+    let c = ctx(d, &config(d));
+    let rotated = json!({"access_token": NEW_ACCESS, "refresh_token": "sk-ant-ort01-NEWREFRESH-fixture", "expires_in": 3600});
     let r = stdin(
         Fake::default()
-            .reply("security find-generic-password", &creds(1000))
-            .reply("curl -sS -m 15 -D - -K - https://platform.claude.com", &http(200, "", &json!({"access_token": NEW_ACCESS, "refresh_token": "sk-ant-ort01-NEWREFRESH-fixture", "expires_in": 3600}).to_string()))
+            .reply("security find-generic-password -s", ATTRS)
+            .once("security find-generic-password -w", 0, &creds(1000))
+            .reply("security find-generic-password -w", stored)
+            .reply("curl -sS -m 15 -D - -K - https://platform.claude.com", &http(200, "", &rotated.to_string()))
             .reply("security -i", "")
             .reply("curl -sS -m 15 -D - -K - https://api.anthropic.com", &http(200, "", USAGE)),
     );
-    assert!(run(&c, &r, &["accounts"]).1.contains("session 9%"));
-    let sent = r.1.borrow().join("\n");
-    assert!(sent.contains(&format!("Bearer {NEW_ACCESS}")), "{sent}");
-    let svc = herdsman::usage::keychain_service(&d.join("logins/A"));
-    assert!(sent.contains("add-generic-password -U -a ") && sent.contains(&format!("-s \"{svc}\" -X ")), "{sent}");
-    assert_no_leaks(&c, &r, "");
+    (c, r)
 }
 
 #[test]
-fn keychain_service_matches_claude_code() {
-    // Claude Code: `Claude Code-credentials-` + the first 8 hex of sha256(CLAUDE_CONFIG_DIR).
+fn a_refresh_is_written_back_to_the_same_item_and_verified() {
+    let d = tmpdir("usage-refresh");
+    let stored = json!({"claudeAiOauth": {"accessToken": NEW_ACCESS, "refreshToken": "x", "expiresAt": 2_000_000_000_000u64}}).to_string();
+    let (c, r) = refreshed(&d, &stored);
+    let (_, out) = run(&c, &r, &["accounts"]);
+    assert!(out.contains("session 9%"), "{out}");
+    let sent = r.1.borrow().join("\n");
+    assert!(sent.contains(&format!("Bearer {NEW_ACCESS}")), "{sent}");
+    let svc = herdsman::usage::keychain_service(&d.join("logins/A"));
+    assert!(sent.contains(&format!("add-generic-password -U -a \"owner\" -s \"{svc}\" -X ")), "the item's own account: {sent}");
+    assert!(r.0.called(&format!("security find-generic-password -w -a owner -s {svc}")));
+    assert_eq!(r.0.count("security find-generic-password -w"), 2, "re-read after the write-back");
+    assert!(!read(&c.state).unwrap().iter().any(|e| e.kind == "usage-login-lost"));
+    assert_no_leaks(&c, &r, &[&out], "");
+}
+
+#[test]
+fn a_write_back_that_does_not_stick_alerts_usage_login_lost() {
+    let d = tmpdir("usage-lost");
+    // `security -i` exits 0, but the item still holds the old login.
+    let (c, r) = refreshed(&d, &creds(1000));
+    let (code, out) = run(&c, &r, &["accounts"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("usage: login needed"), "{out}");
+    let lost: Vec<Event> = read(&c.state).unwrap().into_iter().filter(|e| e.kind == "usage-login-lost").collect();
+    assert_eq!(lost.len(), 1);
+    let why = lost[0].str("reason").unwrap();
+    assert!(lost[0].str("account") == Some("A") && why.contains(&format!("claude /login in {}", d.join("logins/A").display())), "{why}");
+    assert!(!r.0.called("curl -sS -m 15 -D - -K - https://api.anthropic.com"), "the unstored token is not used");
+    assert_no_leaks(&c, &r, &[&out], "");
+}
+
+#[test]
+fn an_unsafe_keychain_account_is_never_refreshed() {
+    let d = tmpdir("usage-unsafe");
+    let c = ctx(&d, &config(&d));
+    let r = stdin(
+        Fake::default()
+            .reply("security find-generic-password -s", "    \"acct\"<blob>=\"own\\\"er\"\n")
+            .reply("security find-generic-password -w", &creds(1000)),
+    );
+    assert!(run(&c, &r, &["accounts"]).1.contains("usage: login needed"));
+    assert!(!r.0.called("curl -sS -m 15 -D - -K - https://platform.claude.com") && !r.0.called("security -i"), "the old login stays usable by Claude Code");
+}
+
+#[test]
+fn deepseek_hints_when_the_env_file_lacks_the_key() {
+    let d = tmpdir("usage-nokey");
+    let missing = d.join("nope.env");
+    let c = ctx(&d, &format!("{CONFIG}\n[providers.deepseek]\nkey_env = \"DEEPSEEK_API_KEY\"\nenv_file = \"{}\"\n", missing.display()));
+    let (code, out) = run(&c, &Fake::default(), &["accounts"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains(&format!("deepseek · key not found in {}", missing.display())), "{out}");
+    let page = String::from_utf8_lossy(&Server::new(&c, &Fake::default(), None).respond("GET / HTTP/1.1\r\nHost: x\r\n\r\n", c.now)).into_owned();
+    assert!(page.contains(&format!("<p class=m>deepseek · key not found in {}</p>", missing.display())), "{page}");
+}
+
+#[test]
+fn keychain_service_is_the_hashed_config_dir() {
+    // Our own derivation (from Claude Code 2.1.308, unverified against a live Keychain): this only pins its shape.
     let s = herdsman::usage::keychain_service(Path::new("/tmp/claude-accounts/A"));
     let want = &herdsman::devices::sha256(b"/tmp/claude-accounts/A")[..8];
     assert_eq!(s, format!("Claude Code-credentials-{want}"));

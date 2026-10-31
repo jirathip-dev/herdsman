@@ -91,16 +91,17 @@ fn env_value(text: &str, var: &str) -> Option<String> {
     kv.into_iter().find(|(k, _)| k.trim() == var).map(|(_, v)| v.trim().trim_matches(['"', '\'']).to_string())
 }
 
-/// The DeepSeek balance and whether it is under `warn_below`, read at most every 10 min; None without a key.
-pub fn deepseek(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> Option<(Balance, bool)> {
+/// The DeepSeek balance and whether it is under `warn_below`, read at most every 10 min; None without a key,
+/// Err(`key not found in <file>`) when the configured env file is unreadable or lacks it.
+pub fn deepseek(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> Option<Result<(Balance, bool), String>> {
     let p = cfg.providers.deepseek.as_ref()?;
     let key = match p.env_file.as_deref().or(cfg.accounts.accounts_env.as_deref()) {
-        Some(f) => env_value(&std::fs::read_to_string(expand(f)).ok()?, &p.key_env)?,
-        None => std::env::var(&p.key_env).ok()?,
+        Some(f) => match std::fs::read_to_string(expand(f)).ok().and_then(|t| env_value(&t, &p.key_env)).filter(|k| !k.is_empty()) {
+            Some(k) => k,
+            None => return Some(Err(format!("key not found in {f}"))),
+        },
+        None => std::env::var(&p.key_env).ok().filter(|k| !k.is_empty())?,
     };
-    if key.is_empty() {
-        return None;
-    }
     let path = dir(ctx).join("deepseek.json");
     let cached: Option<Balance> = load(&path);
     let b = match cached {
@@ -117,7 +118,7 @@ pub fn deepseek(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> Option<(Balance, boo
         }
     };
     let low = b.total < p.warn_below;
-    Some((b, low))
+    Some(Ok((b, low)))
 }
 
 /// (utilization %, reset epoch) of one usage window, if read.
@@ -164,6 +165,11 @@ pub fn meter(ctx: &Ctx, cfg: &Config, r: &dyn Runner, name: &str) -> Option<Mete
     match poll(r, &expand(login), ctx.now) {
         Poll::Got(session, week) => m = Meter { checked: ctx.now, ts: ctx.now, session, week, ..Default::default() },
         Poll::Login => m.login_needed = true,
+        Poll::Lost => {
+            m.login_needed = true;
+            let why = format!("account {name}: the refreshed usage login could not be stored in the Keychain; run claude /login in {login}");
+            let _ = crate::events::emit(&ctx.state, cfg, Event::new(ctx.now, "accounts", None, "usage-login-lost", json!({"account": name, "reason": why})));
+        }
         Poll::Busy(after) => {
             m.fails += 1;
             m.retry_at = ctx.now + after.max(POLL << m.fails.min(4));
@@ -178,27 +184,45 @@ pub fn meter(ctx: &Ctx, cfg: &Config, r: &dyn Runner, name: &str) -> Option<Mete
 enum Poll {
     Got(Window, Window),
     Login,
+    /// A refresh rotated the login but storing it back failed: it must be logged in again.
+    Lost,
     Busy(u64),
     Failed,
 }
 
-/// Claude Code's macOS Keychain item for a `CLAUDE_CONFIG_DIR=<dir>` login: `Claude Code-credentials-<first 8 hex of sha256(dir)>`.
+/// The macOS Keychain service of a `CLAUDE_CONFIG_DIR=<dir>` login, as derived from Claude Code 2.1.308 (unverified):
+/// `Claude Code-credentials-<first 8 hex of sha256(dir)>`. Never the default login's plain `Claude Code-credentials`.
 pub fn keychain_service(dir: &Path) -> String {
     format!("Claude Code-credentials-{}", &sha256(dir.to_string_lossy().as_bytes())[..8])
 }
 
+/// The item's account attribute (`"acct"<blob>="…"`), so a write-back goes to the item that was read.
+fn keychain_account(r: &dyn Runner, svc: &str) -> Option<String> {
+    let o = r.run("security", &argv(&["find-generic-password", "-s", svc])).ok().filter(|o| o.code == 0)?;
+    o.stdout.lines().find_map(|l| Some(l.trim().strip_prefix("\"acct\"<blob>=\"")?.strip_suffix('"')?.to_string()))
+}
+
+/// The login JSON stored in the item.
+fn keychain_read(r: &dyn Runner, svc: &str, acct: &str) -> Option<Value> {
+    let o = r.run("security", &argv(&["find-generic-password", "-w", "-a", acct, "-s", svc])).ok().filter(|o| o.code == 0)?;
+    serde_json::from_str(o.stdout.trim()).ok()
+}
+
 /// Read the login's token from the Keychain (refreshing an expired one), then `/api/oauth/usage`.
 fn poll(r: &dyn Runner, dir: &Path, now: u64) -> Poll {
-    let (svc, user) = (keychain_service(dir), std::env::var("USER").unwrap_or_default());
-    let creds = r.run("security", &argv(&["find-generic-password", "-a", &user, "-w", "-s", &svc])).ok().filter(|o| o.code == 0);
-    let Some(mut creds) = creds.and_then(|o| serde_json::from_str::<Value>(o.stdout.trim()).ok()) else { return Poll::Login };
+    let svc = keychain_service(dir);
+    let Some(acct) = keychain_account(r, &svc) else { return Poll::Login };
+    let Some(mut creds) = keychain_read(r, &svc, &acct) else { return Poll::Login };
     let oa = &creds["claudeAiOauth"];
     let token = if oa["expiresAt"].as_u64().unwrap_or(0) / 1000 > now + 60 {
-        oa["accessToken"].as_str().map(String::from)
+        oa["accessToken"].as_str().map(String::from).ok_or(Poll::Login)
     } else {
-        refresh(r, &mut creds, (&svc, &user), now)
+        refresh(r, &mut creds, (&svc, &acct), now)
     };
-    let Some(token) = token else { return Poll::Login };
+    let token = match token {
+        Ok(t) => t,
+        Err(p) => return p,
+    };
     let conf = format!("header = \"Authorization: Bearer {}\"\nheader = \"anthropic-beta: oauth-2025-04-20\"\n", q(&token));
     match curl(r, "https://api.anthropic.com/api/oauth/usage", &conf) {
         Some((200, _, body)) => parse_usage(&body).map_or(Poll::Failed, |(s, w)| Poll::Got(s, w)),
@@ -211,22 +235,30 @@ fn poll(r: &dyn Runner, dir: &Path, now: u64) -> Poll {
     }
 }
 
-/// Trade the refresh token for a new access token and store the rotated login back where Claude Code keeps it.
-fn refresh(r: &dyn Runner, creds: &mut Value, (svc, user): (&str, &str), now: u64) -> Option<String> {
-    let oa = creds.get_mut("claudeAiOauth")?;
-    let body = json!({"grant_type": "refresh_token", "refresh_token": oa["refreshToken"].as_str()?, "client_id": CLIENT_ID});
+/// Trade the refresh token for a new access token and store the rotated login back in the same item, verified by a
+/// re-read. Err(Login) leaves the old login intact; Err(Lost) means it was rotated but not stored.
+fn refresh(r: &dyn Runner, creds: &mut Value, (svc, acct): (&str, &str), now: u64) -> Result<String, Poll> {
+    // The `security -i` script quotes both: refuse anything a quote or escape could break out of, before rotating.
+    let safe = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || " ._@+-".contains(c));
+    let oa = creds.get_mut("claudeAiOauth").filter(|_| safe(svc) && safe(acct)).ok_or(Poll::Login)?;
+    let body = json!({"grant_type": "refresh_token", "refresh_token": oa["refreshToken"].as_str().ok_or(Poll::Login)?, "client_id": CLIENT_ID});
     let conf = format!("header = \"Content-Type: application/json\"\ndata = \"{}\"\n", q(&body.to_string()));
-    let (status, _, out) = curl(r, "https://platform.claude.com/v1/oauth/token", &conf)?;
-    let v: Value = serde_json::from_str(&out).ok().filter(|_| status == 200)?;
-    let token = v["access_token"].as_str()?.to_string();
+    let (status, _, out) = curl(r, "https://platform.claude.com/v1/oauth/token", &conf).ok_or(Poll::Login)?;
+    let v: Value = serde_json::from_str(&out).ok().filter(|_| status == 200).ok_or(Poll::Login)?;
+    let token = v["access_token"].as_str().ok_or(Poll::Login)?.to_string();
     oa["accessToken"] = json!(token);
     if let Some(rt) = v["refresh_token"].as_str() {
         oa["refreshToken"] = json!(rt);
     }
     oa["expiresAt"] = json!((now + v["expires_in"].as_u64().unwrap_or(3600)) * 1000);
     let hex: String = creds.to_string().bytes().map(|b| format!("{b:02x}")).collect();
-    let _ = r.run_in("security", &argv(&["-i"]), &format!("add-generic-password -U -a \"{user}\" -s \"{svc}\" -X \"{hex}\"\n"));
-    Some(token)
+    let stored = r.run_in("security", &argv(&["-i"]), &format!("add-generic-password -U -a \"{acct}\" -s \"{svc}\" -X \"{hex}\"\n"));
+    let back = stored.is_ok_and(|o| o.code == 0).then(|| keychain_read(r, svc, acct)).flatten();
+    if back.is_some_and(|b| b["claudeAiOauth"]["accessToken"] == json!(token)) {
+        Ok(token)
+    } else {
+        Err(Poll::Lost)
+    }
 }
 
 /// `five_hour` and `seven_day` of `/api/oauth/usage`: (utilization %, reset epoch).

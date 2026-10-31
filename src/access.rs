@@ -84,8 +84,10 @@ pub fn list(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Res
         }
         writeln!(out, "{:<8} {}", "", usage::lane_hours(&events, name, ctx.now))?;
     }
-    if let Some((b, low)) = usage::deepseek(ctx, cfg, r) {
-        writeln!(out, "deepseek · {} {:.2} · {}", b.currency, b.total, if low { "low" } else { "ok" })?;
+    match usage::deepseek(ctx, cfg, r) {
+        Some(Ok((b, low))) => writeln!(out, "deepseek · {} {:.2} · {}", b.currency, b.total, if low { "low" } else { "ok" })?,
+        Some(Err(hint)) => writeln!(out, "deepseek · {hint}")?,
+        None => {}
     }
     Ok(())
 }
@@ -107,7 +109,8 @@ pub fn reset(ctx: &Ctx, cfg: &Config, out: &mut dyn Write, name: &str) -> Result
 /// `capped 02:10 · resets 07:10` while the account's latest cap holds, else `ok`.
 pub fn cap_line(cfg: &Config, r: &dyn Runner, events: &[Event], name: &str, now: u64) -> String {
     let hhmm = |t| usage::date(r, t, "+%H:%M");
-    capped_until(cfg, events, name, now).map_or("ok".into(), |t| format!("capped {} · resets {}", hhmm(t - cfg.accounts.cap_reset_minutes * 60), hhmm(t)))
+    let at = |t: u64| events.iter().rev().find(|e| e.kind == "account-capped" && e.str("account") == Some(name)).map_or(t, |e| e.ts);
+    capped_until(cfg, events, name, now).map_or("ok".into(), |t| format!("capped {} · resets {}", hhmm(at(t)), hhmm(t)))
 }
 
 /// `*`-wildcard match on lowercased bytes (callers lowercase both sides).

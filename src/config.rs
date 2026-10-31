@@ -169,7 +169,7 @@ impl Config {
     pub fn parse(text: &str) -> Result<Config> {
         let c: Config = toml::from_str(text)?;
         let raw: toml::Table = toml::from_str(text)?;
-        if let Some((k, _)) = strings("", &toml::Value::Table(raw.clone())).into_iter().find(|(_, v)| crate::lanes::mask(v) != *v) {
+        if let Some((k, _)) = strings("", &toml::Value::Table(raw.clone())).into_iter().find(|(_, v)| secret_like(v)) {
             return crate::gate::refused("SECRET_IN_CONFIG", format!("{k} looks like a secret; keep keys in an env file (docs/providers.md)"));
         }
         if raw.get("limits").and_then(|l| l.get("max_agents")).is_some() {
@@ -238,6 +238,20 @@ impl Fleet {
 }
 
 /// Every string value under `v`, with its dotted key.
+/// A value shaped like a secret: a known token prefix, a JWT, or a 32+ char letter-and-digit run between `.`/`/`/`-`/`_`
+/// (so `UPPER_SNAKE` env-var names, paths and model ids pass).
+pub fn secret_like(v: &str) -> bool {
+    let words = v.split(|c: char| !(c.is_ascii_alphanumeric() || "-_+/=.~".contains(c))).filter(|w| !w.is_empty());
+    let b64 = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || "-_=".contains(c));
+    let long = |p: &str| p.len() >= 32 && p.chars().any(|c| c.is_ascii_digit()) && p.chars().any(|c| c.is_ascii_alphabetic());
+    words.into_iter().any(|w| {
+        let snake = w.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+        crate::lanes::PREFIXES.iter().any(|p| w.starts_with(p) && w.len() >= p.len() + 10)
+            || (w.starts_with("eyJ") && w.split('.').count() == 3 && w.split('.').all(b64))
+            || (!snake && w.split(['.', '/', '-', '_']).any(long))
+    })
+}
+
 fn strings(key: &str, v: &toml::Value) -> Vec<(String, String)> {
     let sub = |k: String, v| strings(&k, v);
     match v {
