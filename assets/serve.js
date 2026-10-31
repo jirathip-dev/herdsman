@@ -170,7 +170,7 @@ document.addEventListener('submit', async e => {
   } catch (err) { toast('error: ' + err.message); }
 });
 B.insertAdjacentHTML('beforeend', `<div id=sheet hidden><div class=bd></div><div class=sh role=dialog aria-modal=true>
-<div class=grip></div><div class=top></div><div class=acts><button type=button data-op=stop>Stop</button><button type=button data-op=kill>Kill</button><button type=button data-op=clean>Clean</button></div>
+<div class=hd><p><b></b></p></div><div class=top></div><div class=acts><button type=button data-op=stop>Stop</button><button type=button data-op=kill>Kill</button><button type=button data-op=clean>Clean</button></div>
 <div class=cf hidden><p></p><button type=button class=yes>Kill</button><button type=button class=no>Cancel</button></div>
 <div class=chat><button type=button class=more hidden>Load more</button><div class=old></div><div class=now></div></div>
 <form class=pairf hidden><input name=code inputmode=numeric autocomplete=one-time-code maxlength=6 placeholder="6-digit code" aria-label="pairing code"><button>Pair</button>
@@ -278,9 +278,9 @@ async function cleanable() {
 function open(e) {
   agent = e.dataset.agent;
   const top = $('.top');
-  top.innerHTML = '<p><b></b></p>' + e.querySelector('.card').innerHTML;
+  top.innerHTML = e.querySelector('.card').innerHTML;
   top.scrollTop = 0;
-  $('.top b').textContent = agent;
+  $('.hd b').textContent = agent;
   const rev = e.dataset.role === 'rev';
   $('.reply').hidden = !!B.dataset.ro || rev;
   $('.acts').hidden = !!B.dataset.ro;
@@ -288,29 +288,73 @@ function open(e) {
   now.replaceChildren();
   old.replaceChildren();
   say(rev ? 'reviewer lane: read-only' : '', true);
-  sh.classList.remove('full');
-  // Lock the page under the sheet (iOS scrolls the body otherwise).
-  y = scrollY;
-  B.style.top = -y + 'px';
-  document.documentElement.classList.add('lock');
-  S.hidden = false;
+  // Lock the page under the sheet (iOS scrolls the body otherwise); reopened mid-close, it is still locked.
+  if (shut) { clearTimeout(shut); shut = 0; S.classList.remove('out'); } else {
+    y = scrollY;
+    B.style.top = -y + 'px';
+    document.documentElement.classList.add('lock');
+    S.hidden = false;
+    S.classList.add('drag');
+    pos(sh.offsetHeight, 0);
+    void sh.offsetHeight;
+    S.classList.remove('drag');
+  }
   fit();
+  snap(kb() ? 'full' : 'mid');
   poll();
   if (!B.dataset.ro && !DEMO) cleanable();
   timer = setInterval(poll, 5000);
 }
+// Slides off-screen, then hides; the scroll lock and the page position come back after the slide.
 function close() {
-  S.hidden = true;
+  if (S.hidden || shut) return;
   clearInterval(timer);
   agent = null;
-  document.documentElement.classList.remove('lock');
-  B.style.top = '';
-  scrollTo(0, y);
+  d0 = null;
+  S.classList.remove('drag');
+  S.classList.add('out');
+  pos(sh.offsetHeight);
+  shut = setTimeout(() => {
+    shut = 0;
+    S.hidden = true;
+    S.classList.remove('out');
+    document.documentElement.classList.remove('lock');
+    B.style.top = '';
+    scrollTo(0, y);
+  }, 220);
+}
+// #70: the sheet is a full-height box placed by translateY at a detent (`full` stops under the safe area).
+// pos() moves it, fades the backdrop with it, and pads its bottom by the hidden part so the composer shows.
+const DET = { full: 1, mid: .78, half: .5 }, bd = $('.bd');
+let at = 'mid', ty = 0, shut = 0, padT = 0, d0 = null, moves = [], to = null, rq = 0;
+const off = d => Math.max(0, S.clientHeight * (1 - DET[d]) - sh.offsetTop);
+function pos(t, pad) {
+  ty = t;
+  sh.style.transform = `translateY(${t}px)`;
+  const h = sh.offsetHeight, half = off('half');
+  bd.style.opacity = Math.min(1, Math.max(0, (h - t) / (h - half || 1)));
+  if (pad !== undefined) sh.style.paddingBottom = `calc(${pad}px + env(safe-area-inset-bottom))`;
+}
+// Animate to a detent; the composer stays on screen (pad by the larger offset, then the detent's once settled).
+function snap(d) {
+  at = d;
+  sh.classList.toggle('full', d === 'full');
+  const t = off(d);
+  pos(t, Math.max(t, ty));
+  clearTimeout(padT);
+  padT = setTimeout(() => pos(t, t), 300);
 }
 // The sheet follows the visual viewport: the composer stays above the keyboard and returns when it closes.
+// While the keyboard is up (a field in the sheet focused) the sheet is full and does not drag.
 const vv = window.visualViewport;
-function fit() { if (vv) { S.style.top = vv.offsetTop + 'px'; S.style.height = vv.height + 'px'; } }
+const kb = () => !!sh.querySelector('input:focus, textarea:focus') || !!vv && vv.height < innerHeight * .75;
+function fit() {
+  if (vv) { S.style.top = vv.offsetTop + 'px'; S.style.height = vv.height + 'px'; }
+  if (!S.hidden && !shut && !d0) snap(kb() ? 'full' : at);
+}
 if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); }
+sh.addEventListener('focusin', fit);
+sh.addEventListener('focusout', () => setTimeout(fit, 100));
 // `/` first in the reply box: a filtered command list (tap or Enter); stop/kill/clean act, the rest go as text.
 const CMDS = ['/stop', '/kill', '/clean', '/compact', '/clear', '/status'], ta = $('.reply textarea'), cmds = $('.cmds');
 const matches = () => /^\/\S*$/.test(ta.value) ? CMDS.filter(c => c.startsWith(ta.value)) : [];
@@ -346,16 +390,60 @@ document.addEventListener('click', async e => {
 });
 $('.bd').onclick = close;
 addEventListener('keydown', e => { if (e.key === 'Escape' && !S.hidden) close(); });
-// Drag the handle: up = full height, down = back to 78 %, then closed (#63 q8: the card scrolls, it no longer drags).
-let y0 = null;
-const grip = $('.grip');
-grip.onpointerdown = e => { y0 = e.clientY; };
-grip.onpointerup = e => {
-  const dy = y0 === null ? 0 : e.clientY - y0;
-  y0 = null;
-  if (dy < -40) sh.classList.add('full');
-  else if (dy > 60) sh.classList.contains('full') ? sh.classList.remove('full') : close();
-};
+// #70: the sheet follows the finger 1:1 (light rubber band above full), one move per frame. On release: a flick
+// (over 0.5 px/ms in the last 80 ms) goes one detent its way, else the nearest; below half, or flicked down from it, closes.
+function grab(y) {
+  if (kb() || shut) return false;
+  clearTimeout(padT);
+  d0 = { y, t: ty };
+  moves = [];
+  S.classList.add('drag');
+  return true;
+}
+function drag(y, ts) {
+  const raw = d0.t + y - d0.y;
+  to = raw < 0 ? raw / 3 : raw;
+  moves.push([y, ts]);
+  if (!rq) rq = requestAnimationFrame(() => { rq = 0; if (to !== null) pos(to); });
+}
+function drop() {
+  cancelAnimationFrame(rq);
+  rq = 0;
+  if (to !== null) pos(to);
+  to = d0 = null;
+  S.classList.remove('drag');
+  const now = performance.now(), m = moves.filter(([, t]) => now - t <= 80), a = m[0], b = m[m.length - 1];
+  const v = m.length > 1 && b[1] > a[1] ? (b[0] - a[0]) / (b[1] - a[1]) : 0, ds = ['full', 'mid', 'half'], os = ds.map(off);
+  let i;
+  if (Math.abs(v) > .5) i = v > 0 ? os.findIndex(o => o > ty + 1) : Math.max(0, os.findLastIndex(o => o < ty - 1));
+  else i = ty > os[2] + 16 ? -1 : os.reduce((k, o, j) => Math.abs(o - ty) < Math.abs(os[k] - ty) ? j : k, 0);
+  if (i < 0) close(); else snap(ds[i]);
+}
+const hd = $('.hd');
+hd.onpointerdown = e => { if (grab(e.clientY)) try { hd.setPointerCapture(e.pointerId); } catch (_) {} };
+hd.onpointermove = e => { if (d0) drag(e.clientY, e.timeStamp); };
+hd.onpointerup = hd.onpointercancel = () => { if (d0) drop(); };
+// The conversation scrolls; pulled down while at its top (or once it reaches it), it hands the touch to the sheet.
+// Move and end listen on the touched node itself: a poll may swap it out mid-touch, and then nothing bubbles.
+chat.addEventListener('touchstart', e => {
+  const t = e.target;
+  let c0 = e.touches[0].clientY;
+  const move = e => {
+    const y = e.touches[0].clientY;
+    if (!d0 && (chat.scrollTop > 0 || y <= c0 || !e.cancelable || !grab(c0))) { c0 = y; return; }
+    e.preventDefault();
+    drag(y, e.timeStamp);
+  };
+  const end = () => {
+    t.removeEventListener('touchmove', move);
+    t.removeEventListener('touchend', end);
+    t.removeEventListener('touchcancel', end);
+    if (d0) drop();
+  };
+  t.addEventListener('touchmove', move, { passive: false });
+  t.addEventListener('touchend', end);
+  t.addEventListener('touchcancel', end);
+}, { passive: true });
 $('.reply').onsubmit = async e => {
   e.preventDefault();
   const r = await fetch(R + 'send', { method: 'POST', body: new URLSearchParams({ agent, text: e.target.text.value }) });
