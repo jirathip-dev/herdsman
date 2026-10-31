@@ -114,7 +114,7 @@ fn capped_account_is_skipped_until_reset() {
 
     assert_eq!(dry_account(&c, 13), "B");
     let (_, list) = run(&c, &Fake::default(), &["accounts"]);
-    assert!(list.lines().any(|l| l.starts_with("A ") && l.contains("capped until") && l.contains("sendmeter-impl-12")), "{list}");
+    assert!(list.lines().any(|l| l.starts_with("A ") && l.contains("capped ") && l.contains(" · resets ") && l.contains("1 lanes sendmeter-impl-12")), "{list}");
     assert!(list.lines().any(|l| l.starts_with("B ") && l.contains(" ok")), "{list}");
 
     let (code, out) = run(&c, &Fake::default(), &["accounts", "reset", "A"]);

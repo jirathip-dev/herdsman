@@ -108,7 +108,7 @@ pub fn group<'a>(all: &'a [Lane], changed: impl Fn(&Lane) -> u64) -> Groups<'a> 
 }
 
 const HIDE: &str = "•••";
-const PREFIXES: [&str; 8] = ["sk-", "ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "xox", "xapp-"];
+pub const PREFIXES: [&str; 8] = ["sk-", "ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "xox", "xapp-"];
 
 /// Mask secret-looking runs: `PREFIXES` tokens, JWTs, 32+ char hex/base64, `*KEY=`/`*TOKEN=`/`*SECRET=` values.
 pub fn mask(s: &str) -> String {

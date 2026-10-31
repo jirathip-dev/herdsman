@@ -56,7 +56,8 @@ herdsman profiles sync
 ```
 
 Check it worked: `herdsman status` prints no error. Every other key is in
-[fleet.example.toml](../fleet.example.toml).
+[fleet.example.toml](../fleet.example.toml). Claude accounts and the DeepSeek key live in env files, never
+in fleet.toml: see [providers.md](providers.md).
 
 ## 3. First lane
 

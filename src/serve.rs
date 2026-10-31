@@ -760,10 +760,27 @@ impl<'a> Server<'a> {
         if let Some(c) = cfg.filter(|c| !c.accounts.names.is_empty()) {
             h += "<h2>Accounts</h2>";
             for name in c.accounts.names.keys() {
-                let s = crate::access::capped_until(c, events, name, ctx.now)
-                    .map_or("<b class=g>ok</b>".into(), |t| format!("<b class=r>capped until {}</b>", crate::access::hhmm(self.r, t)));
-                h += &format!("<p class=kv>{} {s}</p>", esc(name));
+                let cap = crate::access::cap_line(c, self.r, events, name, ctx.now);
+                let usage = crate::usage::meter(ctx, c, self.r, name).map(|m| crate::usage::shown(self.r, &m, &c.accounts.usage[name], ctx.now));
+                let usage = match usage {
+                    Some(Ok((parts, pace))) => {
+                        let bar = |(t, p): &(String, f64)| format!(" · {} <meter min=0 max=100 low=75 high=89.9 optimum=0 value={p:.0}></meter>", esc(t));
+                        parts.iter().map(bar).collect::<String>() + &pace.map_or(String::new(), |p| format!(" · <b class=a>{}</b>", esc(&p)))
+                    }
+                    Some(Err(hint)) => format!(" · <span class=a>{}</span>", esc(&hint)),
+                    None => String::new(),
+                };
+                let hours = crate::usage::lane_hours(events, name, ctx.now);
+                h += &format!("<p class=kv>{} · <b class={}>{}</b>{usage}</p><p class=m>{}</p>", esc(name), tone(cap.split(' ').next().unwrap_or_default()), esc(&cap), esc(&hours));
             }
+        }
+        match cfg.and_then(|c| crate::usage::deepseek(ctx, c, self.r)) {
+            Some(Ok((b, low))) => {
+                let (class, word) = if low { ("a", "low") } else { ("g", "ok") };
+                h += &format!("<p class=kv>deepseek · {} {:.2} · <b class={class}>{word}</b></p>", esc(&b.currency), b.total);
+            }
+            Some(Err(hint)) => h += &format!("<p class=m>deepseek · {}</p>", esc(&hint)),
+            None => {}
         }
         if self.addr.is_some() {
             let (all, mt) = (devices::load(ctx), mtime(ctx));
