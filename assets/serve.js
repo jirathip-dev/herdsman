@@ -16,6 +16,8 @@ function tab(t) {
 }
 // #60: a part of the page read on demand (null when it cannot be read).
 const part = src => fetch(R + src, { cache: 'no-store' }).then(r => r.ok ? r.text() : null).catch(() => null);
+// A form POST of `data` (an object or FormData) to `path`.
+const post = (path, data) => fetch(R + path, { method: 'POST', body: new URLSearchParams(data) });
 // A `details[data-src]` row (a fleet's role forms) loads its body when opened, and again on each refresh.
 async function load(d) {
   const h = await part(d.dataset.src);
@@ -109,7 +111,8 @@ function alerts() {
   b.hidden = !standalone || !('PushManager' in window);
   if (nopair) { b.disabled = true; note(b, 'pair this phone first', false); }
 }
-function unpaired() { nopair = true; alerts(); }
+// Also shows the sheet's Pair button (open() hides it again).
+function unpaired() { nopair = true; alerts(); $('.pairf').hidden = false; }
 alerts();
 document.addEventListener('click', async e => {
   const b = e.target.closest('#push');
@@ -119,7 +122,7 @@ document.addEventListener('click', async e => {
     const key = Uint8Array.from(atob(b.dataset.key.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
     const reg = await navigator.serviceWorker.ready;
     const s = (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key })).toJSON();
-    const r = await fetch(R + 'push/subscribe', { method: 'POST', body: new URLSearchParams({ endpoint: s.endpoint, p256dh: s.keys.p256dh, auth: s.keys.auth }) });
+    const r = await post('push/subscribe', { endpoint: s.endpoint, p256dh: s.keys.p256dh, auth: s.keys.auth });
     const msg = (await r.text()).trim();
     if (r.status === 401) return unpaired();
     note(b, msg, r.ok);
@@ -185,7 +188,7 @@ document.addEventListener('submit', async e => {
   if (op !== 'mv' && op !== 'set') return;
   e.preventDefault();
   try {
-    const r = await fetch(R, { method: 'POST', body: new URLSearchParams(new FormData(f)) });
+    const r = await post('', new FormData(f));
     toast(r.redirected ? new URL(r.url).searchParams.get('msg') || '' : 'error: ' + (await r.text()).trim());
     refresh();
   } catch (err) { toast('error: ' + err.message); }
@@ -249,7 +252,6 @@ async function poll() {
     // Unpaired (401): say so, with the Pair button; never a silent one-liner.
     if (r.status === 401) {
       unpaired();
-      $('.pairf').hidden = false;
       return now.replaceChildren(el('p', 'unp', 'Pair this phone to see the conversation'));
     }
     if (!r.ok) return now.replaceChildren(el('p', 'm', (await r.text()).trim()));
@@ -273,10 +275,10 @@ more.onclick = async () => {
 };
 function say(msg, ok) { st.textContent = msg; st.className = 'st ' + (ok ? 'g' : 'r'); }
 // Stop/Kill/Clean call `/act`; kill and clean dry-run first (kill shows what is lost, clean why it is unsafe).
-const act = (op, confirm) => fetch(R + 'act', { method: 'POST', body: new URLSearchParams({ agent, op, confirm: confirm ? '1' : '' }) });
+const act = (op, confirm) => post('act', { agent, op, confirm: confirm ? '1' : '' });
 async function run(op) {
   const r = await act(op, op === 'stop'), msg = (await r.text()).trim();
-  if (r.status === 401) { unpaired(); $('.pairf').hidden = false; }
+  if (r.status === 401) unpaired();
   if (op === 'stop' || !r.ok) return say(msg, r.ok);
   $('.cf p').textContent = msg.split('; ').find(l => !l.startsWith('dry run')) || msg;
   $('.cf .yes span').textContent = op === 'kill' ? 'Kill' : 'Clean';
@@ -401,7 +403,7 @@ document.addEventListener('click', async e => {
   const a = b.closest('.ask'), lane = laneOf(a.dataset.ask);
   if (b.classList.contains('rp')) return lane && open(lane);
   // `h` names the menu this card shows: the server refuses a tap on a menu that has since changed.
-  const r = await fetch(R + 'answer', { method: 'POST', body: new URLSearchParams({ agent: a.dataset.ask, choice: b.value, h: b.dataset.h }) });
+  const r = await post('answer', { agent: a.dataset.ask, choice: b.value, h: b.dataset.h });
   const msg = (await r.text()).trim();
   // Re-render (fresh pane read) so stale buttons go at once; the message lands on the new card.
   await refresh();
@@ -468,9 +470,9 @@ chat.addEventListener('touchstart', e => {
 }, { passive: true });
 $('.reply').onsubmit = async e => {
   e.preventDefault();
-  const r = await fetch(R + 'send', { method: 'POST', body: new URLSearchParams({ agent, text: e.target.text.value }) });
+  const r = await post('send', { agent, text: e.target.text.value });
   const msg = (await r.text()).trim();
-  if (r.status === 401) { unpaired(); $('.pairf').hidden = false; }
+  if (r.status === 401) unpaired();
   say(msg, r.ok);
   if (r.ok) { e.target.text.value = ''; setTimeout(poll, 1500); }
 };
