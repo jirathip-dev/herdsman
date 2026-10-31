@@ -146,6 +146,21 @@ fn merges_with_exact_head_pass_and_green_ci() {
     assert_eq!(st.state, "merged");
 }
 
+#[test]
+fn merge_twice_says_already_merged_and_logs_nothing() {
+    let (_d, c) = setup("twice", CONFIG, &[("PASS", HEAD)]);
+    let (exit, out) = run(&c, &pr("staging", green()), &["merge", "sendmeter", "12"]);
+    assert_eq!(exit, 0, "{out}");
+    let before = read(&c.state).unwrap().len();
+    // Second caller: the PR is closed now, so a gate run would refuse NO_PR.
+    let r = Fake::default();
+    let (exit, out) = run(&c, &r, &["merge", "sendmeter", "12"]);
+    assert_eq!(exit, 0, "{out}");
+    assert!(out.contains("already merged → m3rg3 (PR #34)"), "{out}");
+    assert_eq!(read(&c.state).unwrap().len(), before, "no new event");
+    assert!(r.calls.borrow().is_empty(), "no gh calls: {:?}", r.calls.borrow());
+}
+
 // --- herdsman verdict ---
 
 #[test]

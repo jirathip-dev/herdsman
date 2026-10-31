@@ -137,7 +137,15 @@ pub fn gate(f: &Fleet, pr: &Value, st: Option<&IssueState>, limit: u32) -> Resul
 
 pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &str, issue: u64) -> Result<()> {
     let f = cfg.fleet(fleet)?;
-    let st = issue_state(ctx, fleet, issue)?;
+    let events = read(&ctx.state)?;
+    let st = fold(&events).remove(&(fleet.to_string(), issue));
+    // A retry after a merge is a no-op: no PR lookup, no event, no alert.
+    if st.as_ref().is_some_and(|s| s.state == "merged") {
+        let m = events.iter().find(|e| e.kind == "merged" && e.fleet == fleet && e.issue == Some(issue));
+        let s = |k| m.and_then(|e| e.str(k)).unwrap_or("?");
+        writeln!(out, "already merged → {} (PR #{})", s("merge_sha"), s("pr"))?;
+        return Ok(());
+    }
     let branch = branch_of(&st, issue);
     let pr = if is_main(&f.integration) {
         json!({"baseRefName": f.integration})
