@@ -166,7 +166,19 @@ enum Cmd {
     /// Remove worktree + pane of merged or closed-issue lanes (never live, dirty or unpushed ones); dry run unless --yes
     Clean {
         fleet: Option<String>,
+        /// Only this agent's worktree; refuses UNSAFE_CLEAN with the reason
+        #[arg(long, value_name = "AGENT")]
+        lane: Option<String>,
         /// Actually remove
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Send Esc to an agent's pane (it pauses); logs `stop`
+    Stop { agent: String },
+    /// Close an agent's pane, pushing unpushed or dirty work to `wip/<agent>-<stamp>` first; the worktree stays. Dry run unless --yes
+    Kill {
+        agent: String,
+        /// Actually kill
         #[arg(long)]
         yes: bool,
     },
@@ -403,7 +415,9 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 Cmd::Accounts { cmd: None } => access::list(ctx, &cfg, r, out)?,
                 Cmd::Accounts { cmd: Some(AccountsCmd::Reset { name }) } => access::reset(ctx, &cfg, out, &name)?,
                 Cmd::Protection => return protection::protection(&cfg, r, out),
-                Cmd::Clean { fleet, yes } => check::clean(ctx, &cfg, r, out, fleet.as_deref(), None, yes)?,
+                Cmd::Clean { fleet, lane, yes } => check::clean(ctx, &cfg, r, out, fleet.as_deref(), (None, lane.as_deref()), yes)?,
+                Cmd::Stop { agent } => check::stop(ctx, &cfg, r, out, &agent)?,
+                Cmd::Kill { agent, yes } => check::kill(ctx, &cfg, r, out, &agent, yes)?,
                 Cmd::Verdict { fleet, issue, verdict, sha, file } => {
                     let pass = verdict == "PASS";
                     gate::verdict(ctx, &cfg, r, out, (&fleet, issue), pass, &sha, &file)?

@@ -1,6 +1,6 @@
 // Tabs, lane display mode (both kept in localStorage), the live board (SSE `/live`, sync dot, ↻,
-// pull to refresh), SW, the Lanes bottom sheet: card, transcript (5 s poll), reply box with
-// one-time pairing, and blocked agents' menu buttons.
+// pull to refresh), SW, the Lanes bottom sheet: card, Stop/Kill/Clean (`/act`), transcript per turn
+// (5 s poll, load more), reply box with a `/` menu and one-time pairing, and blocked agents' menu buttons.
 const B = document.body, $ = s => document.querySelector(s), $$ = s => document.querySelectorAll(s);
 const get = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const put = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
@@ -80,52 +80,133 @@ addEventListener('online', () => { tries = 0; connect(); });
 addEventListener('offline', () => sync('r'));
 if (location.search) history.replaceState(null, '', location.pathname + (location.search.includes('all=1') ? '?all=1' : ''));
 B.insertAdjacentHTML('beforeend', `<div id=sheet hidden><div class=bd></div><div class=sh role=dialog aria-modal=true>
-<div class=grip></div><div class=top></div><div class=chat></div>
+<div class=grip></div><div class=top></div><div class=acts><button type=button data-op=stop>Stop</button><button type=button data-op=kill>Kill</button><button type=button data-op=clean>Clean</button></div>
+<div class=cf hidden><p></p><button type=button class=yes>Kill</button><button type=button class=no>Cancel</button></div>
+<div class=chat><button type=button class=more hidden>Load more</button><div class=old></div><div class=now></div></div>
 <form class=pairf hidden><input name=code inputmode=numeric autocomplete=one-time-code maxlength=6 placeholder="6-digit code" aria-label="pairing code"><button>Pair</button>
-<p class=m>First send from this device: run <b>herdsman serve pair</b> on the Mac and enter its code.</p></form>
-<form class=reply><textarea name=text rows=1 maxlength=2000 placeholder=Message aria-label=message></textarea><button>Send</button></form>
+<p class=m>Run <b>herdsman serve pair</b> on the Mac and enter its code.</p></form>
+<ul class=cmds hidden></ul>
+<form class=reply><textarea name=text rows=1 maxlength=2000 placeholder="Message, or / for commands" aria-label=message></textarea><button>Send</button></form>
 <p class=st></p></div></div>`);
-const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st');
-let agent = null, act = '', timer = 0;
-// A new bubble per turn marker: Claude's `⏺`, Hermes's tool lines, a typed prompt.
-const MARK = { claude: l => l.startsWith('⏺'), hermes: l => l.includes('💻') || l.startsWith('┊') };
-const typed = l => /^[❯>›]/.test(l);
+const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st'), now = $('.now'), old = $('.old'), more = $('.more');
+let agent = null, timer = 0, cur = 0, y = 0;
+const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text || '' });
+// One block per turn (server-grouped): the typed prompt, text runs, tool calls collapsed to their head line.
+const render = turns => turns.map(t => {
+  const d = el('div', 'turn');
+  if (t.me) d.append(el('p', 'b me', t.me));
+  for (const i of t.items) {
+    if (i.tool === undefined) { d.append(el('p', 'b', i.text)); continue; }
+    const x = el('details', 'tool');
+    x.append(el('summary', '', i.tool));
+    if (i.body) x.append(el('pre', '', i.body));
+    d.append(x);
+  }
+  return d;
+});
+const lane = q => fetch('/lane?agent=' + encodeURIComponent(agent) + '&lines=200' + q);
 async function poll() {
   try {
-    const r = await fetch('/lane?agent=' + encodeURIComponent(agent));
-    // Unpaired (401) or refused: only the row's 1-line activity, no transcript.
-    if (!r.ok) return chat.replaceChildren(Object.assign(document.createElement('p'), { className: 'b', textContent: act }));
-    const j = await r.json(), mark = MARK[j.harness] || (() => false);
-    const end = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 8;
-    chat.replaceChildren(...j.lines.reduce((bs, l) => {
-      const t = l.trim();
-      if (!bs.length || mark(t) || typed(t)) {
-        bs.push(Object.assign(document.createElement('p'), { className: typed(t) ? 'b me' : 'b' }));
-      }
-      const b = bs[bs.length - 1];
-      b.textContent += (b.textContent ? '\n' : '') + l;
-      return bs;
-    }, []));
+    const r = await lane('');
+    // Unpaired (401): say so, with the code entry; never a silent one-liner.
+    if (r.status === 401) {
+      $('.pairf').hidden = false;
+      return now.replaceChildren(el('p', 'unp', 'Pair this phone to see the conversation'));
+    }
+    if (!r.ok) return now.replaceChildren(el('p', 'm', (await r.text()).trim()));
+    const j = await r.json(), end = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 8;
+    const open = new Set([...now.querySelectorAll('details[open] summary')].map(s => s.textContent));
+    now.replaceChildren(...render(j.turns));
+    now.querySelectorAll('summary').forEach(s => { if (open.has(s.textContent)) s.parentNode.open = true; });
+    if (!old.childElementCount) { cur = j.before; more.hidden = !j.more; }
     if (end) chat.scrollTop = chat.scrollHeight;
-  } catch (e) { chat.textContent = 'no pane output'; }
+  } catch (e) { now.textContent = 'no pane output'; }
 }
+// Older lines from the pane's scrollback, kept above the live part.
+more.onclick = async () => {
+  const r = await lane('&before=' + cur);
+  if (!r.ok) return;
+  const j = await r.json(), h = chat.scrollHeight;
+  old.prepend(...render(j.turns));
+  cur = j.before;
+  more.hidden = !j.more;
+  chat.scrollTop += chat.scrollHeight - h;
+};
 function say(msg, ok) { st.textContent = msg; st.className = 'st ' + (ok ? 'g' : 'r'); }
-function open(el) {
-  agent = el.dataset.agent;
-  act = el.querySelector('.act').textContent;
-  $('.top').innerHTML = '<p><b></b></p>' + el.querySelector('.card').innerHTML;
+// Stop/Kill/Clean call `/act`; kill and clean dry-run first (kill shows what is lost, clean why it is unsafe).
+const act = (op, confirm) => fetch('/act', { method: 'POST', body: new URLSearchParams({ agent, op, confirm: confirm ? '1' : '' }) });
+async function run(op) {
+  const r = await act(op, op === 'stop'), msg = (await r.text()).trim();
+  if (r.status === 401) $('.pairf').hidden = false;
+  if (op === 'stop' || !r.ok) return say(msg, r.ok);
+  $('.cf p').textContent = msg.split('; ').find(l => !l.startsWith('dry run')) || msg;
+  $('.cf .yes').textContent = op === 'kill' ? 'Kill' : 'Clean';
+  $('.cf').dataset.op = op;
+  $('.cf').hidden = false;
+}
+$('.acts').onclick = e => { const b = e.target.closest('button'); if (b) run(b.dataset.op); };
+$('.cf .no').onclick = () => { $('.cf').hidden = true; };
+$('.cf .yes').onclick = async () => {
+  const r = await act($('.cf').dataset.op, true);
+  $('.cf').hidden = true;
+  say((await r.text()).trim(), r.ok);
+  refresh();
+};
+async function cleanable() {
+  const b = $('[data-op=clean]'), r = await act('clean', false), msg = (await r.text()).trim();
+  b.disabled = !r.ok;
+  b.textContent = 'Clean' + (r.ok || r.status === 401 ? '' : ' (' + msg.split(': ').pop() + ')');
+}
+function open(e) {
+  agent = e.dataset.agent;
+  $('.top').innerHTML = '<p><b></b></p>' + e.querySelector('.card').innerHTML;
   $('.top b').textContent = agent;
-  const rev = el.dataset.role === 'rev';
+  const rev = e.dataset.role === 'rev';
   $('.reply').hidden = !!B.dataset.ro || rev;
-  $('.pairf').hidden = true;
-  chat.replaceChildren();
+  $('.acts').hidden = !!B.dataset.ro;
+  $$('.pairf, .cf, .cmds').forEach(x => x.hidden = true);
+  now.replaceChildren();
+  old.replaceChildren();
   say(rev ? 'reviewer lane: read-only' : '', true);
   sh.classList.remove('full');
+  // Lock the page under the sheet (iOS scrolls the body otherwise).
+  y = scrollY;
+  B.style.top = -y + 'px';
+  document.documentElement.classList.add('lock');
   S.hidden = false;
+  fit();
   poll();
+  if (!B.dataset.ro) cleanable();
   timer = setInterval(poll, 5000);
 }
-function close() { S.hidden = true; clearInterval(timer); agent = null; }
+function close() {
+  S.hidden = true;
+  clearInterval(timer);
+  agent = null;
+  document.documentElement.classList.remove('lock');
+  B.style.top = '';
+  scrollTo(0, y);
+}
+// The sheet follows the visual viewport: the composer stays above the keyboard and returns when it closes.
+const vv = window.visualViewport;
+function fit() { if (vv) { S.style.top = vv.offsetTop + 'px'; S.style.height = vv.height + 'px'; } }
+if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); }
+// `/` first in the reply box: a filtered command list (tap or Enter); stop/kill/clean act, the rest go as text.
+const CMDS = ['/stop', '/kill', '/clean', '/compact', '/clear', '/status'], ta = $('.reply textarea'), cmds = $('.cmds');
+const matches = () => /^\/\S*$/.test(ta.value) ? CMDS.filter(c => c.startsWith(ta.value)) : [];
+function pick(c) {
+  cmds.hidden = true;
+  if (['/stop', '/kill', '/clean'].includes(c)) { ta.value = ''; return run(c.slice(1)); }
+  ta.value = c;
+  $('.reply').requestSubmit();
+}
+ta.oninput = () => {
+  const m = matches();
+  cmds.replaceChildren(...m.map(c => el('li', '', c)));
+  cmds.hidden = !m.length;
+};
+ta.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && matches().length) { e.preventDefault(); pick(matches()[0]); } };
+cmds.onclick = e => { const li = e.target.closest('li'); if (li) pick(li.textContent); };
 // Delegated: rows and needs-you cards are swapped in place. A menu option POSTs `/answer`.
 document.addEventListener('click', async e => {
   const b = e.target.closest('.lane .lr, .ask .pick, .ask .rp');
@@ -169,7 +250,7 @@ $('.pairf').onsubmit = async e => {
   const r = await fetch('/pair', { method: 'POST', body: new URLSearchParams({ code: e.target.code.value }) });
   say((await r.text()).trim(), r.ok);
   e.target.code.value = '';
-  if (r.ok) { e.target.hidden = true; $('.reply').requestSubmit(); }
+  if (r.ok) { e.target.hidden = true; poll(); if (ta.value.trim()) $('.reply').requestSubmit(); }
 };
 // Pull to refresh from the top (×0.5 resistance, past 70 px); never with the sheet open or a field
 // focused; the axis locks after 10 px so a sideways swipe never pulls.

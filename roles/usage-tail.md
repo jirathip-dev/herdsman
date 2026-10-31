@@ -30,6 +30,7 @@ queued → impl → review(n) → fix(n) → ready → merged; plus blocked, nee
 - BAD_VALUE: set: a value is empty or has a quote/backslash/control char, or the model is not in `models`; ask: an empty question, over 4 options
 - NO_SUCH_ASK / ALREADY_ANSWERED: answer: the fleet has no such ask id, or it was answered already
 - STALE: serve: fleet.toml changed since the page was rendered; reload and retry
+- NO_SUCH_AGENT / SECRET_IN_WIP / UNSAFE_CLEAN: stop/kill: no such live lane; kill: a secret-looking value in the wip diff (nothing pushed, pane stays); clean --lane: not merged/closed, dirty, unpushed or live
 - MCP_FORBIDDEN: spawn/profiles sync: a role's `mcp` names a server matching `mcp_deny` (default `*prod*`)
 
 ## Exit codes

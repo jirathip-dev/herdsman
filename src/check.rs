@@ -134,11 +134,12 @@ pub fn teardown(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fl
     if seen.is_empty() {
         return Ok(());
     }
-    clean(ctx, cfg, r, out, Some(fleet), Some(issue), true)
+    clean(ctx, cfg, r, out, Some(fleet), (Some(issue), None), true)
 }
 
 /// Remove worktree + pane of lanes whose issue is merged (or closed on GitHub). Dry run unless `yes`.
-pub fn clean(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: Option<&str>, issue: Option<u64>, yes: bool) -> Result<()> {
+/// `--lane` (one agent's worktree) refuses UNSAFE_CLEAN with the reason when it cannot go.
+pub fn clean(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: Option<&str>, (issue, lane): (Option<u64>, Option<&str>), yes: bool) -> Result<()> {
     let events = read(&ctx.state)?;
     let states = fold(&events);
     let agents = host::agents(r).context("cannot list herdr agents; refusing to clean blind")?;
@@ -148,17 +149,20 @@ pub fn clean(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
     // Newest spawn per worktree wins (it has the current pane).
     for e in events.iter().rev().filter(|e| e.kind == "spawn" && fleet.is_none_or(|f| f == e.fleet)) {
         let (Some(n), Some(wt)) = (e.issue, e.str("worktree")) else { continue };
-        if issue.is_some_and(|i| i != n) {
+        if issue.is_some_and(|i| i != n) || lane.is_some_and(|a| e.str("agent") != Some(a)) {
             continue;
         }
         if !Path::new(wt).exists() || seen.contains(wt) {
             continue;
         }
+        let unsafe_lane = |why: &str| crate::gate::refused("UNSAFE_CLEAN", format!("{}: {why}", lane.unwrap_or_default()));
         // Merged by `herdsman merge`, or closed on GitHub by any other route.
         let why = if states.get(&(e.fleet.clone(), n)).is_some_and(|s| s.state == "merged") {
             "merged"
         } else if closed_issues(ctx, cfg, r, out, &mut closed, &e.fleet).contains(&n) {
             "issue closed"
+        } else if lane.is_some() {
+            return unsafe_lane("not merged");
         } else {
             continue;
         };
@@ -170,6 +174,9 @@ pub fn clean(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
             dirty(r, Path::new(wt))
         };
         if let Some(reason) = keep {
+            if lane.is_some() {
+                return unsafe_lane(&reason);
+            }
             writeln!(out, "keep {wt}: {reason}")?;
             continue;
         }
@@ -187,6 +194,9 @@ pub fn clean(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
         }
         writeln!(out, "removed {wt} ({}#{n} {why})", e.fleet)?;
         emit(&ctx.state, cfg, Event::new(ctx.now, &e.fleet, Some(n), "clean", json!({"worktree": wt, "pane": pane})))?;
+    }
+    if lane.is_some() && seen.is_empty() {
+        return crate::gate::refused("UNSAFE_CLEAN", format!("{}: no worktree in the log", lane.unwrap_or_default()));
     }
     if !yes {
         writeln!(out, "dry run: nothing changed; pass --yes to remove")?;
@@ -234,4 +244,70 @@ fn remove(r: &dyn Runner, cfg: &Config, fleet: &str, wt: &str, ws: &str) -> Resu
     let local = cfg.fleet(fleet)?.local_path().to_string_lossy().into_owned();
     ok(r, "git", &["-C", &local, "worktree", "remove", wt])?;
     Ok(())
+}
+
+/// The agent's newest spawn, unless a `lane-killed` followed it; else NO_SUCH_AGENT.
+fn spawned<'a>(events: &'a [Event], agent: &str) -> Result<&'a Event> {
+    let i = events.iter().rposition(|e| e.kind == "spawn" && e.str("agent") == Some(agent));
+    match i.filter(|i| !events[*i..].iter().any(|e| e.kind == "lane-killed" && e.str("agent") == Some(agent))) {
+        Some(i) => Ok(&events[i]),
+        None => crate::gate::refused("NO_SUCH_AGENT", format!("no live lane `{agent}` in the log")),
+    }
+}
+
+/// `herdsman stop`: Esc to the agent's pane (it pauses); logs `stop`.
+pub fn stop(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent: &str) -> Result<()> {
+    let events = read(&ctx.state)?;
+    let e = spawned(&events, agent)?;
+    ok(r, "herdr", &["pane", "send-keys", e.str("pane").unwrap_or_default(), "Escape"])?;
+    emit(&ctx.state, cfg, Event::new(ctx.now, &e.fleet, e.issue, "stop", json!({"agent": agent})))?;
+    Ok(writeln!(out, "sent Esc to {agent}")?)
+}
+
+/// `herdsman kill`: the dry-run line (what is lost); with `yes`, unpushed or dirty work goes to
+/// `wip/<agent>-<stamp>` first (refused SECRET_IN_WIP when the diff masks), then the pane closes.
+/// The worktree is kept; an orch's checkout is the owner's and never snapshotted.
+pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent: &str, yes: bool) -> Result<()> {
+    let events = read(&ctx.state)?;
+    let e = spawned(&events, agent)?;
+    let role = e.str("role").unwrap_or_default();
+    let st = e.issue.and_then(|n| fold(&events).remove(&(e.fleet.clone(), n)));
+    let wt = e.str("worktree").filter(|w| role != "orch" && Path::new(w).exists());
+    let git = |a: &[&str]| ok(r, "git", &[&["-C", wt.unwrap_or_default()][..], a].concat());
+    let (dirty, ahead) = match wt {
+        Some(_) => {
+            let st = git(&["status", "--porcelain"])?;
+            (st.lines().filter(|l| !OWN_FILES.iter().any(|f| l.trim_end() == format!("?? {f}"))).count(), git(&["rev-list", "--count", "HEAD", "--not", "--remotes"])?.trim().parse()?)
+        }
+        None => (0, 0),
+    };
+    let stamp = crate::usage::date(r, ctx.now, "+%Y%m%d-%H%M");
+    let wip = (dirty + ahead > 0).then(|| format!("wip/{agent}-{}", if stamp.chars().all(|c| c.is_ascii_digit() || c == '-') { stamp } else { ctx.now.to_string() }));
+    let pr = e.issue.zip(cfg.fleet.get(&e.fleet)).and_then(|(n, f)| gh::pr(ctx, r, f, (&e.fleet, n), &crate::gate::branch_of(st.as_ref(), n), ctx.now).ok());
+    let pr = pr.filter(|p| p["state"] == "OPEN").map_or(String::new(), |p| format!(" · PR #{} open", p["number"]));
+    let lost = match &wip {
+        Some(w) => format!("{ahead} unpushed commit(s), {dirty} dirty file(s) → {w}"),
+        None => "nothing unpushed".into(),
+    };
+    writeln!(out, "{agent} · {} · {lost}{pr} · pane closes, worktree kept", st.map_or(role.to_string(), |s| s.state))?;
+    if !yes {
+        return Ok(writeln!(out, "dry run: nothing changed; pass --yes to kill")?);
+    }
+    if let Some(w) = &wip {
+        let skip: Vec<String> = OWN_FILES.iter().map(|f| format!(":(exclude){f}")).collect();
+        git(&[&["add", "-A", "--", "."][..], &skip.iter().map(String::as_str).collect::<Vec<_>>()].concat())?;
+        let diff = git(&["diff", "--cached"])? + &git(&["log", "-p", "--format=", "HEAD", "--not", "--remotes"])?;
+        if crate::lanes::mask(&diff) != diff {
+            let _ = git(&["reset", "-q"]);
+            return crate::gate::refused("SECRET_IN_WIP", format!("{agent}'s unpushed diff has a secret-looking value; nothing pushed, pane kept"));
+        }
+        if dirty > 0 {
+            git(&["commit", "-q", "--no-verify", "-m", "wip: kill snapshot"])?;
+        }
+        git(&["push", "origin", &format!("HEAD:refs/heads/{w}")])?;
+    }
+    ok(r, "herdr", &["pane", "close", e.str("pane").unwrap_or_default()])?;
+    let d = json!({"agent": agent, "role": role, "pane": e.str("pane"), "wip": wip});
+    emit(&ctx.state, cfg, Event::new(ctx.now, &e.fleet, e.issue, "lane-killed", d))?;
+    Ok(writeln!(out, "killed {agent}{}", wip.map_or(String::new(), |w| format!(": work pushed to {w}")))?)
 }

@@ -224,6 +224,15 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
                 s.state = if v == "PASS" { "ready".into() } else { format!("fix({})", s.rounds) };
             }
             "merged" | "blocked" | "needs-human" => s.state = e.kind.clone(),
+            // Back to the state before the killed lane: queued / fix(n) for an impl, impl / fix(n) for a review.
+            "lane-killed" if e.str("role").and_then(|r| s.lanes.get(r)).map(String::as_str) == e.str("agent") => {
+                let role = e.str("role").unwrap_or_default();
+                s.lanes.remove(role);
+                s.lane = None;
+                if role == "impl" && s.state == "impl" || role == "rev" && s.state.starts_with("review") {
+                    s.state = if s.rounds > 0 { format!("fix({})", s.rounds) } else if role == "rev" { "impl".into() } else { "queued".into() };
+                }
+            }
             _ => {}
         }
     }
