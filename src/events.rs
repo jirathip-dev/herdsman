@@ -106,6 +106,12 @@ pub fn plain(ev: &Event) -> String {
             format!("{who} merged → {} {sha} (PR #{})", s("into"), s("pr"))
         }
         "blocked" => format!("{who} blocked {}: {}", s("code"), s("reason")),
+        "needs-decision" => {
+            let rec = ev.data["recommend"].as_u64();
+            let opts: String = ev.data["options"].as_array().into_iter().flatten().zip(1..).map(|(o, n)| format!("\n  {n}) {}{}", o.as_str().unwrap_or("?"), if rec == Some(n) { " (recommended)" } else { "" })).collect();
+            format!("{who} needs you ({} asks {}): {}{opts}\n  herdsman answer {} {} <n|\"text\">", s("agent"), s("id"), s("question"), ev.fleet, s("id"))
+        }
+        "decision" => format!("{who} decision {} by {}: {}", s("id"), s("by"), s("choice")),
         "queue" => {
             let n: Vec<String> = ev.data["issues"].as_array().into_iter().flatten().map(|n| format!("#{n}")).collect();
             format!("{who} queue {} {}", s("op"), n.join(" "))
@@ -165,7 +171,13 @@ pub fn last_spawn<'a>(events: &'a [Event], agent: &str) -> Option<&'a Event> {
 }
 
 /// Events `herdsman check` and notifiers write about an issue; they are not activity.
-pub const PASSIVE: [&str; 5] = ["stall", "lane-dead", "ready-unmerged", "notify-failed", "account-capped"];
+pub const PASSIVE: [&str; 7] = ["stall", "lane-dead", "ready-unmerged", "notify-failed", "account-capped", "orch-holding", "ask-waiting"];
+
+/// `needs-decision` events with no `decision` yet, oldest first.
+pub fn open_asks(events: &[Event]) -> Vec<&Event> {
+    let done = |a: &Event| events.iter().any(|e| e.kind == "decision" && e.fleet == a.fleet && e.str("id") == a.str("id"));
+    events.iter().filter(|a| a.kind == "needs-decision" && !done(a)).collect()
+}
 
 /// Current per-issue state (the states in `roles/usage-tail.md`).
 pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {

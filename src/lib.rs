@@ -18,7 +18,7 @@ pub mod serve;
 pub mod spawn;
 
 pub use cli::{main_with, usage_doc};
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use config::{home, set_in, set_value, write_atomic, Config};
 use events::{emit, read, Event};
 use serde_json::{json, Value};
@@ -187,5 +187,58 @@ pub fn pause(ctx: &Ctx, out: &mut dyn Write, fleet: &str, paused: bool, via: Opt
     write_atomic(&ctx.config, &new)?;
     emit(&ctx.state, &new_cfg, Event::new(ctx.now, fleet, None, if paused { "pause" } else { "resume" }, with_via(json!({}), via)))?;
     writeln!(out, "{fleet}: {word}")?;
+    Ok(())
+}
+
+/// `herdsman ask`: log a `needs-decision` for the asking lane (`HERDSMAN_LANE`, else the orch), notify, print its id.
+pub fn ask(ctx: &Ctx, cfg: &Config, out: &mut dyn Write, (fleet, issue): (&str, Option<u64>), q: &str, opts: &[String], rec: Option<usize>) -> Result<()> {
+    cfg.fleet(fleet)?;
+    if q.trim().is_empty() || opts.len() > 4 || rec.is_some_and(|n| n == 0 || n > opts.len()) {
+        return gate::refused("BAD_VALUE", "an ask is a non-empty question, at most 4 options, --recommend one of them");
+    }
+    let events = read(&ctx.state)?;
+    let id = format!("q{}", events.iter().filter(|e| e.kind == "needs-decision").count() + 1);
+    // `<fleet>:<issue|->:<role>` names the newest spawn of that lane.
+    let lane = std::env::var("HERDSMAN_LANE").unwrap_or_default();
+    let at = |e: &Event| format!("{}:{}:{}", e.fleet, e.issue.map_or("-".into(), |n| n.to_string()), e.str("role").unwrap_or_default());
+    let spawned = events.iter().rev().find(|e| e.kind == "spawn" && at(e) == lane);
+    let agent = spawned.and_then(|e| e.str("agent")).map_or(format!("{fleet}-orch"), String::from);
+    let d = json!({"id": id, "question": q, "options": opts, "recommend": rec, "agent": agent});
+    emit(&ctx.state, cfg, Event::new(ctx.now, fleet, issue, "needs-decision", d))?;
+    Ok(writeln!(out, "{id}")?)
+}
+
+/// `herdsman answer` (and the page's needs-you card, with `via`): log the decision, prompt the asking agent.
+pub fn answer(ctx: &Ctx, cfg: &Config, r: &dyn runner::Runner, out: &mut dyn Write, (fleet, id): (&str, &str), choice: &str, (by, via): (&str, Option<&str>)) -> Result<()> {
+    let events = read(&ctx.state)?;
+    let is = |e: &&Event, k: &str| e.kind == k && e.fleet == fleet && e.str("id") == Some(id);
+    let Some(ask) = events.iter().find(|e| is(e, "needs-decision")) else { return gate::refused("NO_SUCH_ASK", format!("{fleet} has no ask {id}")) };
+    if let Some(d) = events.iter().find(|e| is(e, "decision")) {
+        return gate::refused("ALREADY_ANSWERED", format!("{id} was answered by {}: {}", d.str("by").unwrap_or("?"), d.str("choice").unwrap_or("?")));
+    }
+    let text = choice.parse::<usize>().ok().and_then(|n| ask.data["options"].get(n.checked_sub(1)?)?.as_str()).unwrap_or(choice);
+    if text.trim().is_empty() || text.chars().any(char::is_control) {
+        return gate::refused("BAD_VALUE", "an answer is an option number or one line of text");
+    }
+    emit(&ctx.state, cfg, Event::new(ctx.now, fleet, ask.issue, "decision", with_via(json!({"id": id, "choice": text, "by": by}), via)))?;
+    let agent = ask.str("agent").unwrap_or_default();
+    let pane = events::last_spawn(&events, agent).and_then(|e| e.str("pane")).context("decision logged, but the asking agent has no pane")?;
+    runner::ok(r, "herdr", &["agent", "prompt", agent, &format!("DECISION {id}: {text}")])?;
+    runner::ok(r, "herdr", &["pane", "send-keys", pane, "Enter"])?;
+    Ok(writeln!(out, "{fleet} {id}: {text} -> {agent}")?)
+}
+
+/// `herdsman asks`: the open asks, oldest first, with age.
+pub fn asks(ctx: &Ctx, out: &mut dyn Write, fleet: Option<&str>, as_json: bool) -> Result<()> {
+    let events = read(&ctx.state)?;
+    let open: Vec<&Event> = events::open_asks(&events).into_iter().filter(|e| fleet.is_none_or(|f| f == e.fleet)).collect();
+    if as_json {
+        writeln!(out, "{}", serde_json::to_string_pretty(&open)?)?;
+    }
+    for e in open.iter().filter(|_| !as_json) {
+        let at = e.issue.map_or("-".into(), |n| format!("#{n}"));
+        let s = |k| e.str(k).unwrap_or_default();
+        writeln!(out, "{} {} {at} {} {}: {}", e.fleet, s("id"), events::age(ctx.now.saturating_sub(e.ts)), s("agent"), s("question"))?;
+    }
     Ok(())
 }

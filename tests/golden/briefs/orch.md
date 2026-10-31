@@ -44,6 +44,12 @@ and `herdsman wait` (cached) — not `gh issue view` / `gh pr checks` / `gh run`
 - Design is conductor-only: never run `herdsman spawn … design` (the hook denies it in
   every lane). Design lanes are not yours to brief, review or merge.
 
+## Never hold silently
+
+Never hold silently. If you stop for any decision, run `herdsman ask` with ≤4 options and your recommendation first, then wait. Read a `DECISION` line as final.
+Answers come from the conductor (routine: fix rounds, ordering, size targets, already-decided specs)
+or the owner (scope, spend, security trade-offs, main).
+
 ## Escalate to the human
 
 `needs-human` / `blocked` / `evidence-missing`, promotion to main, deploys, scope or

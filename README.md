@@ -42,7 +42,7 @@ Full setup, from install to the board on your phone over Tailscale: [docs/setup.
 | `pause` / `resume` | hold a fleet: `next` offers nothing, impl/rev spawns refuse `PAUSED` |
 | `queue` / `next` | ordered work queue; the first issue ready to start |
 | `brief` / `pr` / `wait` | cached issue spec; cached PR and CI; wait for CI or merge |
-| `check` | alert once per stall, dead lane or unmerged ready issue (cron-safe) |
+| `check` / `ask` / `answer` / `asks` | alerts (stall, dead lane, unmerged ready, silent orch hold); ask for a decision, answer it |
 | `clean` | remove worktrees and panes of merged or closed lanes (dry run unless `--yes`) |
 | `set` / `profiles` | switch a role's harness or model; write per-role folders and hooks |
 | `accounts` | which Claude accounts are capped, and which lanes use them |

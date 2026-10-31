@@ -224,8 +224,8 @@ impl<'a> Server<'a> {
             ("GET", _) => ("404 Not Found", "text/plain", text("not found\n")),
             ("POST", _) if self.addr.is_none() => ("405 Method Not Allowed", "text/plain", text("read-only: GET only\n")),
             ("POST", _) if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
-            ("POST", "/") if form(body.trim()).get("op").is_some_and(|o| o == "unpair") && self.device(ctx, head).is_none() => {
-                ("401 Unauthorized", "text/plain", text("only a paired device may remove devices\n"))
+            ("POST", "/") if form(body.trim()).get("op").is_some_and(|o| o == "unpair" || o == "answer") && self.device(ctx, head).is_none() => {
+                ("401 Unauthorized", "text/plain", text("only a paired device may remove devices or answer asks\n"))
             }
             ("POST", "/") => {
                 let msg = self.write(ctx, &form(body.trim())).unwrap_or_else(|e| shown(&e));
@@ -349,6 +349,10 @@ impl<'a> Server<'a> {
                 let wanted = ["model", "effort"].into_iter().filter(|k| !g(k).is_empty()).map(|k| (k, g(k).to_string()));
                 crate::set(ctx, &mut out, fleet, g("role"), wanted.collect(), Some("web"))?
             }
+            "answer" => {
+                let choice = if g("choice").is_empty() { g("text") } else { g("choice") };
+                crate::answer(ctx, &Config::load(&ctx.config)?, self.r, &mut out, (fleet, g("id")), choice, ("owner", Some("web")))?
+            }
             "unpair" => {
                 let mut all = devices::load(ctx);
                 all.retain(|d| d.hash != g("hash"));
@@ -376,16 +380,30 @@ impl<'a> Server<'a> {
              <link rel=manifest href=/manifest.webmanifest><link rel=icon href=/icon-192.png><link rel=apple-touch-icon href=/icon-180.png>\
              <title>herdsman</title><style>{CSS}</style></head>\
              <body data-ts={} data-mode=horse{ro}><header><b>herdsman</b><span id=stale hidden></span>\
-             <button id=mode type=button aria-label=\"lane display mode\">horse</button></header>{msg}<main>\
+             <button id=mode type=button aria-label=\"lane display mode\">horse</button></header>{msg}{}<main>\
              <section id=queue>{}</section><section id=lanes>{}</section><section id=host>{}</section>\
              <section id=events>{}</section></main><nav><a href=#queue>Queue</a><a href=#lanes>Lanes</a>\
              <a href=#host>Host</a><a href=#events>Events</a></nav><script>{JS}</script></body></html>\n",
             ctx.now,
+            self.needs_you(ctx, &events),
             self.queue_tab(ctx, cfg.as_ref(), &events, &st),
             self.lanes_tab(ctx, cfg.as_ref(), &events, &st),
             self.host_tab(ctx, cfg.as_ref(), &events),
             events_tab(ctx, cfg.as_ref(), &events, &st, q.get("all").is_some_and(|v| v == "1")),
         ))
+    }
+
+    /// Each open ask as a red card above every tab: options (recommended first) and a free-text box.
+    fn needs_you(&self, ctx: &Ctx, events: &[Event]) -> String {
+        crate::events::open_asks(events).into_iter().map(|a| {
+            let s = |k| a.str(k).unwrap_or_default();
+            let mut opts: Vec<(u64, &str)> = a.data["options"].as_array().into_iter().flatten().zip(1..).map(|(o, n)| (n, o.as_str().unwrap_or("?"))).collect();
+            opts.sort_by_key(|o| Some(o.0) != a.data["recommend"].as_u64());
+            let btns: String = opts.iter().map(|(n, o)| format!("<button name=choice value={n}>{n}. {}</button>", esc(o))).collect();
+            let form = format!("<form method=post>{}<input type=hidden name=id value=\"{}\"><input name=text aria-label=answer placeholder=\"or type an answer\"><button>Send</button>{btns}</form>", hidden("answer", &a.fleet, &mtime(ctx)), esc(s("id")));
+            let who = join(&[&a.fleet, &a.issue.map_or(String::new(), |n| format!("#{n}")), s("agent"), &age(ctx.now.saturating_sub(a.ts))]);
+            format!("<div class=ask><p><b>needs you</b> <span class=m>{}</span></p><p>{}</p>{}</div>", esc(&who), esc(s("question")), if self.addr.is_some() { form } else { String::new() })
+        }).collect()
     }
 
     /// `herdr <args>` JSON, read at most every 10 s (None when herdr cannot be read).
@@ -418,7 +436,8 @@ impl<'a> Server<'a> {
             for &(n, blocked_by, k) in &items {
                 let s = st.get(&(f.clone(), n));
                 let is_dead = s.is_some_and(dead);
-                let state = if is_dead { "dead" } else { s.map_or("queued", |s| s.state.as_str()) };
+                let waiting = crate::events::open_asks(events).iter().any(|e| e.fleet == *f && e.issue == Some(n));
+                let state = if is_dead { "dead" } else if waiting { "⏸ waiting: decision" } else { s.map_or("queued", |s| s.state.as_str()) };
                 let a = s.filter(|s| s.last_ts > 0).map_or(String::new(), |s| age(now.saturating_sub(s.last_ts)));
                 let lane = s.and_then(|s| s.lane.as_deref()).unwrap_or_default();
                 let logged = s.map_or("queued", |s| s.state.as_str());
