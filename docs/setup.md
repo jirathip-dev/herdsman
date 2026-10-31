@@ -6,8 +6,9 @@ Placeholders: `<owner>`, `<repo>`, `<home>` (your home directory), `<machine>`, 
 
 ## 1. Install
 
-You need `git`, `gh` (logged in), [herdr](https://herdr.dev), a Rust toolchain, and at
-least one harness: Claude Code and/or Hermes.
+You need `git`, `gh` (logged in), [herdr](https://herdr.dev) 0.9.0 or newer, a Rust toolchain, and at
+least one harness: Claude Code and/or Hermes. Every herdr call goes through `src/herdr.rs`, the one
+adapter: a herdr CLI change touches that file only.
 
 ```sh
 gh auth status

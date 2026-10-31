@@ -34,6 +34,11 @@ pub fn cached_spec(ctx: &Ctx, fleet: &str, issue: u64) -> Option<Value> {
     load(&cache_path(ctx, "issue", fleet, issue))
 }
 
+/// The cached issue title, if any; never calls GitHub.
+pub fn cached_title(ctx: &Ctx, fleet: &str, issue: u64) -> Option<String> {
+    cached_spec(ctx, fleet, issue).and_then(|v| v["title"].as_str().map(String::from))
+}
+
 /// The issue's `{title, body, updatedAt}`; `refresh` re-reads `updatedAt` first, else the cache is trusted.
 pub fn spec(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, issue: u64, refresh: bool) -> Result<Value> {
     let p = cache_path(ctx, "issue", fleet, issue);

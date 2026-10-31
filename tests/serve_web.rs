@@ -129,7 +129,9 @@ fn role_dropdowns_set_like_herdsman_set() {
     let (cli, web) = pair("set");
     let r = Fake::default();
     let s = Server::new(&web, &r, Some(ADDR.into()));
-    let page = get(&s, "/");
+    // #60: a fleet's role forms load when its row is opened.
+    assert!(get(&s, "/").contains("<details class=roles data-src=\"frag?id=roles&amp;fleet=sendmeter\"><summary><span>roles</span></summary></details>"));
+    let page = get(&s, "/frag?id=roles&fleet=sendmeter");
     assert!(page.contains("<option selected>opus</option><option>sonnet</option>"), "only `models`");
     assert!(page.contains("<select name=effort aria-label=effort><option value=\"\" selected>default (none)</option><option>none</option>"));
     assert_eq!(run(&cli, &Fake::default(), &["set", "sendmeter", "impl", "--model", "sonnet", "--effort", "high"]).0, 0);
@@ -452,7 +454,8 @@ fn queue_shows_open_work_only_and_folds_paused_retired_and_noise() {
     assert!(queue.contains("<span>#17</span><span class=a>impl</span>"), "live lane stays impl");
     assert!(queue.contains("stall check: #17 in"), "paused fleet's lane is not counted");
     // Events: noise folded into one count, `?all=1` unfolds it.
-    assert!(section("events").contains("4 × clean / notify-failed"));
+    assert_eq!(section("events"), "<section id=events>", "#60: Events loads on tab open");
+    assert!(get(&s, "/frag?id=events").contains("4 × clean / notify-failed"));
     let all = get(&s, "/?all=1");
     assert!(!all.contains("× clean") && all.matches("<p class=ev>").count() > 50);
 }
@@ -511,4 +514,22 @@ fn fetch_only_reads_redirect_navigations_to_the_board() {
     let v = send("/", "");
     let v = &v[v.find("/a/").unwrap()..][..11];
     assert!(send(&format!("{v}/serve.js"), "").contains("fetch(R + 'frags'"));
+}
+
+/// #60: `/frag` parts are fetch-only like `frags` (a navigation goes to the board); an unknown id or fleet is 404.
+#[test]
+fn frag_parts_redirect_navigations_and_404_unknown_ids() {
+    let (c, r) = (ctx(&tmpdir("frag-part"), &config()), Fake::default());
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    let send = |path: &str, extra: &str| String::from_utf8_lossy(&s.respond(&format!("GET {path} HTTP/1.1\r\nHost: {ADDR}\r\n{extra}\r\n"), 1_000_000)).into_owned();
+    for path in ["/frag?id=events", "/frag?id=roles&fleet=sendmeter"] {
+        assert!(send(path, "").starts_with("HTTP/1.1 200 OK"), "{path}");
+        for nav in ["Sec-Fetch-Mode: navigate\r\n", "Sec-Fetch-Dest: document\r\n", "Accept: text/html,application/xhtml+xml\r\n"] {
+            assert!(send(path, nav).starts_with("HTTP/1.1 303 See Other\r\nLocation: /\r\n"), "{path} {nav}");
+        }
+    }
+    for path in ["/frag?id=nope", "/frag", "/frag?id=roles", "/frag?id=roles&fleet=nope"] {
+        let res = send(path, "");
+        assert!(res.starts_with("HTTP/1.1 404 Not Found") && res.ends_with("no such part\n"), "{path}: {res}");
+    }
 }

@@ -99,26 +99,11 @@ enum Cmd {
         by: String,
     },
     /// The open asks, oldest first, with age
-    Asks {
-        fleet: Option<String>,
-        /// Machine-readable output
-        #[arg(long)]
-        json: bool,
-    },
+    Asks(Scope),
     /// Per-issue state, lane and last-event age
-    Status {
-        fleet: Option<String>,
-        /// Machine-readable output
-        #[arg(long)]
-        json: bool,
-    },
+    Status(Scope),
     /// Every lane waiting on the orch or the owner, with its next command (the conductor's watchdog)
-    Waiting {
-        fleet: Option<String>,
-        /// Machine-readable output
-        #[arg(long)]
-        json: bool,
-    },
+    Waiting(Scope),
     /// Print the issue spec cached at spawn; read this instead of `gh issue view`
     Brief { fleet: String, issue: u64 },
     /// The issue PR's head sha, base, mergeable and check rollup: one `gh pr view` per 60 s
@@ -223,6 +208,15 @@ enum Cmd {
         #[arg(long)]
         git_pre_push: bool,
     },
+}
+
+/// A read over one fleet or all: `[FLEET] [--json]`.
+#[derive(clap::Args)]
+struct Scope {
+    fleet: Option<String>,
+    /// Machine-readable output
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -366,7 +360,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
         Cmd::Help { agent: false } => write!(out, "{}", Cli::command().render_long_help())?,
         Cmd::Hook { role, git_pre_push: true } => return pre_push(ctx, out, stdin, role.as_deref() == Some("rev")),
         Cmd::Hook { role, git_pre_push: false } => run_hook(ctx, r, out, stdin, role.as_deref() == Some("rev"))?,
-        Cmd::Status { fleet, json } => {
+        Cmd::Status(Scope { fleet, json }) => {
             let events = read(&ctx.state)?;
             let all = fold(&events);
             let rows: Vec<_> = all.values().filter(|s| fleet.as_ref().is_none_or(|f| *f == s.fleet)).collect();
@@ -405,7 +399,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
             let boards: Vec<_> = all.iter().map(|f| queue::board(&events, f, ctx.now)).collect();
             write!(out, "{}", boards.join("\n"))?;
         }
-        Cmd::Asks { fleet, json } => crate::asks(ctx, out, fleet.as_deref(), json)?,
+        Cmd::Asks(Scope { fleet, json }) => crate::asks(ctx, out, fleet.as_deref(), json)?,
         Cmd::Serve { cmd: Some(ServeCmd::Pair), .. } => writeln!(out, "now: open the page, tap Pair, then run serve approve <code>")?,
         Cmd::Serve { cmd: Some(ServeCmd::Approve { code }), .. } => writeln!(out, "paired {}", devices::approve(ctx, &code)?)?,
         Cmd::Serve { cmd: Some(ServeCmd::Pending), .. } => devices::pending(ctx).iter().try_for_each(|d| writeln!(out, "{} {} {}m left", d.code.as_deref().unwrap_or_default(), d.label, (d.created + 600 - ctx.now).div_ceil(60)))?,
@@ -454,7 +448,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 Cmd::Ask { fleet, issue, question, options, recommend } => crate::ask(ctx, &cfg, out, (&fleet, lane(&issue)?), &question, &options, recommend)?,
                 Cmd::Answer { fleet, id, choice, by } => crate::answer(ctx, &cfg, r, out, (&fleet, &id), &choice, (&by, None))?,
                 Cmd::Check => check::check(ctx, &cfg, r, out)?,
-                Cmd::Waiting { fleet, json } => {
+                Cmd::Waiting(Scope { fleet, json }) => {
                     let all = crate::waiting::scan(ctx, &cfg, r, &read(&ctx.state)?, &crate::host::agents(r).unwrap_or_default(), true);
                     let rows: Vec<_> = all.into_iter().filter(|(s, w)| s.lane.as_ref() == Some(&w.lane)).map(|x| x.1).filter(|w| matches!(w.who, "orch" | "owner") && fleet.as_ref().is_none_or(|f| *f == w.fleet)).collect();
                     if json {

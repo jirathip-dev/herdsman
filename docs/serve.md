@@ -25,6 +25,13 @@ the service worker. The SW serves the page stale-while-revalidate: the cached co
 dot amber) and the live stream's first `?frag=all` fills it in (green). In horse mode a Lanes avatar shows its
 glyph until herd.js has built the horse symbols from `horses.svg`.
 
+Page size (#60): `GET /` leaves out what the first paint does not show. A fleet's `roles` row is empty
+until opened; opening it reads `GET /frag?id=roles&fleet=<fleet>` (the model/effort forms; kept across
+live swaps, re-read on ↻). The Events tab body is read from `GET /frag?id=events` when the tab opens
+(`/?all=1` still renders it in the page; `/frags` and the live stream still carry it). No compression:
+a repeat visit downloads the page HTML only, the assets come from the service worker's cache. A
+`serve --export` inlines both, so the static demo needs no `/frag`.
+
 Its only writes are ▲/▼ (`queue mv`), Pause/Resume and a role's model/effort (`set`, choices
 from `models = [...]`), each through the CLI's own code path, logged with `"via":"web"`.
 

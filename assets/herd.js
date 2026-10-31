@@ -135,10 +135,6 @@ function horse(l, k) {
 const queued = q => `<button type=button class=hqh data-i=${q.issue}><svg viewBox="0 0 132 100" style="${hx(q.coat)}"><use href="#hp2"/></svg>` +
   `<span>#${q.issue}${q.blocked_by ? `<br>⛔#${q.blocked_by}` : ''}</span></button>`;
 const tpl = h => { const t = document.createElement('template'); t.innerHTML = h; return t.content.firstElementChild; };
-const attrs = (a, b) => {
-  for (const { name } of [...a.attributes]) if (!b.hasAttribute(name)) a.removeAttribute(name);
-  for (const { name, value } of b.attributes) if (a.getAttribute(name) !== value) a.setAttribute(name, value);
-};
 // #65: the horse keyed `key` (taken from `have`), patched in place to `h`: button and coat attributes, pose, label.
 function keyed(have, key, h) {
   let n = have.get(key);
@@ -233,10 +229,8 @@ function draw() {
 function herdData(j) { if (!DBG.get('weather')) { data = j; draw(); } }
 async function herdPull() {
   if (H.hidden) return;
-  try {
-    const w = DBG.get('weather'), r = await fetch(R + 'herd.json' + (w ? '?weather=' + encodeURIComponent(w) : ''), { cache: 'no-store' });
-    if (r.ok) { data = await r.json(); draw(); }
-  } catch (e) {}
+  const w = DBG.get('weather'), t = await part('herd.json' + (w ? '?weather=' + encodeURIComponent(w) : ''));
+  try { if (t) { data = JSON.parse(t); draw(); } } catch (e) {}
 }
 
 // #40/#42: each page carries its fleet's needs-you cards (the same per-audience HTML as the tabs).
@@ -313,13 +307,12 @@ function frame(ms) {
   raf = requestAnimationFrame(frame);
 }
 function go() { if (!raf && !H.hidden && !document.hidden && !still.matches) { lastT = 0; nextFlash = performance.now() / 1000 + 4; raf = requestAnimationFrame(frame); } }
-document.addEventListener('visibilitychange', go);
 
 // Taps: a horse opens the Lanes sheet (#43: card, transcript, Stop/Kill/Clean, reply); a queued one its row.
 H.addEventListener('click', e => {
   const h = e.target.closest('.hh'), q = e.target.closest('.hqh');
   if (h) {
-    const l = [...$$('.lane')].find(x => x.dataset.agent === h.dataset.agent);
+    const l = laneOf(h.dataset.agent);
     if (l) open(l);
   } else if (q) {
     const it = (here()._queue || []).find(x => String(x.issue) === q.dataset.i);
@@ -351,7 +344,7 @@ function ranch() {
 lb.onclick = () => { light = LIGHTS[(LIGHTS.indexOf(light) + 1) % 3]; put('herd-light', light); ranch(); };
 ranch();
 setInterval(ranch, 60000);
-document.addEventListener('visibilitychange', ranch);
+document.addEventListener('visibilitychange', () => { go(); ranch(); });
 // #39 demo: a weather switcher sets the host values client-side, as `/herd.json?weather=` does on loopback.
 const WX = { calm: [0.1, 'normal'], gusty: [0.7, 'normal'], storm: [1.3, 'normal'], fog: [0.3, 'warn'] };
 if (DEMO) H.insertAdjacentHTML('beforeend', `<p class=hwx>${Object.keys(WX).map(w => `<button type=button value=${w}>${w}</button>`).join('')}</p>`);

@@ -1,6 +1,7 @@
 //! dsh-TUI lanes (docs/dsh.md): a per-role patch layer, a pinned `dsh-tui` typed into the shell, a git pre-push hook.
 use super::{attempts, Harness};
-use crate::runner::{argv, json, ok, Runner};
+use crate::herdr;
+use crate::runner::{ok, Runner};
 use crate::spawn::Plan;
 use crate::Ctx;
 use anyhow::{bail, Context, Result};
@@ -64,19 +65,19 @@ impl Harness for Dsh {
     /// herdr has no `dsh` kind: type the launch into the lane's shell.
     fn start_cmd(&self, ctx: &Ctx, p: &Plan, pane: &str) -> Vec<String> {
         let patch = format!("'{}'", patch_file(ctx, &p.profile).display());
-        argv(&["pane", "run", pane, "dsh-tui", "--patch", &patch])
+        herdr::run_argv(pane, &["dsh-tui", "--patch", &patch])
     }
 
     /// Settle idle (Esc skips the wizard), name the agent, type kick + Enter, confirm working/blocked/done.
     fn kick_cmds(&self, p: &Plan, pane: &str) -> Vec<Vec<String>> {
         vec![
-            argv(&["pane", "get", pane]),
-            argv(&["pane", "read", pane, "--source", "visible"]),
-            argv(&["pane", "send-keys", pane, "esc"]),
-            argv(&["agent", "rename", pane, &p.agent]),
-            argv(&["pane", "send-text", pane, &p.kick]),
-            argv(&["pane", "get", pane]),
-            argv(&["pane", "send-keys", pane, "enter"]),
+            herdr::pane_get_argv(pane),
+            herdr::read_argv(pane),
+            herdr::keys_argv(pane, "esc"),
+            herdr::rename_argv(pane, &p.agent),
+            herdr::send_text_argv(pane, &p.kick),
+            herdr::pane_get_argv(pane),
+            herdr::keys_argv(pane, "enter"),
         ]
     }
 
@@ -86,21 +87,21 @@ impl Harness for Dsh {
         if !poll(r, &c[0], &["idle"], 90) {
             return Ok(false);
         }
-        let screen = r.run("herdr", &c[1])?.stdout;
+        let screen = herdr::exec(r, &c[1])?.stdout;
         if WIZARD.iter().any(|w| screen.contains(w)) {
-            r.run("herdr", &c[2])?;
+            herdr::exec(r, &c[2])?;
             r.sleep(2);
             if !poll(r, &c[0], &["idle"], 30) {
                 return Ok(false);
             }
         }
-        r.run("herdr", &c[3])?;
+        herdr::exec(r, &c[3])?;
         let typed: String = p.kick.chars().take(20).collect();
         for attempt in attempts(r, 3, 5) {
-            if attempt == 0 || !r.run("herdr", &c[1])?.stdout.contains(&typed) {
-                r.run("herdr", &c[4])?;
+            if attempt == 0 || !herdr::exec(r, &c[1])?.stdout.contains(&typed) {
+                herdr::exec(r, &c[4])?;
             }
-            r.run("herdr", &c[6])?;
+            herdr::exec(r, &c[6])?;
             if poll(r, &c[5], &["working", "blocked", "done"], 10) {
                 return Ok(true);
             }
@@ -112,7 +113,7 @@ impl Harness for Dsh {
 /// Re-read the pane (1 s apart, `tries` times) until dsh-TUI reports one of `want`.
 fn poll(r: &dyn Runner, get: &[String], want: &[&str], tries: u32) -> bool {
     for _ in attempts(r, tries, 1) {
-        let pane = json(r, "herdr", get).map(|v| v["result"]["pane"].clone()).unwrap_or_default();
+        let pane = herdr::json(r, get).map(|v| v["result"]["pane"].clone()).unwrap_or_default();
         if pane["agent"] == LABEL && want.iter().any(|w| pane["agent_status"] == *w) {
             return true;
         }

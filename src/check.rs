@@ -3,9 +3,9 @@ use crate::access;
 use crate::config::Config;
 use crate::events::{age, emit, fold, last_spawn, open_asks, plain, read, Event, IssueState, PASSIVE};
 use crate::gate::gate;
-use crate::gh;
+use crate::{gh, herdr};
 use crate::host;
-use crate::runner::{argv, ok, Runner};
+use crate::runner::{ok, Runner};
 use crate::spawn::{changes, dirty, OWN_FILES};
 use crate::Ctx;
 use anyhow::{Context, Result};
@@ -46,7 +46,7 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
             // A Claude lane on a named account that shows the usage-limit banner caps that account.
             let account = spawned.and_then(|e| e.str("account"));
             if let (Some(name), Some(p), true) = (account, pane, status.is_some()) {
-                let screen = ok(r, "herdr", &["pane", "read", p, "--source", "visible"]).unwrap_or_default();
+                let screen = herdr::read(r, p).unwrap_or_default();
                 if access::capped_screen(cfg, &screen) {
                     let why = format!("{name}: {role} lane {lane} hit the usage limit; spawns skip {name} for now");
                     hits.push(("account-capped", format!("{lane}:{name}"), why));
@@ -91,9 +91,9 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
                 // The pane as herdr shows it now; logged before the Enter, so a failed Enter never types the line twice.
                 let a = agents.iter().flatten().find(|a| a["name"] == orch.as_str() && matches!(a["agent_status"].as_str(), Some("idle" | "done")));
                 let Some(pane) = a.and_then(|a| a["pane_id"].as_str()).or_else(|| last_spawn(&events, &orch).and_then(|e| e.str("pane")).filter(|_| a.is_some())) else { continue };
-                if ok(r, "herdr", &["agent", "prompt", &orch, &line]).is_ok() {
+                if herdr::prompt(r, &orch, &line).is_ok() {
                     fire(ctx, cfg, out, &events, at, "orch-nudged", json!({"key": key, "reason": line}))?;
-                    let _ = ok(r, "herdr", &["pane", "send-keys", pane, "Enter"]); // unsent: `orch-stuck` follows
+                    let _ = herdr::keys(r, pane, "Enter"); // unsent: `orch-stuck` follows
                 }
             }
         }
@@ -149,7 +149,7 @@ pub fn teardown(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fl
         }
         match dirty(r, Path::new(wt)) {
             Some(why) => writeln!(out, "keep pane {pane} ({wt}): {why}")?,
-            None => drop(r.run("herdr", &argv(&["pane", "close", pane]))),
+            None => drop(herdr::close(r, pane)),
         }
     }
     if seen.is_empty() {
@@ -211,7 +211,7 @@ pub fn clean(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
             continue;
         }
         if !pane.is_empty() {
-            let _ = r.run("herdr", &argv(&["pane", "close", pane]));
+            let _ = herdr::close(r, pane);
         }
         writeln!(out, "removed {wt} ({}#{n} {why})", e.fleet)?;
         emit(&ctx.state, cfg, Event::new(ctx.now, &e.fleet, Some(n), "clean", json!({"worktree": wt, "pane": pane})))?;
@@ -250,7 +250,7 @@ fn closed_issues<'a>(
 
 /// herdr first; else `git worktree remove` (never `--force`) of the re-checked tree minus `OWN_FILES`.
 fn remove(r: &dyn Runner, cfg: &Config, fleet: &str, wt: &str, ws: &str) -> Result<()> {
-    if !ws.is_empty() && r.run("herdr", &argv(&["worktree", "remove", "--workspace", ws]))?.code == 0 {
+    if !ws.is_empty() && herdr::worktree_remove(r, ws)? {
         return Ok(());
     }
     if let Some(why) = dirty(r, Path::new(wt)) {
@@ -280,7 +280,7 @@ fn spawned<'a>(events: &'a [Event], agent: &str) -> Result<&'a Event> {
 pub fn stop(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent: &str) -> Result<()> {
     let events = read(&ctx.state)?;
     let e = spawned(&events, agent)?;
-    ok(r, "herdr", &["pane", "send-keys", e.str("pane").unwrap_or_default(), "Escape"])?;
+    herdr::keys(r, e.str("pane").unwrap_or_default(), "Escape")?;
     emit(&ctx.state, cfg, Event::new(ctx.now, &e.fleet, e.issue, "stop", json!({"agent": agent})))?;
     Ok(writeln!(out, "sent Esc to {agent}")?)
 }
@@ -348,7 +348,7 @@ pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
         }
         git(&["push", "origin", &format!("HEAD:refs/heads/{w}")])?;
     }
-    ok(r, "herdr", &["pane", "close", e.str("pane").unwrap_or_default()])?;
+    herdr::close(r, e.str("pane").unwrap_or_default())?;
     let d = json!({"agent": agent, "role": role, "pane": e.str("pane"), "wip": wip});
     emit(&ctx.state, cfg, Event::new(ctx.now, &e.fleet, e.issue, "lane-killed", d))?;
     Ok(writeln!(out, "killed {agent}{}", wip.map_or(String::new(), |w| format!(": work pushed to {w}")))?)

@@ -4,8 +4,8 @@ use crate::config::{Config, Role};
 use crate::events::{age, append, fold, plain, read, Event, IssueState};
 use crate::gate::{refused, Refusal};
 use crate::host::{self, Host};
-use crate::runner::{argv, ok, Out, Runner};
-use crate::{devices, gh, lanes, queue, Ctx};
+use crate::runner::{Out, Runner};
+use crate::{devices, gh, herdr, lanes, queue, Ctx};
 use anyhow::{bail, Context, Result};
 use serde_json::json;
 use std::cell::RefCell;
@@ -45,7 +45,7 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
     let (h, w) = (s.host.clone(), Server { fresh: true, cache: s.cache.clone(), clients: s.clients.clone(), kick: s.kick.clone(), host: s.host.clone(), ..Server::new(ctx, r, s.addr.clone()) });
     std::thread::scope(|sc| {
         // #57: the host every 10 s (its 2 s vm_stat delta included) here, never on a request.
-        sc.spawn(move || loop { *h.lock().unwrap_or_else(|e| e.into_inner()) = host::sample(r); std::thread::sleep(Duration::from_secs(10)) });
+        sc.spawn(move || loop { *lock(&h) = host::sample(r); std::thread::sleep(Duration::from_secs(10)) });
         sc.spawn(move || loop {
             w.tick();
             std::thread::sleep(Duration::from_secs(1));
@@ -59,12 +59,17 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
 struct Memo<'a>(&'a dyn Runner, &'a Cache, u64, u64);
 impl Runner for Memo<'_> {
     fn run(&self, prog: &str, args: &[String]) -> Result<Out> {
-        let (key, cache) = (format!("{prog} {}", args.join(" ")), || self.1.lock().unwrap_or_else(|e| e.into_inner()));
+        let (key, cache) = (format!("{prog} {}", args.join(" ")), || lock(self.1));
         let hit = cache().get(&key).filter(|(t, _)| self.2 >= *t && self.2 - t < self.3).cloned();
         let (t, out) = hit.unwrap_or_else(|| (self.2, self.0.run(prog, args).ok().filter(|o| o.code == 0).map(|o| o.stdout)));
         cache().insert(key, (t, out.clone()));
         Ok(out.map_or(Out { code: 1, ..Out::default() }, |stdout| Out { stdout, ..Out::default() }))
     }
+}
+
+/// The mutex's data, even after a thread panicked holding it.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn hash(s: &impl Hash) -> u64 {
@@ -108,6 +113,14 @@ pub struct Server<'a> {
     watch: RefCell<Watch>,
     /// `serve --export` (#39): Some(demo), static files with relative URLs; `true` is the inert demo.
     export: Option<bool>,
+}
+
+const JSON: &str = "application/json; charset=utf-8";
+const HTML: &str = "text/html; charset=utf-8";
+
+/// A `303 See Other` to `loc`.
+fn see(loc: &str) -> Vec<u8> {
+    format!("HTTP/1.1 303 See Other\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes()
 }
 
 fn header<'h>(head: &'h str, name: &str) -> Option<&'h str> {
@@ -208,9 +221,18 @@ fn coat(name: &str) -> String {
     format!("--c:#{c};--d:#{d};--m:#{m};--b:{}", if blaze { "#efe7dc" } else { "transparent" })
 }
 
+/// `age` since `t`, or nothing when `t` is unknown (0).
+fn ago(now: u64, t: u64) -> String {
+    if t > 0 { age(now.saturating_sub(t)) } else { String::new() }
+}
+
+/// A lane as the Lanes row, its sheet card and herd.json show it: (cached title, tone, shown state, age).
 /// #46: an idle lane shows what it waits on, coloured by who; a working one keeps its state.
-fn shown_state(now: u64, l: &lanes::Lane, waits: &[crate::waiting::Waiting]) -> (&'static str, String) {
-    wait_of(l, waits).map_or_else(|| (tone(&l.state), l.state.clone()), |w| (w.tone(now), w.label(now)))
+type View = (Option<String>, &'static str, String, String);
+fn view(ctx: &Ctx, l: &lanes::Lane, waits: &[crate::waiting::Waiting]) -> View {
+    let title = l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| gh::cached_title(ctx, f, n));
+    let (tone, shown) = wait_of(l, waits).map_or_else(|| (tone(&l.state), l.state.clone()), |w| (w.tone(ctx.now), w.label(ctx.now)));
+    (title, tone, shown, ago(ctx.now, l.since))
 }
 
 /// The lane's wait reason while herdr shows it idle, done or unknown.
@@ -258,7 +280,7 @@ impl<'a> Server<'a> {
             }
         }
         let req = String::from_utf8_lossy(&buf).replacen("\r\n", &format!("\r\nX-Peer: {}\r\n", s.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default()), 1);
-        let mut clients = self.clients.lock().unwrap_or_else(|e| e.into_inner());
+        let mut clients = lock(&self.clients);
         clients.retain(|c| c.0.send(String::new()).is_ok());
         if req.starts_with("GET /live ") && self.allowed(self.ctx, &req) && clients.len() < 8 {
             s.set_write_timeout(Some(Duration::from_secs(10)))?;
@@ -287,31 +309,29 @@ impl<'a> Server<'a> {
         s.write_all(&self.respond(&req, crate::now()))
     }
 
-    /// Each 1 s tick: on a log change, a `herdr agent list` change (read every 2 s, uncached) or every
-    /// 15 s (ages; it keeps requests' cached reads warm), re-render the fragments per audience (paired or not) and push the changed ones.
-    /// A stream whose device was removed closes first (the page reconnects unpaired).
+    /// The watcher's 1 s tick (docs/serve.md): on a change, re-render per audience and push only the changed fragments.
     fn tick(&self) {
         let mut w = self.watch.borrow_mut();
         let now = crate::now();
         let known: Vec<String> = devices::load(self.ctx).into_iter().map(|d| d.hash).collect();
-        self.clients.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.1.as_ref().is_none_or(|h| known.contains(h)));
+        lock(&self.clients).retain(|c| c.1.as_ref().is_none_or(|h| known.contains(h)));
         let log = std::fs::metadata(&self.ctx.state).ok().map(|m| (m.len(), m.modified().ok()));
         let kicked = self.kick.swap(false, Relaxed);
         if kicked { self.purge() }
         let mut changed = kicked || log != w.log || now >= w.rendered + 15;
         w.log = log;
         if now >= w.herdr.0 + 2 {
-            let out = self.r.run("herdr", &argv(&["agent", "list"])).ok().filter(|o| o.code == 0).map(|o| o.stdout);
+            let out = herdr::agent_list(self.r);
             changed |= hash(&out) != w.herdr.1;
             w.herdr = (now, hash(&out));
-            self.cache.lock().unwrap_or_else(|e| e.into_inner()).insert("herdr agent list".into(), (now, out));
+            lock(&self.cache).insert("herdr agent list".into(), (now, out));
         }
         // #37: Herd's data rides the same stream, re-read every 10 s (host weather) while anyone listens;
         // like a frag, pushed only on a change (the page reads `/herd.json` when Herd opens).
-        if (changed || now >= w.herd.0 + 10) && !self.clients.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
+        if (changed || now >= w.herd.0 + 10) && !lock(&self.clients).is_empty() {
             let j = self.herd(&Ctx { now, ..self.ctx.clone() }, None).map(|v| v.to_string()).unwrap_or_default();
             if w.herd.0 > 0 && hash(&j) != w.herd.1 && !j.is_empty() {
-                self.clients.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.0.send(format!("event: herd\ndata: {j}\n\n")).is_ok());
+                lock(&self.clients).retain(|c| c.0.send(format!("event: herd\ndata: {j}\n\n")).is_ok());
             }
             w.herd = (now, hash(&j));
         }
@@ -323,7 +343,7 @@ impl<'a> Server<'a> {
             for (id, html) in self.frags(&Ctx { now, ..self.ctx.clone() }, false, paired).unwrap_or_default() {
                 if w.frags.insert((paired, id), hash(&html)).is_some_and(|h| h != hash(&html)) {
                     let msg = format!("event: frag\ndata: {}\n\n", serde_json::json!({"id": id, "html": html}));
-                    self.clients.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.1.is_some() != paired || c.0.send(msg.clone()).is_ok());
+                    lock(&self.clients).retain(|c| c.1.is_some() != paired || c.0.send(msg.clone()).is_ok());
                 }
             }
         }
@@ -331,12 +351,12 @@ impl<'a> Server<'a> {
 
     /// Forget cached pane reads: the next render reads each pane afresh.
     fn purge(&self) {
-        self.cache.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| !k.starts_with("herdr pane read"));
+        lock(&self.cache).retain(|k, _| !k.starts_with("herdr pane read"));
     }
 
-    /// stdout of `prog args` if it ran OK within the last `ttl` seconds (else run it now).
-    fn cached(&self, now: u64, ttl: u64, prog: &str, args: &[&str]) -> Option<String> {
-        ok(&Memo(self.r, &self.cache, now, if self.fresh { ttl / 3 } else { ttl }), prog, args).ok()
+    /// The runner whose reads that ran OK within the last `ttl` seconds come from the cache (else run now).
+    fn cached(&self, now: u64, ttl: u64) -> Memo<'_> {
+        Memo(self.r, &self.cache, now, if self.fresh { ttl / 3 } else { ttl })
     }
 
     /// The full HTTP response to one request.
@@ -347,56 +367,57 @@ impl<'a> Server<'a> {
         let (path, query) = target.split_once('?').unwrap_or((target, ""));
         let ctx = &Ctx { now, ..self.ctx.clone() };
         let text = |s: &str| s.as_bytes().to_vec();
+        let fail = |e: anyhow::Error| ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes());
         let (mut extra, mut cache) = (String::new(), "no-store");
         // #67: a fetch-only read never becomes the page; `fetch()` sends neither header.
         let nav = header(head, "sec-fetch-mode") == Some("navigate") || header(head, "sec-fetch-dest") == Some("document") || header(head, "accept").is_some_and(|a| a.starts_with("text/html"));
         let frags = path == "/frags" || path == "/" && query == "frag=all"; // `?frag=all`: old cached JS, one release
-        if method == "GET" && nav && (frags || ["/herd.json", "/lane"].contains(&path)) {
-            return b"HTTP/1.1 303 See Other\r\nLocation: /\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec();
+        if method == "GET" && nav && (frags || ["/herd.json", "/lane", "/frag"].contains(&path)) {
+            return see("/");
         }
+        // Host/Origin-checked: the live stream, transcripts, Herd's data and every write.
+        let guarded = method == "GET" && ["/live", "/lane", "/herd.json"].contains(&path)
+            || method == "POST" && self.addr.is_some();
         let (status, ctype, body) = match (method, path) {
-            ("GET", _) if frags => match self.frags(ctx, false, self.device(ctx, head).is_some()) {
-                Ok(f) => ("200 OK", "application/json; charset=utf-8", serde_json::to_vec(&f.into_iter().collect::<BTreeMap<_, _>>()).unwrap_or_default()),
-                Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
-            },
-            ("GET", "/live") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
+            ("GET", _) if frags => self.frags(ctx, false, self.device(ctx, head).is_some()).map_or_else(fail, |f| {
+                ("200 OK", JSON, serde_json::to_vec(&f.into_iter().collect::<BTreeMap<_, _>>()).unwrap_or_default())
+            }),
+            ("POST", _) if self.addr.is_none() => ("405 Method Not Allowed", "text/plain", text("read-only: GET only\n")),
+            _ if guarded && !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("GET", "/live") => ("503 Service Unavailable", "text/plain", text("8 live clients already: the page polls instead\n")),
             ("GET", "/") => match self.page(ctx, &form(query), self.device(ctx, head).is_some()) {
-                Ok(b) => ("200 OK", "text/html; charset=utf-8", b.into_bytes()),
-                Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
+                Ok(b) => ("200 OK", HTML, b.into_bytes()),
+                Err(e) => fail(e),
             },
-            ("GET", "/lane") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
+            ("GET", "/frag") => match self.part(ctx, &form(query)) {
+                Some(h) => ("200 OK", HTML, h.into_bytes()),
+                None => ("404 Not Found", "text/plain", text("no such part\n")),
+            },
             ("GET", "/lane") if self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("pair this device to read transcripts\n")),
             ("GET", "/lane") => match self.transcript(ctx, &form(query)) {
-                Some(j) => ("200 OK", "application/json; charset=utf-8", j.into_bytes()),
+                Some(j) => ("200 OK", JSON, j.into_bytes()),
                 None => ("404 Not Found", "text/plain", text("no such agent pane\n")),
             },
-            ("GET", "/herd.json") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("GET", "/herd.json") => {
                 let loopback = header(head, "host").is_some_and(|h| ["127.0.0.1", "localhost", "[::1]"].iter().any(|l| names(l, h)));
-                match self.herd(ctx, form(query).get("weather").filter(|_| loopback).map(String::as_str)) {
-                    Ok(j) => ("200 OK", "application/json; charset=utf-8", j.to_string().into_bytes()),
-                    Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
-                }
+                let weather = form(query).get("weather").filter(|_| loopback).cloned();
+                self.herd(ctx, weather.as_deref()).map_or_else(fail, |j| ("200 OK", JSON, j.to_string().into_bytes()))
             }
             ("GET", "/sw.js") => ("200 OK", "text/javascript", text(&SW.replace("@V", &format!("{VER:08x}")))),
             ("GET", p) => {
                 let a = ASSETS.iter().find(|a| p == format!("/a/{VER:08x}/{}", a.0)).inspect(|_| cache = "public, max-age=31536000, immutable");
                 a.or_else(|| FILES.iter().find(|f| p.strip_prefix('/') == Some(f.0)).inspect(|_| cache = "public, max-age=86400")).map_or(("404 Not Found", "text/plain", text("not found\n")), |f| ("200 OK", f.1, f.2.to_vec()))
             }
-            ("POST", _) if self.addr.is_none() => ("405 Method Not Allowed", "text/plain", text("read-only: GET only\n")),
-            ("POST", _) if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("POST", "/") if form(body.trim()).get("op").is_some_and(|o| o == "unpair" || o == "answer") && self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("only a paired device may remove devices or answer asks\n")),
             ("POST", "/") => {
                 let msg = self.write(ctx, &form(body.trim())).unwrap_or_else(|e| shown(&e));
-                let loc = format!("/?msg={}", enc(&msg));
-                return format!("HTTP/1.1 303 See Other\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes();
+                return see(&format!("/?msg={}", enc(&msg)));
             }
             // #59: the request's `hd=` token (10 min) works once `serve approve` clears its code; `/pair/claim` then keeps it a year.
             ("POST", "/pair/request") => match devices::request(ctx, &kind(head), header(head, "x-peer").unwrap_or_default()) {
                 Ok(Some((code, t))) => (extra = format!("Set-Cookie: hd={t}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Strict\r\n"), ("200 OK", "text/plain", format!("{code}\n").into_bytes())).1,
                 Ok(None) => ("429 Too Many Requests", "text/plain", text("3 pairing requests open (2 per address), or a code clash: approve one, tap Pair again or wait 10 min\n")),
-                Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
+                Err(e) => fail(e),
             },
             ("POST", "/pair/claim") => match self.device(ctx, head) {
                 Some(d) => (extra = format!("Set-Cookie: {}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict\r\n", header(head, "cookie").unwrap_or_default().split(';').map(str::trim).find(|c| c.starts_with("hd=")).unwrap_or_default()), ("200 OK", "text/plain", format!("paired as {}\n", d.label).into_bytes())).1,
@@ -410,7 +431,7 @@ impl<'a> Server<'a> {
             ("POST", "/push/unsubscribe") => {
                 let id = form(body.trim()).get("id").cloned().unwrap_or_default();
                 let msg = crate::webpush::remove(&ctx.state, &[id]).map_or_else(|e| shown(&e), |n| format!("{n} alert device removed"));
-                return format!("HTTP/1.1 303 See Other\r\nLocation: /?msg={}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", enc(&msg)).into_bytes();
+                return see(&format!("/?msg={}", enc(&msg)));
             }
             ("POST", p @ ("/send" | "/answer" | "/act")) => {
                 let (status, msg) = self.send(ctx, head, &form(body.trim()), p);
@@ -487,7 +508,7 @@ impl<'a> Server<'a> {
     fn pick(&self, ctx: &Ctx, dev: &devices::Device, f: &BTreeMap<String, String>) -> Result<String> {
         let (agent, choice) = (f.get("agent").map_or("", String::as_str), f.get("choice").map_or("", String::as_str));
         let (l, fleet, pane) = self.lane(ctx, agent)?;
-        let screen = || crate::runner::ok(self.r, "herdr", &["pane", "read", &pane, "--source", "visible"]);
+        let screen = || herdr::read(self.r, &pane);
         let Some((q, opts)) = lanes::pending(&screen()?).filter(|p| l.harness == "claude" && !p.1.is_empty()) else {
             return refused("BAD_VALUE", format!("no menu on {agent}'s pane: menu changed — refreshed; answer with the reply box"));
         };
@@ -500,7 +521,7 @@ impl<'a> Server<'a> {
         if f.get("h") != Some(&seen(&q, &opts).to_string()) {
             return refused("STALE", "menu changed — refreshed");
         }
-        crate::runner::ok(self.r, "herdr", &["pane", "send-keys", &pane, choice])?;
+        herdr::keys(self.r, &pane, choice)?;
         let d = serde_json::json!({"via": "web", "agent": agent, "device": dev.label, "choice": choice});
         append(&ctx.state, &Event::new(ctx.now, &fleet, l.issue, "answer", d))?;
         self.r.sleep(1);
@@ -523,14 +544,7 @@ impl<'a> Server<'a> {
         if text.chars().any(|c| (c < ' ' && c != '\n') || c == '\x7f') {
             return refused("BAD_VALUE", "a message has no control characters (newlines are fine)");
         }
-        // No `--`: herdr 0.9 reads the 2nd positional as literal text (even `-x`), and a `--` there would be sent as text.
-        let first = if l.harness == "dsh" { argv(&["pane", "send-text", pane, text]) } else { argv(&["agent", "prompt", agent, text]) };
-        for a in [first, argv(&["pane", "send-keys", pane, "Enter"])] {
-            let o = self.r.run("herdr", &a)?;
-            if o.code != 0 {
-                bail!("herdr {} {}: {}", a[0], a[1], o.stderr.trim());
-            }
-        }
+        herdr::reply(self.r, l.harness == "dsh", agent, pane, text)?;
         let d = serde_json::json!({"via": "web", "agent": agent, "device": dev.label, "chars": n});
         append(&ctx.state, &Event::new(ctx.now, fleet, l.issue, "prompt", d))?;
         Ok(format!("sent to {agent}"))
@@ -562,7 +576,7 @@ impl<'a> Server<'a> {
         let (cfg, events) = (Config::load(&ctx.config).ok()?, read(&ctx.state).ok()?);
         let l = self.lanes(ctx.now, &cfg, &events, &fold(&events))?.into_iter().find(|l| Some(&l.name) == q.get("agent"))?;
         let want = (before + lines).to_string();
-        let screen = self.cached(ctx.now, 5, "herdr", &["pane", "read", l.pane.as_deref()?, "--source", "recent", "--lines", &want])?;
+        let screen = herdr::recent(&self.cached(ctx.now, 5), l.pane.as_deref()?, &want).ok()?;
         let all = lanes::tail(&screen, before + lines);
         let page = &all[..all.len().saturating_sub(before)];
         // `recent` is herdr's whole window: a short read (or the 2000 clamp) means nothing older.
@@ -624,8 +638,26 @@ impl<'a> Server<'a> {
         ])
     }
 
+    /// #60: a part the page loads on demand: a fleet's role forms (`id=roles&fleet=`), the Events tab (`id=events`).
+    fn part(&self, ctx: &Ctx, q: &BTreeMap<String, String>) -> Option<String> {
+        let (events, cfg) = (read(&ctx.state).ok()?, Config::load(&ctx.config).ok());
+        match q.get("id")?.as_str() {
+            "events" => Some(events_tab(ctx, cfg.as_ref(), &events, &fold(&events), false)),
+            "roles" => {
+                let (c, f) = (cfg?, q.get("fleet")?);
+                Some(roles(&c, f, c.fleet.get(f)?, self.addr.is_some(), &mtime(ctx)))
+            }
+            _ => None,
+        }
+    }
+
     fn page(&self, ctx: &Ctx, q: &BTreeMap<String, String>, paired: bool) -> Result<String> {
-        let f = self.frags(ctx, q.get("all").is_some_and(|v| v == "1"), paired)?;
+        let all = q.get("all").is_some_and(|v| v == "1");
+        let mut f = self.frags(ctx, all, paired)?;
+        // #60: the Events tab body loads when the tab opens (`/frag?id=events`), unless `?all=1` asked for it.
+        if self.export.is_none() && !all {
+            f[4].1.clear();
+        }
         let msg = q.get("msg").map_or(String::new(), |m| {
             let bad = m.starts_with("REFUSED") || m.starts_with("error");
             format!("<p class=\"msg {}\">{}</p>", if bad { "r" } else { "g" }, esc(m))
@@ -671,7 +703,7 @@ impl<'a> Server<'a> {
     /// (or the last 6 masked lines) and a Reply button that opens the lane's sheet. Unpaired: no
     /// pane text, only the 1-line activity and a pairing hint.
     fn blocked(&self, ctx: &Ctx, l: &lanes::Lane, paired: bool) -> String {
-        let screen = l.pane.as_ref().and_then(|p| self.cached(ctx.now, 2, "herdr", &["pane", "read", p, "--source", "visible"])).unwrap_or_default();
+        let screen = l.pane.as_ref().and_then(|p| herdr::read(&self.cached(ctx.now, 2), p).ok()).unwrap_or_default();
         let rw = self.addr.is_some() && paired;
         let body = match lanes::pending(&screen).filter(|_| l.harness == "claude") {
             _ if !paired => format!("<p class=m>{}</p><p class=m>pair this phone to answer{}</p>", esc(&lanes::activity(&l.harness, &screen)), self.pairb()),
@@ -684,14 +716,14 @@ impl<'a> Server<'a> {
         format!("<div class=ask data-ask=\"{}\"><p><b>needs you</b> <span class=m>{}</span></p>{body}{reply}</div>", esc(&l.name), esc(&who))
     }
 
-    /// `herdr <args>` JSON, read at most every 10 s (None when herdr cannot be read).
-    fn herdr_json(&self, now: u64, args: &[&str]) -> Option<serde_json::Value> {
-        serde_json::from_str(&self.cached(now, 10, "herdr", args)?).ok()
+    /// `herdr agent|workspace list` JSON, read at most every 10 s (None when herdr cannot be read).
+    fn herdr_json(&self, now: u64, what: &str) -> Option<serde_json::Value> {
+        herdr::list(&self.cached(now, 10), what).ok()
     }
 
     /// Names of the live herdr agents (None when herdr cannot be read).
     fn live(&self, now: u64) -> Option<BTreeSet<String>> {
-        let v = self.herdr_json(now, &["agent", "list"])?;
+        let v = self.herdr_json(now, "agent")?;
         Some(v["result"]["agents"].as_array()?.iter().filter_map(|a| a["name"].as_str().map(String::from)).collect())
     }
 
@@ -716,7 +748,7 @@ impl<'a> Server<'a> {
                 let is_dead = s.is_some_and(dead);
                 let waiting = crate::events::open_asks(events).iter().any(|e| e.fleet == *f && e.issue == Some(n));
                 let state = if is_dead { "dead" } else if waiting { "⏸ waiting: decision" } else { s.map_or("queued", |s| s.state.as_str()) };
-                let a = s.filter(|s| s.last_ts > 0).map_or(String::new(), |s| age(now.saturating_sub(s.last_ts)));
+                let a = ago(now, s.map_or(0, |s| s.last_ts));
                 let lane = s.and_then(|s| s.lane.as_deref()).unwrap_or_default();
                 let logged = s.map_or("queued", |s| s.state.as_str());
                 let mut card = vec![esc(&join(&[&format!("#{n} {logged}"), lane, &a])), pr_line(ctx, Some(fc), f, n, s)];
@@ -753,8 +785,17 @@ impl<'a> Server<'a> {
                 }).collect();
                 body += &format!("<details class=done><summary><span>done today: {}</span></summary>{rows}</details>", done.len());
             }
-            body += &format!("<details class=roles><summary><span>roles</span></summary>{}</details>",
-                fc.role.iter().map(|(name, r)| role_form(cfg, f, name, r, rw, &mt)).collect::<String>());
+            // #60: the live page loads a fleet's role forms when the row is opened (`/frag`); an export inlines them.
+            body += &match self.export {
+                Some(_) => format!(
+                    "<details class=roles><summary><span>roles</span></summary>{}</details>",
+                    roles(cfg, f, fc, rw, &mt)
+                ),
+                None => {
+                    let src = format!("frag?id=roles&amp;fleet={}", enc(f));
+                    format!("<details class=roles data-src=\"{src}\"><summary><span>roles</span></summary></details>")
+                }
+            };
             let button = |op: &str, label: &str| if rw { format!("<form method=post>{}<button>{label}</button></form>", hidden(op, f, &mt)) } else { String::new() };
             if fc.paused {
                 let lanes: Vec<&&IssueState> = mine.iter().filter(|s| s.active_lane().is_some()).collect();
@@ -787,9 +828,9 @@ impl<'a> Server<'a> {
 
     /// herdr's agents joined with the log (None when herdr cannot be read).
     fn lanes(&self, now: u64, cfg: &Config, events: &[Event], st: &States) -> Option<Vec<lanes::Lane>> {
-        let list = self.herdr_json(now, &["agent", "list"])?;
+        let list = self.herdr_json(now, "agent")?;
         let agents = list["result"]["agents"].as_array().cloned().unwrap_or_default();
-        let wsl = self.herdr_json(now, &["workspace", "list"]).unwrap_or_default();
+        let wsl = self.herdr_json(now, "workspace").unwrap_or_default();
         let ws: BTreeMap<String, String> = wsl["result"]["workspaces"].as_array().into_iter().flatten()
             .filter_map(|w| Some((w["workspace_id"].as_str()?.into(), w["label"].as_str()?.into())))
             .collect();
@@ -798,28 +839,26 @@ impl<'a> Server<'a> {
 
     fn waits(&self, ctx: &Ctx, cfg: &Config, events: &[Event], all: &[lanes::Lane]) -> Vec<crate::waiting::Waiting> {
         let live: Vec<_> = all.iter().map(|l| json!({"name": l.name, "agent_status": l.state})).collect();
-        crate::waiting::scan(ctx, cfg, &Memo(self.r, &self.cache, ctx.now, if self.fresh { 10 } else { 30 }), events, &live, false).into_iter().map(|x| x.1).collect()
+        crate::waiting::scan(ctx, cfg, &self.cached(ctx.now, 30), events, &live, false).into_iter().map(|x| x.1).collect()
     }
 
-    /// #37: Herd mode's data (`/herd.json`, the `/live` `herd` event): per fleet the lanes as the unpaired Lanes rows
-    /// show them (no pane text) and the queued issues, Others, host. `weather` (loopback only) forces the host values.
+    /// #37: Herd mode's data (`/herd.json`, the `herd` event; docs/serve.md).
+    /// `weather` (loopback only) forces the host values.
     fn herd(&self, ctx: &Ctx, weather: Option<&str>) -> Result<serde_json::Value> {
         let events = read(&ctx.state)?;
         let (cfg, st) = (Config::load(&ctx.config)?, fold(&events));
         let all = self.lanes(ctx.now, &cfg, &events, &st).unwrap_or_default();
         let waits = self.waits(ctx, &cfg, &events, &all);
-        let title = |f: &String, n: u64| gh::cached_spec(ctx, f, n).and_then(|v| v["title"].as_str().map(String::from));
         let lanes = |f: Option<&String>| -> Vec<_> {
             all.iter().filter(|l| l.fleet.as_ref() == f).map(|l| {
-                let (tone, shown) = shown_state(ctx.now, l, &waits);
-                let a = if l.since > 0 { age(ctx.now.saturating_sub(l.since)) } else { String::new() };
-                json!({"name": l.name, "issue": l.issue, "title": l.issue.zip(f).and_then(|(n, f)| title(f, n)), "role": l.role, "harness": l.harness,
+                let (title, tone, shown, a) = view(ctx, l, &waits);
+                json!({"name": l.name, "issue": l.issue, "title": title, "role": l.role, "harness": l.harness,
                        "model": l.model, "effort": l.effort, "account": l.account, "state": l.state, "shown": shown, "tone": tone, "age": a, "coat": coat(&l.name)})
             }).collect()
         };
         let queued = |f: &String| -> Vec<_> {
             let waiting = queue::view(&events, &st, f).into_iter().filter(|i| st.get(&(f.clone(), i.issue)).is_none_or(|s| s.state == "queued"));
-            waiting.map(|i| json!({"issue": i.issue, "title": title(f, i.issue), "blocked_by": i.blocked_by, "coat": coat(&format!("{f}#{}", i.issue))})).collect()
+            waiting.map(|i| json!({"issue": i.issue, "title": gh::cached_title(ctx, f, i.issue), "blocked_by": i.blocked_by, "coat": coat(&format!("{f}#{}", i.issue))})).collect()
         };
         let fleets: Vec<_> = cfg.fleet.keys().map(|f| json!({"name": f, "lanes": lanes(Some(f)), "queue": queued(f)})).collect();
         let lim = &cfg.limits;
@@ -855,9 +894,8 @@ impl<'a> Server<'a> {
     }
 
     fn lane_row(&self, ctx: &Ctx, cfg: &Config, l: &lanes::Lane, s: Option<&IssueState>, paired: bool, waits: &[crate::waiting::Waiting]) -> String {
-        let screen = l.pane.as_ref().and_then(|p| self.cached(ctx.now, 30, "herdr", &["pane", "read", p, "--source", "visible"]));
-        let a = if l.since > 0 { age(ctx.now.saturating_sub(l.since)) } else { String::new() };
-        let title = l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| gh::cached_spec(ctx, f, n)).and_then(|v| v["title"].as_str().map(String::from));
+        let screen = l.pane.as_ref().and_then(|p| herdr::read(&self.cached(ctx.now, 30), p).ok());
+        let (title, tone, shown, a) = view(ctx, l, waits);
         let issue = l.issue.map(|n| format!("#{n}")).unwrap_or_default();
         let round = s.map(|s| format!("round {}", s.state.split_once('(').map_or(s.rounds.to_string(), |r| r.1.trim_end_matches(')').into())));
         let o = |v: &Option<String>| v.clone().unwrap_or_default();
@@ -869,7 +907,6 @@ impl<'a> Server<'a> {
         if l.mismatch {
             card.push("<span class=r>⚠ log/pane mismatch: the log has this lane open, herdr has no pane</span>".into());
         }
-        let (tone, shown) = shown_state(ctx.now, l, waits);
         card.insert(1, esc(&shown));
         let card = self::card(&card) + &if l.state == "blocked" { self.blocked(ctx, l, paired) } else { String::new() };
         let act = esc(&lanes::activity(&l.harness, &screen.unwrap_or_default()));
@@ -883,7 +920,7 @@ impl<'a> Server<'a> {
         };
         let tone = if sup.is_some() { "m" } else { tone };
         let since = w.filter(|_| sup.is_none()).map_or(l.since, |w| w.since);
-        let a = if since > 0 { age(ctx.now.saturating_sub(since)) } else { String::new() };
+        let a = ago(ctx.now, since);
         format!(
             "<div class=lane data-agent=\"{}\" data-role={}><button type=button class=lr>{}<span class=\"nw el\">{}</span><span class=\"nw {}\">{} {a}</span>\
              {why}<span class=act>{act}</span></button><div class=card hidden>{card}</div></div>",
@@ -897,7 +934,7 @@ impl<'a> Server<'a> {
     }
 
     fn sample(&self) -> Host {
-        self.host.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        lock(&self.host).clone()
     }
 
     fn host_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event]) -> String {
@@ -972,8 +1009,7 @@ impl<'a> Server<'a> {
     }
 }
 
-/// `--demo`'s runner (#39): `runner.json` maps a command line's prefix to its stdout (the longest match
-/// wins); anything else exits 1. Nothing runs.
+/// `--demo`'s runner (#39): `runner.json`'s stdout for the longest matching command-line prefix, else exit 1.
 #[derive(Default)]
 struct Canned(BTreeMap<String, String>);
 
@@ -986,9 +1022,7 @@ impl Runner for Canned {
     fn sleep(&self, _: u64) {}
 }
 
-/// `serve --export <dir> [--demo]` (#39): the page, `herd.json`, manifest, sw and icons as static files with
-/// relative URLs. `--demo`: `runner.json`'s canned reads (`r` is never called), "now" a minute after the log's
-/// last event, pane text shown, every form inert, plus each lane's `lane/<agent>.json` transcript.
+/// `serve --export <dir> [--demo]` (#39, docs/serve.md): the page and its files as static files with relative URLs.
 pub fn export(ctx: &Ctx, r: &dyn Runner, dir: &std::path::Path, demo: bool) -> Result<()> {
     let canned = if demo { Canned(serde_json::from_str(&std::fs::read_to_string(ctx.config.with_file_name("runner.json"))?)?) } else { Canned::default() };
     let (r, events): (&dyn Runner, _) = (if demo { &canned } else { r }, read(&ctx.state)?);
@@ -1038,7 +1072,7 @@ fn pr_line(ctx: &Ctx, fc: Option<&crate::config::Fleet>, fleet: &str, issue: u64
 
 /// The queue row's dim line from the caches only: the issue title, then the PR's when it differs; one 390 px line.
 fn titles(ctx: &Ctx, fleet: &str, issue: u64) -> Option<String> {
-    let spec = gh::cached_spec(ctx, fleet, issue).and_then(|v| v["title"].as_str().map(String::from));
+    let spec = gh::cached_title(ctx, fleet, issue);
     let pr = gh::cached_pr(ctx, fleet, issue);
     let pr = pr["number"].as_u64().zip(pr["title"].as_str()).filter(|p| Some(p.1) != spec.as_deref()).map(|(n, p)| format!("PR #{n} · {p}"));
     let t = [spec, pr].into_iter().flatten().collect::<Vec<_>>().join(" · ");
@@ -1050,6 +1084,11 @@ fn titles(ctx: &Ctx, fleet: &str, issue: u64) -> Option<String> {
     }
     let cut: String = t.chars().take(51).collect();
     Some(format!("{} …", cut.rsplit_once(' ').map_or(cut.as_str(), |c| c.0).trim_end_matches([' ', '·'])))
+}
+
+/// A fleet's role rows: the model/effort pickers (`rw`), else the settings as text.
+fn roles(cfg: &Config, fleet: &str, fc: &crate::config::Fleet, rw: bool, mt: &str) -> String {
+    fc.role.iter().map(|(name, r)| role_form(cfg, fleet, name, r, rw, mt)).collect()
 }
 
 fn role_form(cfg: &Config, fleet: &str, role: &str, r: &Role, rw: bool, mt: &str) -> String {

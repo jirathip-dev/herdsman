@@ -11,7 +11,23 @@ function tab(t) {
   $$('main>section').forEach(s => s.hidden = s.id !== t);
   $$('nav a').forEach(a => a.classList.toggle('on', a.hash === '#' + t));
   put('tab', t);
+  // #60: the live page leaves the Events body out; it loads when the tab opens.
+  if (t === 'events' && !$('#events').childElementCount) part('frag?id=events').then(h => h && frag('events', h));
 }
+// #60: a part of the page read on demand (null when it cannot be read).
+const part = src => fetch(R + src, { cache: 'no-store' }).then(r => r.ok ? r.text() : null).catch(() => null);
+// A form POST of `data` (an object or FormData) to `path`.
+const post = (path, data) => fetch(R + path, { method: 'POST', body: new URLSearchParams(data) });
+// A `details[data-src]` row (a fleet's role forms) loads its body when opened, and again on each refresh.
+async function load(d) {
+  const h = await part(d.dataset.src);
+  if (h === null) return;
+  d.querySelectorAll(':scope>:not(summary)').forEach(n => n.remove());
+  d.insertAdjacentHTML('beforeend', h);
+  d.dataset.on = 1;
+  tidy(d);
+}
+document.addEventListener('toggle', e => { if (e.target.matches('details[data-src]') && e.target.open) load(e.target); }, true);
 $$('nav a').forEach(a => a.onclick = e => { e.preventDefault(); tab(a.hash.slice(1)); });
 // A tapped alert opens `/?issue=N#tab`: that tab, the issue's row open.
 const t0 = location.hash.slice(1) || get('tab'), DBG = new URLSearchParams(location.search), want = DBG.get('issue');
@@ -43,11 +59,16 @@ const sig = e => (e.querySelector('summary,.lr') || e).textContent.replace(/\b\d
 // #65: an update patches the live tree to the new one: rows (`details`, `.lane`) matched by key(), the rest by
 // position; equal nodes are left alone, `open` is the user's. So the page keeps its scroll, open rows and focus.
 const rk = n => n.nodeType === 1 && n.matches('details,.lane') ? key(n) : '';
+// Give `a` the attributes of `b` (also herd.js's horses), but the ones in `keep`, which stay `a`'s own.
+function attrs(a, b, keep = []) {
+  for (const { name } of [...a.attributes]) if (!b.hasAttribute(name) && !keep.includes(name)) a.removeAttribute(name);
+  for (const { name, value } of b.attributes) if (a.getAttribute(name) !== value) a.setAttribute(name, value);
+}
 function morph(a, b) {
   if (a.nodeType !== 1) { if (a.data !== b.data) a.data = b.data; return; }
   if (a.isEqualNode(b)) return;
-  for (const { name } of [...a.attributes]) if (!b.hasAttribute(name) && name !== 'open') a.removeAttribute(name);
-  for (const { name, value } of b.attributes) if (a.getAttribute(name) !== value) a.setAttribute(name, value);
+  attrs(a, b, ['open', 'data-on']);
+  if (a.dataset.on) return; // a loaded part keeps its body; refresh() re-reads it
   const rows = new Map(), rest = [], kids = [...b.childNodes];
   for (const c of a.childNodes) { const k = rk(c); if (k && !rows.has(k)) rows.set(k, c); else if (!k) rest.push(c); }
   kids.forEach((n, i) => {
@@ -90,7 +111,8 @@ function alerts() {
   b.hidden = !standalone || !('PushManager' in window);
   if (nopair) { b.disabled = true; note(b, 'pair this phone first', false); }
 }
-function unpaired() { nopair = true; alerts(); }
+// Also shows the sheet's Pair button (open() hides it again).
+function unpaired() { nopair = true; alerts(); $('.pairf').hidden = false; }
 alerts();
 document.addEventListener('click', async e => {
   const b = e.target.closest('#push');
@@ -100,7 +122,7 @@ document.addEventListener('click', async e => {
     const key = Uint8Array.from(atob(b.dataset.key.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
     const reg = await navigator.serviceWorker.ready;
     const s = (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key })).toJSON();
-    const r = await fetch(R + 'push/subscribe', { method: 'POST', body: new URLSearchParams({ endpoint: s.endpoint, p256dh: s.keys.p256dh, auth: s.keys.auth }) });
+    const r = await post('push/subscribe', { endpoint: s.endpoint, p256dh: s.keys.p256dh, auth: s.keys.auth });
     const msg = (await r.text()).trim();
     if (r.status === 401) return unpaired();
     note(b, msg, r.ok);
@@ -116,6 +138,7 @@ async function refresh() {
   try {
     const j = await (await fetch(R + 'frags', { cache: 'no-store' })).json();
     for (const id in j) frag(id, j[id]);
+    $$('details[data-src][open]').forEach(load);
     herdPull();
     busy = false;
     sync(live() ? 'g' : 'a');
@@ -165,7 +188,7 @@ document.addEventListener('submit', async e => {
   if (op !== 'mv' && op !== 'set') return;
   e.preventDefault();
   try {
-    const r = await fetch(R, { method: 'POST', body: new URLSearchParams(new FormData(f)) });
+    const r = await post('', new FormData(f));
     toast(r.redirected ? new URL(r.url).searchParams.get('msg') || '' : 'error: ' + (await r.text()).trim());
     refresh();
   } catch (err) { toast('error: ' + err.message); }
@@ -181,6 +204,8 @@ B.insertAdjacentHTML('beforeend', `<div id=sheet hidden><div class=bd></div><div
 if (DEMO) sync();
 const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st'), now = $('.now'), old = $('.old'), more = $('.more');
 let agent = null, timer = 0, cur = 0, y = 0;
+// The Lanes row of `agent` (its sheet card), from the needs-you cards and the herd.
+const laneOf = agent => [...$$('.lane')].find(l => l.dataset.agent === agent);
 const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text || '' });
 // #58: controls are bracket text, the label in a span that ellipsises (#68). A select hides behind its short `[opus ▾]` label (the native picker
 // keeps full names); ▲/▼ drop their words; a choice (ask or menu option) wraps in a span, its full text in title (#63 A).
@@ -227,7 +252,6 @@ async function poll() {
     // Unpaired (401): say so, with the Pair button; never a silent one-liner.
     if (r.status === 401) {
       unpaired();
-      $('.pairf').hidden = false;
       return now.replaceChildren(el('p', 'unp', 'Pair this phone to see the conversation'));
     }
     if (!r.ok) return now.replaceChildren(el('p', 'm', (await r.text()).trim()));
@@ -251,10 +275,10 @@ more.onclick = async () => {
 };
 function say(msg, ok) { st.textContent = msg; st.className = 'st ' + (ok ? 'g' : 'r'); }
 // Stop/Kill/Clean call `/act`; kill and clean dry-run first (kill shows what is lost, clean why it is unsafe).
-const act = (op, confirm) => fetch(R + 'act', { method: 'POST', body: new URLSearchParams({ agent, op, confirm: confirm ? '1' : '' }) });
+const act = (op, confirm) => post('act', { agent, op, confirm: confirm ? '1' : '' });
 async function run(op) {
   const r = await act(op, op === 'stop'), msg = (await r.text()).trim();
-  if (r.status === 401) { unpaired(); $('.pairf').hidden = false; }
+  if (r.status === 401) unpaired();
   if (op === 'stop' || !r.ok) return say(msg, r.ok);
   $('.cf p').textContent = msg.split('; ').find(l => !l.startsWith('dry run')) || msg;
   $('.cf .yes span').textContent = op === 'kill' ? 'Kill' : 'Clean';
@@ -376,10 +400,10 @@ document.addEventListener('click', async e => {
   const b = e.target.closest('.lane .lr, .ask .pick, .ask .rp');
   if (!b) return;
   if (b.classList.contains('lr')) return open(b.parentNode);
-  const a = b.closest('.ask'), lane = [...$$('.lane')].find(l => l.dataset.agent === a.dataset.ask);
+  const a = b.closest('.ask'), lane = laneOf(a.dataset.ask);
   if (b.classList.contains('rp')) return lane && open(lane);
   // `h` names the menu this card shows: the server refuses a tap on a menu that has since changed.
-  const r = await fetch(R + 'answer', { method: 'POST', body: new URLSearchParams({ agent: a.dataset.ask, choice: b.value, h: b.dataset.h }) });
+  const r = await post('answer', { agent: a.dataset.ask, choice: b.value, h: b.dataset.h });
   const msg = (await r.text()).trim();
   // Re-render (fresh pane read) so stale buttons go at once; the message lands on the new card.
   await refresh();
@@ -446,9 +470,9 @@ chat.addEventListener('touchstart', e => {
 }, { passive: true });
 $('.reply').onsubmit = async e => {
   e.preventDefault();
-  const r = await fetch(R + 'send', { method: 'POST', body: new URLSearchParams({ agent, text: e.target.text.value }) });
+  const r = await post('send', { agent, text: e.target.text.value });
   const msg = (await r.text()).trim();
-  if (r.status === 401) { unpaired(); $('.pairf').hidden = false; }
+  if (r.status === 401) unpaired();
   say(msg, r.ok);
   if (r.ok) { e.target.text.value = ''; setTimeout(poll, 1500); }
 };

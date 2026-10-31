@@ -239,6 +239,8 @@ fn serve_is_read_only_html() {
         assert!(res.contains(n), "queued {n} missing");
     }
     assert!(res.contains("https://github.com/jirathip-dev/sendmeter/pull/15"), "PR link");
+    // #60: the Events tab body loads on tab open.
+    let res = String::from_utf8(srv.respond("GET /frag?id=events HTTP/1.1\r\nHost: x\r\n\r\n", 1_000_000)).unwrap();
     assert!(res.contains("https://github.com/jirathip-dev/sendmeter/issues/12"), "issue link");
     assert!(res.contains("actions?query=branch%3Aissue-12"), "Actions runs link");
     for m in ["POST", "PUT", "DELETE", "PATCH", "HEAD"] {

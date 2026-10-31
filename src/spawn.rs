@@ -4,8 +4,9 @@ use crate::config::{Config, Fleet, Role};
 use crate::events::{emit, fold, read, Event};
 use crate::gate::refused;
 use crate::harness::{self, hook_command};
+use crate::herdr;
 use crate::host;
-use crate::runner::{argv, json, ok, Runner};
+use crate::runner::{argv, ok, Runner};
 use crate::Ctx;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
@@ -87,7 +88,7 @@ pub struct Plan {
 impl Plan {
     /// Exports `HERDSMAN_LANE` (and an account's `CLAUDE_CODE_OAUTH_TOKEN`) in the pane's shell for the harness.
     pub fn lane_cmd(&self, pane: &str) -> Vec<String> {
-        let mut c = argv(&["pane", "run", pane, "export", &format!("HERDSMAN_LANE='{}'", self.lane)]);
+        let mut c = herdr::run_argv(pane, &["export", &format!("HERDSMAN_LANE='{}'", self.lane)]);
         c.extend(self.account.iter().map(|a| a.1.clone()));
         c
     }
@@ -171,8 +172,7 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
         None => brief.with_file_name(format!("orch-{fleet}.mcp.json")),
         Some(_) => worktree.join(".mcp.lane.json"),
     };
-    let cached = issue.and_then(|n| crate::gh::cached_spec(ctx, fleet, n));
-    let title = lane_title(&head, cached.as_ref().and_then(|v| v["title"].as_str()).unwrap_or(""));
+    let title = lane_title(&head, &issue.and_then(|n| crate::gh::cached_title(ctx, fleet, n)).unwrap_or_default());
     Ok(Plan {
         agent,
         role: role.into(),
@@ -220,43 +220,25 @@ fn orch_brief(f: &Fleet, fleet: &str, p: &Plan) -> String {
 
 /// The herdr argv that creates the lane's workspace (orch) or worktree.
 fn create_argv(local: &str, p: &Plan) -> Vec<String> {
-    let wt = p.worktree.to_string_lossy();
     match p.role.as_str() {
-        "orch" => argv(&["workspace", "create", "--cwd", local, "--label", &p.agent, "--no-focus"]),
-        _ => argv(&[
-            "worktree", "create", "--cwd", local, "--branch", &p.branch, "--base", &p.base,
-            "--path", &wt, "--label", &p.agent, "--no-focus",
-        ]),
+        "orch" => herdr::workspace_create_argv(local, &p.agent),
+        _ => herdr::worktree_create_argv(local, &p.branch, &p.base, &p.worktree.to_string_lossy(), &p.agent),
     }
 }
 
 fn plan_json(ctx: &Ctx, f: &Fleet, p: &Plan) -> Value {
     let local = f.local_path().to_string_lossy().into_owned();
     let fetch = argv(&["git", "-C", &local, "fetch", "origin", p.base.trim_start_matches("origin/")]);
-    let herdr = |c: Vec<String>| std::iter::once("herdr".to_string()).chain(c).collect::<Vec<_>>();
     let mut cmds = if p.role == "orch" { vec![] } else { vec![fetch] };
-    cmds.push(herdr(create_argv(&local, p)));
-    cmds.push(herdr(p.lane_cmd("<pane>")));
-    cmds.push(herdr(p.start_cmd(ctx, "<pane>")));
-    cmds.extend(p.kick_cmds("<pane>").into_iter().map(herdr));
+    cmds.push(herdr::line(create_argv(&local, p)));
+    cmds.push(herdr::line(p.lane_cmd("<pane>")));
+    cmds.push(herdr::line(p.start_cmd(ctx, "<pane>")));
+    cmds.extend(p.kick_cmds("<pane>").into_iter().map(herdr::line));
     json!({
         "agent": p.agent, "role": p.role, "harness": p.harness, "profile": p.profile,
         "model": p.model, "effort": p.effort, "branch": p.branch, "base": p.base, "account": p.account.as_ref().map(|a| &a.0),
         "worktree": p.worktree, "brief": p.brief, "kick": p.kick, "title": p.title, "commands": cmds,
     })
-}
-
-/// Pick an idle shell pane in the workspace, splitting one off if all are busy.
-fn free_pane(r: &dyn Runner, ws: &str, wt: &Path) -> Result<String> {
-    let panes = json(r, "herdr", &["pane", "list", "--workspace", ws])?;
-    let list = panes["result"]["panes"].as_array().cloned().unwrap_or_default();
-    if let Some(p) = list.iter().find(|p| p["agent"].is_null()) {
-        return Ok(p["pane_id"].as_str().unwrap_or_default().into());
-    }
-    let first = list.first().and_then(|p| p["pane_id"].as_str()).context("workspace has no panes")?;
-    let wt = wt.to_string_lossy();
-    let s = json(r, "herdr", &["pane", "split", first, "--direction", "right", "--cwd", &wt, "--no-focus"])?;
-    Ok(s["result"]["pane"]["pane_id"].as_str().context("pane split: no pane_id")?.into())
 }
 
 /// Lane scratch: untracked files fleet itself writes into a worktree (some gitignored). Never dirty work.
@@ -364,7 +346,7 @@ pub fn spawn(
     if o.supersede && !dup.is_empty() {
         for a in &live {
             if let Some(pane) = a["pane_id"].as_str() {
-                ok(r, "herdr", &["pane", "close", pane])?;
+                herdr::close(r, pane)?;
             }
         }
         let why: Vec<&str> = dup.iter().map(|d| d.1.as_str()).collect();
@@ -373,12 +355,12 @@ pub fn spawn(
 
     let local = f.local_path().to_string_lossy().into_owned();
     let (created, brief_text) = match issue {
-        None => (json(r, "herdr", &create_argv(&local, &p))?, orch_brief(f, fleet, &p)),
+        None => (herdr::json(r, &create_argv(&local, &p))?, orch_brief(f, fleet, &p)),
         Some(n) => {
             let iss = crate::gh::spec(ctx, r, f, fleet, n, true)?;
             ok(r, "git", &["-C", &local, "fetch", "origin", p.base.trim_start_matches("origin/")])?;
-            let open = argv(&["worktree", "open", "--cwd", &local, "--path", &wt]);
-            let created = json(r, "herdr", &if p.worktree.exists() { open } else { create_argv(&local, &p) })?;
+            let open = herdr::worktree_open_argv(&local, &wt);
+            let created = herdr::json(r, &if p.worktree.exists() { open } else { create_argv(&local, &p) })?;
             let (title, body) = (iss["title"].as_str().unwrap_or(""), iss["body"].as_str().unwrap_or(""));
             p.title = lane_title(&p.head, title);
             // A fix round's brief carries the findings of the latest verdict if it was FAIL.
@@ -393,23 +375,20 @@ pub fn spawn(
     }
     std::fs::write(&p.brief, brief_text).context("writing the brief")?;
     h.prepare(ctx, r, &p)?;
-    let pane = free_pane(r, ws, &p.worktree)?;
+    let pane = herdr::free_pane(r, ws, &p.worktree)?;
     pj = plan_json(ctx, f, &p);
-    ok(r, "herdr", &p.lane_cmd(&pane))?;
-    let start = r.run("herdr", &p.start_cmd(ctx, &pane))?;
+    herdr::ok(r, &p.lane_cmd(&pane))?;
+    let start = herdr::exec(r, &p.start_cmd(ctx, &pane))?;
     if start.code != 0 {
         // Under load herdr can time out while the harness still comes up: keep it as the lane.
-        let timeout = [&start.stderr, &start.stdout]
-            .iter()
-            .any(|s| serde_json::from_str::<Value>(s.trim()).is_ok_and(|v| v["error"]["code"] == "timeout"));
-        if !timeout {
+        if !herdr::timed_out(&start) {
             bail!("herdr agent start failed: {}", start.stderr.trim());
         }
-        if harness_in(r, &pane).is_none() {
-            let _ = r.run("herdr", &argv(&["pane", "close", &pane]));
+        if herdr::harness_in(r, &pane).is_none() {
+            let _ = herdr::close(r, &pane);
             bail!("herdr agent start timed out and no harness came up; closed pane {pane}: {}", start.stderr.trim());
         }
-        r.run("herdr", &argv(&["agent", "rename", &pane, &p.agent]))?;
+        herdr::exec(r, &herdr::rename_argv(&pane, &p.agent))?;
     }
     let confirmed = h.kick(r, &p, &pane)?;
     let mut d = lane_data(&p, &pane, ws);
@@ -448,12 +427,6 @@ fn lane_admit(f: &Fleet, events: &[Event], fleet: &str, issue: u64, role: &str) 
     Ok(())
 }
 
-/// The pane's `herdr pane get` info when a harness (any detected agent) runs in it.
-fn harness_in(r: &dyn Runner, pane: &str) -> Option<Value> {
-    let v = json(r, "herdr", &["pane", "get", pane]).ok()?;
-    Some(v["result"]["pane"].clone()).filter(|p| !p["agent"].is_null())
-}
-
 /// The `spawn` event's data for a lane of plan `p` running in `pane`.
 fn lane_data(p: &Plan, pane: &str, ws: &str) -> Value {
     json!({"role": p.role, "harness": p.harness, "profile": p.profile, "model": p.model, "effort": p.effort, "agent": p.agent,
@@ -470,8 +443,8 @@ pub fn adopt(
     pane: &str,
 ) -> Result<()> {
     let p = plan(ctx, cfg, fleet, issue, role)?;
-    let info = harness_in(r, pane).with_context(|| format!("no harness running in pane {pane}"))?;
-    ok(r, "herdr", &["agent", "rename", pane, &p.agent])?;
+    let info = herdr::harness_in(r, pane).with_context(|| format!("no harness running in pane {pane}"))?;
+    herdr::ok(r, &herdr::rename_argv(pane, &p.agent))?;
     let ws = info["workspace_id"].as_str().or_else(|| pane.split(':').next()).unwrap_or_default();
     let mut d = lane_data(&p, pane, ws);
     d["adopted"] = json!(true);

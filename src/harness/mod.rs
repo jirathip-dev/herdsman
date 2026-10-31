@@ -3,7 +3,7 @@ mod claude;
 mod dsh;
 mod hermes;
 
-use crate::runner::{argv, Runner};
+use crate::runner::Runner;
 use crate::spawn::Plan;
 use crate::Ctx;
 use anyhow::Result;
@@ -57,20 +57,7 @@ pub fn hook_command(ctx: &Ctx, role: &str) -> String {
     format!("'{}' hook --role {role}", ctx.exe)
 }
 
-/// `herdr agent start` for the harnesses herdr knows (`--kind`).
-fn agent_start(p: &Plan, kind: &str, pane: &str, args: Vec<String>) -> Vec<String> {
-    let mut c = argv(&["agent", "start", &p.agent, "--kind", kind, "--pane", pane]);
-    c.extend(argv(&["--timeout", "90000", "--"]));
-    c.extend(args);
-    c
-}
-
 /// Try numbers `0..n`, sleeping `secs` before every try but the first.
 fn attempts(r: &dyn Runner, n: u32, secs: u64) -> impl Iterator<Item = u32> + '_ {
     (0..n).inspect(move |&i| if i > 0 { r.sleep(secs) })
-}
-
-/// `herdr agent wait` until the kick shows as working or blocked.
-fn wait_working(p: &Plan, ms: &str) -> Vec<String> {
-    argv(&["agent", "wait", &p.agent, "--until", "working", "--until", "blocked", "--timeout", ms])
 }

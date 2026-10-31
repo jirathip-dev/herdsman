@@ -259,7 +259,6 @@ impl Fleet {
     }
 }
 
-/// Every string value under `v`, with its dotted key.
 /// A value shaped like a secret: a known token prefix, a JWT, or a 32+ char letter-and-digit run between `.`/`/`/`-`/`_`
 /// (so `UPPER_SNAKE` env-var names, paths and model ids pass).
 pub fn secret_like(v: &str) -> bool {
@@ -274,6 +273,7 @@ pub fn secret_like(v: &str) -> bool {
     })
 }
 
+/// Every string value under `v`, with its dotted key.
 fn strings(key: &str, v: &toml::Value) -> Vec<(String, String)> {
     let sub = |k: String, v| strings(&k, v);
     match v {
