@@ -102,7 +102,7 @@ document.addEventListener('click', async e => {
     const s = (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key })).toJSON();
     const r = await fetch(R + 'push/subscribe', { method: 'POST', body: new URLSearchParams({ endpoint: s.endpoint, p256dh: s.keys.p256dh, auth: s.keys.auth }) });
     const msg = (await r.text()).trim();
-    if (r.status === 401) return unpaired();
+    if (r.status === 401) { b.textContent = msg; return unpaired(); }
     note(b, msg, r.ok);
     if (r.ok) refresh();
   } catch (err) { note(b, 'alerts failed: ' + err.message, false); }
