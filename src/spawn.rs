@@ -172,8 +172,7 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
         None => brief.with_file_name(format!("orch-{fleet}.mcp.json")),
         Some(_) => worktree.join(".mcp.lane.json"),
     };
-    let cached = issue.and_then(|n| crate::gh::cached_spec(ctx, fleet, n));
-    let title = lane_title(&head, cached.as_ref().and_then(|v| v["title"].as_str()).unwrap_or(""));
+    let title = lane_title(&head, &issue.and_then(|n| crate::gh::cached_title(ctx, fleet, n)).unwrap_or_default());
     Ok(Plan {
         agent,
         role: role.into(),

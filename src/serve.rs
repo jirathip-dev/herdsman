@@ -216,9 +216,16 @@ fn coat(name: &str) -> String {
     format!("--c:#{c};--d:#{d};--m:#{m};--b:{}", if blaze { "#efe7dc" } else { "transparent" })
 }
 
-/// #46: an idle lane shows what it waits on, coloured by who; a working one keeps its state.
-fn shown_state(now: u64, l: &lanes::Lane, waits: &[crate::waiting::Waiting]) -> (&'static str, String) {
-    wait_of(l, waits).map_or_else(|| (tone(&l.state), l.state.clone()), |w| (w.tone(now), w.label(now)))
+/// `age` since `t`, or nothing when `t` is unknown (0).
+fn ago(now: u64, t: u64) -> String {
+    if t > 0 { age(now.saturating_sub(t)) } else { String::new() }
+}
+
+/// A lane as the Lanes row, its sheet card and herd.json show it: (cached title, tone, shown state, age); #46: idle shows what it waits on.
+fn view(ctx: &Ctx, l: &lanes::Lane, waits: &[crate::waiting::Waiting]) -> (Option<String>, &'static str, String, String) {
+    let title = l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| gh::cached_title(ctx, f, n));
+    let (tone, shown) = wait_of(l, waits).map_or_else(|| (tone(&l.state), l.state.clone()), |w| (w.tone(ctx.now), w.label(ctx.now)));
+    (title, tone, shown, ago(ctx.now, l.since))
 }
 
 /// The lane's wait reason while herdr shows it idle, done or unknown.
@@ -724,7 +731,7 @@ impl<'a> Server<'a> {
                 let is_dead = s.is_some_and(dead);
                 let waiting = crate::events::open_asks(events).iter().any(|e| e.fleet == *f && e.issue == Some(n));
                 let state = if is_dead { "dead" } else if waiting { "⏸ waiting: decision" } else { s.map_or("queued", |s| s.state.as_str()) };
-                let a = s.filter(|s| s.last_ts > 0).map_or(String::new(), |s| age(now.saturating_sub(s.last_ts)));
+                let a = ago(now, s.map_or(0, |s| s.last_ts));
                 let lane = s.and_then(|s| s.lane.as_deref()).unwrap_or_default();
                 let logged = s.map_or("queued", |s| s.state.as_str());
                 let mut card = vec![esc(&join(&[&format!("#{n} {logged}"), lane, &a])), pr_line(ctx, Some(fc), f, n, s)];
@@ -818,18 +825,16 @@ impl<'a> Server<'a> {
         let (cfg, st) = (Config::load(&ctx.config)?, fold(&events));
         let all = self.lanes(ctx.now, &cfg, &events, &st).unwrap_or_default();
         let waits = self.waits(ctx, &cfg, &events, &all);
-        let title = |f: &String, n: u64| gh::cached_spec(ctx, f, n).and_then(|v| v["title"].as_str().map(String::from));
         let lanes = |f: Option<&String>| -> Vec<_> {
             all.iter().filter(|l| l.fleet.as_ref() == f).map(|l| {
-                let (tone, shown) = shown_state(ctx.now, l, &waits);
-                let a = if l.since > 0 { age(ctx.now.saturating_sub(l.since)) } else { String::new() };
-                json!({"name": l.name, "issue": l.issue, "title": l.issue.zip(f).and_then(|(n, f)| title(f, n)), "role": l.role, "harness": l.harness,
+                let (title, tone, shown, a) = view(ctx, l, &waits);
+                json!({"name": l.name, "issue": l.issue, "title": title, "role": l.role, "harness": l.harness,
                        "model": l.model, "effort": l.effort, "account": l.account, "state": l.state, "shown": shown, "tone": tone, "age": a, "coat": coat(&l.name)})
             }).collect()
         };
         let queued = |f: &String| -> Vec<_> {
             let waiting = queue::view(&events, &st, f).into_iter().filter(|i| st.get(&(f.clone(), i.issue)).is_none_or(|s| s.state == "queued"));
-            waiting.map(|i| json!({"issue": i.issue, "title": title(f, i.issue), "blocked_by": i.blocked_by, "coat": coat(&format!("{f}#{}", i.issue))})).collect()
+            waiting.map(|i| json!({"issue": i.issue, "title": gh::cached_title(ctx, f, i.issue), "blocked_by": i.blocked_by, "coat": coat(&format!("{f}#{}", i.issue))})).collect()
         };
         let fleets: Vec<_> = cfg.fleet.keys().map(|f| json!({"name": f, "lanes": lanes(Some(f)), "queue": queued(f)})).collect();
         let lim = &cfg.limits;
@@ -866,8 +871,7 @@ impl<'a> Server<'a> {
 
     fn lane_row(&self, ctx: &Ctx, cfg: &Config, l: &lanes::Lane, s: Option<&IssueState>, paired: bool, waits: &[crate::waiting::Waiting]) -> String {
         let screen = l.pane.as_ref().and_then(|p| herdr::read(&self.cached(ctx.now, 30), p).ok());
-        let a = if l.since > 0 { age(ctx.now.saturating_sub(l.since)) } else { String::new() };
-        let title = l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| gh::cached_spec(ctx, f, n)).and_then(|v| v["title"].as_str().map(String::from));
+        let (title, tone, shown, a) = view(ctx, l, waits);
         let issue = l.issue.map(|n| format!("#{n}")).unwrap_or_default();
         let round = s.map(|s| format!("round {}", s.state.split_once('(').map_or(s.rounds.to_string(), |r| r.1.trim_end_matches(')').into())));
         let o = |v: &Option<String>| v.clone().unwrap_or_default();
@@ -879,7 +883,6 @@ impl<'a> Server<'a> {
         if l.mismatch {
             card.push("<span class=r>⚠ log/pane mismatch: the log has this lane open, herdr has no pane</span>".into());
         }
-        let (tone, shown) = shown_state(ctx.now, l, waits);
         card.insert(1, esc(&shown));
         let card = self::card(&card) + &if l.state == "blocked" { self.blocked(ctx, l, paired) } else { String::new() };
         let act = esc(&lanes::activity(&l.harness, &screen.unwrap_or_default()));
@@ -893,7 +896,7 @@ impl<'a> Server<'a> {
         };
         let tone = if sup.is_some() { "m" } else { tone };
         let since = w.filter(|_| sup.is_none()).map_or(l.since, |w| w.since);
-        let a = if since > 0 { age(ctx.now.saturating_sub(since)) } else { String::new() };
+        let a = ago(ctx.now, since);
         let (name, role, av, state) = (esc(&l.name), esc(&l.role), avatar(&l.name, &l.state), esc(&l.state));
         format!(
             "<div class=lane data-agent=\"{name}\" data-role={role}><button type=button class=lr>{av}<span class=\"nw el\">{name}</span>\
@@ -1040,7 +1043,7 @@ fn pr_line(ctx: &Ctx, fc: Option<&crate::config::Fleet>, fleet: &str, issue: u64
 
 /// The queue row's dim line from the caches only: the issue title, then the PR's when it differs; one 390 px line.
 fn titles(ctx: &Ctx, fleet: &str, issue: u64) -> Option<String> {
-    let spec = gh::cached_spec(ctx, fleet, issue).and_then(|v| v["title"].as_str().map(String::from));
+    let spec = gh::cached_title(ctx, fleet, issue);
     let pr = gh::cached_pr(ctx, fleet, issue);
     let pr = pr["number"].as_u64().zip(pr["title"].as_str()).filter(|p| Some(p.1) != spec.as_deref()).map(|(n, p)| format!("PR #{n} · {p}"));
     let t = [spec, pr].into_iter().flatten().collect::<Vec<_>>().join(" · ");
