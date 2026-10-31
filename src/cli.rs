@@ -112,6 +112,13 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Every lane waiting on the orch or the owner, with its next command (the conductor's watchdog)
+    Waiting {
+        fleet: Option<String>,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
     /// Print the issue spec cached at spawn; read this instead of `gh issue view`
     Brief { fleet: String, issue: u64 },
     /// The issue PR's head sha, base, mergeable and check rollup: one `gh pr view` per 60 s
@@ -154,7 +161,7 @@ enum Cmd {
         #[arg(long)]
         read_only: bool,
     },
-    /// Alert once per state on stall, lane-dead, ready-unmerged, orch-holding and ask-waiting; idempotent, safe from cron
+    /// Alert once per state on stall, lane-dead, ready-unmerged, orch-holding, ask-waiting; nudge an idle orch; idempotent, safe from cron
     Check,
     /// Each `[accounts]` account: ok / capped until hh:mm, and the lanes on it (names only, never tokens)
     Accounts {
@@ -327,16 +334,20 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
         Cmd::Hook { role, git_pre_push: true } => return pre_push(ctx, out, stdin, role.as_deref() == Some("rev")),
         Cmd::Hook { role, git_pre_push: false } => run_hook(ctx, r, out, stdin, role.as_deref() == Some("rev"))?,
         Cmd::Status { fleet, json } => {
-            let all = fold(&read(&ctx.state)?);
+            let events = read(&ctx.state)?;
+            let all = fold(&events);
             let rows: Vec<_> = all.values().filter(|s| fleet.as_ref().is_none_or(|f| *f == s.fleet)).collect();
             if json {
                 writeln!(out, "{}", serde_json::to_string_pretty(&rows)?)?;
             } else if rows.is_empty() {
                 writeln!(out, "no tracked issues")?;
             } else {
-                writeln!(out, "{:<12} {:<6} {:<12} {:<24} AGE", "FLEET", "ISSUE", "STATE", "LANE")?;
+                let cfg = Config::load(&ctx.config).ok();
+                let waits = cfg.map(|c| crate::waiting::scan(ctx, &c, r, &events, &crate::host::agents(r).unwrap_or_default(), false));
+                writeln!(out, "{:<12} {:<6} {:<12} {:<24} {:<5} WAITING", "FLEET", "ISSUE", "STATE", "LANE", "AGE")?;
                 for s in rows {
-                    writeln!(out, "{}", status_line(s, ctx.now))?;
+                    let w = waits.iter().flatten().find(|(x, _)| x.fleet == s.fleet && x.issue == s.issue).map_or("-", |w| w.1.what.as_str());
+                    writeln!(out, "{:<5} {w}", status_line(s, ctx.now))?;
                 }
             }
         }
@@ -400,6 +411,16 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 Cmd::Ask { fleet, issue, question, options, recommend } => crate::ask(ctx, &cfg, out, (&fleet, lane(&issue)?), &question, &options, recommend)?,
                 Cmd::Answer { fleet, id, choice, by } => crate::answer(ctx, &cfg, r, out, (&fleet, &id), &choice, (&by, None))?,
                 Cmd::Check => check::check(ctx, &cfg, r, out)?,
+                Cmd::Waiting { fleet, json } => {
+                    let all = crate::waiting::scan(ctx, &cfg, r, &read(&ctx.state)?, &crate::host::agents(r).unwrap_or_default(), true);
+                    let rows: Vec<_> = all.into_iter().map(|x| x.1).filter(|w| matches!(w.who, "orch" | "owner") && fleet.as_ref().is_none_or(|f| *f == w.fleet)).collect();
+                    if json {
+                        writeln!(out, "{}", serde_json::to_string_pretty(&rows)?)?;
+                    }
+                    for w in rows.iter().filter(|_| !json) {
+                        writeln!(out, "{} #{} {}: {} ({}){}", w.fleet, w.issue, w.who, w.what, crate::events::age(ctx.now.saturating_sub(w.since)), w.next_cmd.as_ref().map_or(String::new(), |c| format!(" → {c}")))?;
+                    }
+                }
                 Cmd::Accounts { cmd: None } => access::list(ctx, &cfg, r, out)?,
                 Cmd::Accounts { cmd: Some(AccountsCmd::Reset { name }) } => access::reset(ctx, &cfg, out, &name)?,
                 Cmd::Protection => return protection::protection(&cfg, r, out),

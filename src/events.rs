@@ -171,7 +171,7 @@ pub fn last_spawn<'a>(events: &'a [Event], agent: &str) -> Option<&'a Event> {
 }
 
 /// Events `herdsman check` and notifiers write about an issue; they are not activity.
-pub const PASSIVE: [&str; 7] = ["stall", "lane-dead", "ready-unmerged", "notify-failed", "account-capped", "orch-holding", "ask-waiting"];
+pub const PASSIVE: [&str; 9] = ["stall", "lane-dead", "ready-unmerged", "notify-failed", "account-capped", "orch-holding", "ask-waiting", "orch-nudged", "orch-stuck"];
 
 /// `needs-decision` events with no `decision` yet, oldest first.
 pub fn open_asks(events: &[Event]) -> Vec<&Event> {

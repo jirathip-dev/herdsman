@@ -45,6 +45,7 @@ and `herdsman wait` (cached) — not `gh issue view` / `gh pr checks` / `gh run`
 ## Never hold silently
 
 Never hold silently. If you stop for any decision, run `herdsman ask` with ≤4 options and your recommendation first, then wait. Read a `DECISION` line as final.
+Never end your turn while any lane is in flight. Keep a background `herdsman wait` running.
 Answers come from the conductor (routine: fix rounds, ordering, size targets, already-decided specs)
 or the owner (scope, spend, security trade-offs, main).
 

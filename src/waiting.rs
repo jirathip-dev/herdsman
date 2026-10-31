@@ -1,0 +1,96 @@
+//! #46: what an idle lane waits on (orch | owner | ci | none), worked out from the log, git and the cached PR.
+use crate::config::Config;
+use crate::events::{age, fold, last_spawn, open_asks, Event, IssueState};
+use crate::runner::{ok, Runner};
+use crate::{gh, Ctx};
+use serde::Serialize;
+use serde_json::Value;
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Waiting {
+    pub fleet: String,
+    /// 0 for the orch lane.
+    pub issue: u64,
+    /// orch | owner | ci | none
+    pub who: &'static str,
+    pub what: String,
+    pub since: u64,
+    pub next_cmd: Option<String>,
+}
+
+impl Waiting {
+    /// `idle · <what> (<age>)`
+    pub fn label(&self, now: u64) -> String {
+        format!("idle · {} ({})", self.what, age(now.saturating_sub(self.since)))
+    }
+    /// Page tone: owner red, orch amber past 5 min, an impl idle without pushing amber at once, the rest dim.
+    pub fn tone(&self, now: u64) -> &'static str {
+        match self.who {
+            "owner" => "r",
+            "orch" if now.saturating_sub(self.since) > 300 => "a",
+            "none" if self.what.starts_with("idle without") => "a",
+            _ => "m",
+        }
+    }
+}
+
+/// Pure: the issue's wait reason. `head` = the lane worktree's (sha, commit time); `pr` = the (cached) PR view.
+pub fn waiting_on(events: &[Event], s: &IssueState, head: Option<(&str, u64)>, pr: &Value, req: &[String]) -> Waiting {
+    let (f, n) = (&s.fleet, s.issue);
+    let w = |who, what: &str, since, next: Option<String>| Waiting { fleet: f.clone(), issue: n, who, what: what.into(), since, next_cmd: next };
+    let cmd = |verb: &str, tail: &str| Some(format!("herdsman {verb} {f} {n}{tail}"));
+    let mine = |a: &&Event| a.fleet == *f && (a.issue == Some(n) || s.lanes.values().any(|l| a.str("agent") == Some(l)));
+    if let Some(a) = open_asks(events).into_iter().find(mine) {
+        return w("owner", &format!("waiting on your answer ({})", a.str("id").unwrap_or("?")), a.ts, None);
+    }
+    if s.state == "merged" || pr["state"] == "MERGED" {
+        return w("none", "nothing to do (merged): clean me", s.last_ts, None);
+    }
+    let pushed = pr["headRefOid"].as_str().unwrap_or_default();
+    match s.state.split('(').next().unwrap_or_default() {
+        "ready" if gh::ci(&gh::required(&pr["statusCheckRollup"], req)) == "green" => w("orch", "PASS + green, waiting for merge", s.last_ts, cmd("merge", "")),
+        "ready" => w("ci", "waiting for CI", s.last_ts, None),
+        "review" => {
+            let next = Some(format!("herdsman verdict {f} {n} PASS|FAIL --sha {pushed} --file verdict.md"));
+            w("orch", "verdict written, waiting for orch to record it", s.last_ts, next)
+        }
+        "fix" if s.last_event == "verdict" => w("orch", "review FAIL, waiting for orch to start fix round", s.last_ts, cmd("spawn", " impl --supersede")),
+        "impl" | "fix" if !pushed.is_empty() && !s.reviewed(pushed) && head.is_none_or(|h| h.0 == pushed) => {
+            let what = format!("pushed {}{}, waiting for orch to spawn review", if s.rounds > 0 { "fix " } else { "" }, &pushed[..7.min(pushed.len())]);
+            w("orch", &what, head.map_or(s.last_ts, |h| h.1.max(s.last_ts)), cmd("spawn", " rev"))
+        }
+        "impl" | "fix" => w("none", "idle without pushing (check the pane)", s.last_ts, None),
+        st => w("none", &format!("nothing to do ({st})"), s.last_ts, None),
+    }
+}
+
+/// Every spawned issue whose lane herdr does not show `working`; `live` refreshes the PR read, else the cache only.
+pub fn scan(ctx: &Ctx, cfg: &Config, r: &dyn Runner, events: &[Event], agents: &[Value], live: bool) -> Vec<(IssueState, Waiting)> {
+    let mut out = vec![];
+    for s in fold(events).into_values().filter(|s| cfg.fleet.contains_key(&s.fleet)) {
+        let Some(lane) = s.lane.clone() else { continue };
+        if agents.iter().any(|a| a["name"] == lane.as_str() && a["agent_status"] == "working") {
+            continue;
+        }
+        let (f, branch) = (&cfg.fleet[&s.fleet], crate::gate::branch_of(Some(&s), s.issue));
+        let pr = match (s.state.as_str(), live) {
+            ("merged", _) => Value::Null,
+            (_, true) => gh::pr(ctx, r, f, (&s.fleet, s.issue), &branch, ctx.now).unwrap_or_default(),
+            _ => gh::cached_pr(ctx, &s.fleet, s.issue),
+        };
+        let wt = last_spawn(events, &lane).and_then(|e| e.str("worktree")).filter(|_| s.state != "merged");
+        let git = wt.and_then(|wt| ok(r, "git", &["-C", wt, "log", "-1", "--format=%H %ct"]).ok());
+        let head = git.as_deref().and_then(|g| g.trim().split_once(' ')).and_then(|(h, t)| Some((h, t.parse().ok()?)));
+        let w = waiting_on(events, &s, head, &pr, &f.required_checks);
+        out.push((s, w));
+    }
+    out
+}
+
+/// The orch lane's reason: the items waiting on it, if any.
+pub fn orch(waits: &[Waiting], fleet: &str) -> Option<Waiting> {
+    let mine: Vec<_> = waits.iter().filter(|w| w.who == "orch" && w.fleet == fleet).collect();
+    let since = mine.iter().map(|w| w.since).min()?;
+    let what = format!("orch idle with {} items waiting", mine.len());
+    Some(Waiting { fleet: fleet.into(), issue: 0, who: "orch", what, since, next_cmd: None })
+}
