@@ -304,7 +304,7 @@ fn lane_loads_more_from_the_scrollback() {
 fn inputs_are_16px_and_zoom_stays_allowed() {
     let css = include_str!("../assets/serve.css");
     let rule = css.lines().find(|l| l.starts_with(".reply textarea,.pairf input{")).unwrap();
-    assert!(rule.ends_with("font-size:16px}"), "{rule}");
+    assert!(rule.ends_with("font-size:var(--fs-input)}") && css.contains("--fs-input:16px"), "{rule}");
     let (c, _) = lane("zoom");
     let page = String::from_utf8_lossy(&Server::new(&c, &Fake::default(), None).respond("GET / HTTP/1.1\r\n\r\n", T)).into_owned();
     assert!(page.contains("<meta name=viewport") && !page.contains("maximum-scale"));

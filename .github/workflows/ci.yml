@@ -36,3 +36,22 @@ jobs:
           n=$(cat assets/*.js assets/*.css | wc -l)
           echo "assets JS/CSS lines: $n"
           test "$n" -le 1500 || echo "::warning::assets JS/CSS is $n lines, over the 1500 soft budget"
+
+  # #63 gate 2 (docs/ui.md): headless Chrome (preinstalled on ubuntu-latest) audits the demo at 390 px.
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: build
+        run: cargo build --release --locked
+      - name: demo export
+        run: HERDSMAN_HOME=demo FLEET_CONFIG=demo/fleet.toml FLEET_STATE=demo/events.jsonl ./target/release/herdsman serve --export site --demo
+      - name: ui audit at 390 px (8 views)
+        run: scripts/ui-audit.sh site ui-390
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-390
+          path: ui-390/*.png
+          retention-days: 14

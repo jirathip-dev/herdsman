@@ -126,7 +126,7 @@ const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st'), now = $(
 let agent = null, timer = 0, cur = 0, y = 0;
 const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text || '' });
 // #58: controls are bracket text. A select hides behind its short `[opus ▾]` label (the native picker
-// keeps full names); ▲/▼ drop their words; a long menu option ellipsises inside its 28 px line.
+// keeps full names); ▲/▼ drop their words; a choice (ask or menu option) wraps in a span, its full text in title (#63 A).
 const short = o => (o ? o.textContent : '').replace(/^default.*/, 'default').replace(/.*\b(opus|sonnet|haiku)\b.*/, '$1');
 function tidy(root) {
   root.querySelectorAll('select').forEach(s => {
@@ -141,7 +141,7 @@ function tidy(root) {
   root.querySelectorAll('button').forEach(b => {
     const m = b.textContent.match(/^([▲▼]) (up|down)$/);
     if (m) { b.textContent = m[1]; b.setAttribute('aria-label', 'move ' + m[2]); }
-    if (b.matches('.pick') && !b.firstElementChild) b.replaceChildren(el('span', '', b.textContent));
+    if (b.matches('[name=choice], .pick') && !b.title) { const t = el('span'); t.append(...b.childNodes); b.replaceChildren(t); b.title = b.textContent; }
   });
 }
 tidy(document);
@@ -214,7 +214,9 @@ async function cleanable() {
 }
 function open(e) {
   agent = e.dataset.agent;
-  $('.top').innerHTML = '<p><b></b></p>' + e.querySelector('.card').innerHTML;
+  const top = $('.top');
+  top.innerHTML = '<p><b></b></p>' + e.querySelector('.card').innerHTML;
+  top.scrollTop = 0;
   $('.top b').textContent = agent;
   const rev = e.dataset.role === 'rev';
   $('.reply').hidden = !!B.dataset.ro || rev;
@@ -281,17 +283,16 @@ document.addEventListener('click', async e => {
 });
 $('.bd').onclick = close;
 addEventListener('keydown', e => { if (e.key === 'Escape' && !S.hidden) close(); });
-// Drag the handle (or card): up = full height, down = back to 78 %, then closed.
+// Drag the handle: up = full height, down = back to 78 %, then closed (#63 q8: the card scrolls, it no longer drags).
 let y0 = null;
-[$('.grip'), $('.top')].forEach(h => {
-  h.onpointerdown = e => { y0 = e.clientY; };
-  h.onpointerup = e => {
-    const dy = y0 === null ? 0 : e.clientY - y0;
-    y0 = null;
-    if (dy < -40) sh.classList.add('full');
-    else if (dy > 60) sh.classList.contains('full') ? sh.classList.remove('full') : close();
-  };
-});
+const grip = $('.grip');
+grip.onpointerdown = e => { y0 = e.clientY; };
+grip.onpointerup = e => {
+  const dy = y0 === null ? 0 : e.clientY - y0;
+  y0 = null;
+  if (dy < -40) sh.classList.add('full');
+  else if (dy > 60) sh.classList.contains('full') ? sh.classList.remove('full') : close();
+};
 $('.reply').onsubmit = async e => {
   e.preventDefault();
   const r = await fetch(R + 'send', { method: 'POST', body: new URLSearchParams({ agent, text: e.target.text.value }) });

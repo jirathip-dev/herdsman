@@ -1,0 +1,60 @@
+# UI rules (#58, #63)
+
+The phone page (`herdsman serve`) has one look. Two CI gates enforce it; a red gate blocks
+`herdsman merge` (required checks, #24).
+
+## Tokens
+
+The first `:root` block of `assets/serve.css` is the only place a raw px length may appear; `herd.css` uses the same tokens.
+
+| token | value | use |
+|---|---|---|
+| `--fs` | 13px | all text |
+| `--fs-meta` | 11px | secondary text: ages, reasons, captions |
+| `--fs-input` | 16px | inputs, textareas, selects (iOS zooms below 16 px) |
+| `--ctl` | 28px | the visible height of every control, the Herd strip and `[×]` |
+| `--hit` | 44px | the minimum tap area |
+| `--s1` … `--s4` | 4 / 8 / 12 / 16px | margins, paddings, gaps, offsets |
+
+Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, borders and widths stay literal.
+
+## Controls
+
+- **Bracket style:** a control is its lowercase label in the accent colour between `[` and `]`
+  (CSS pseudo-elements), 28 px tall, no fill; inverted while pressed. A select hides behind
+  its `[opus ▾]` label.
+- **Hit area:** the `]` pseudo-element spans an 8 px ring around the control, so the tap area is
+  ≥ 44×44 px. Controls sit 16 px apart so rings never overlap. Rows (queue `summary`, lane rows,
+  horses) are full-width tap rows at least 44 px tall, not 28 px controls.
+- **Choices (the one exception, owner-approved 2026-10-31):** ask and menu options are sentences:
+  full width, wrapping, ≤ 4 lines then an ellipsis (full text in `title`), `[`/`]` on the first
+  line, stacked 8 px apart, the recommended one first with an 11 px `(recommended)`.
+- **Type scale:** text is 13 or 11 px, nothing else; inputs 16 px (iOS zooms below 16 px).
+- **Herd strip:** one 28 px bar on top of each Herd page with `[×]` inside it on the right; the
+  counts share its line or wrap to an 11 px second line in the same bar.
+- Names never wrap vertically (`.nw` cells stay on one line, horse labels clamp at 2 lines);
+  text that does not fit ellipsises. Nothing scrolls sideways at 390 px.
+
+## Gates
+
+1. **Style lint** — `cargo test --test ui_tokens`: a sizing property (`font-size`, `font`,
+   `height`, `min-height`, `line-height`, `margin*`, `padding*`, `gap`, `top/left/right/bottom`,
+   `inset`) with a px value outside the token block, a font size that is not a `--fs` token, a control
+   `height` that is not `--ctl`, or an inline `style=` with px in the rendered page fails (`file:line value`).
+2. **Browser audit** — the `ui` CI job: headless Chrome opens the exported demo at 390×844, DPR 3,
+   on Queue, Queue with a row open, Lanes, a Lanes sheet, Host, Events, Herd page 1 and page 2.
+   `assets/ui-audit.js` (only in the `--demo` export, `?audit=<view>&check=1`) fails on a control
+   not 28 px tall (a choice: over 4 lines), text not 11/13 px (inputs 16), a tap area under 44 px, sideways scroll, a name
+   over 2 lines, text overflowing its box without an ellipsis, or a Herd strip/`[×]` not 28 px.
+   Screenshots are uploaded as the `ui-390` artifact on every run.
+
+Run both locally:
+```sh
+cargo test --test ui_tokens
+cargo build --release && HERDSMAN_HOME=demo FLEET_CONFIG=demo/fleet.toml FLEET_STATE=demo/events.jsonl \
+  ./target/release/herdsman serve --export site --demo && scripts/ui-audit.sh site ui-390
+```
+`scripts/ui-audit.sh` finds `google-chrome`/`chromium`; set `CHROME=<binary>` otherwise.
+
+**Exceptions:** each is listed by name with its reason in `tests/ui_tokens.rs` (`EXCEPTIONS`). **Adding an
+exception needs the owner's OK.**

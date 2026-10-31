@@ -1,67 +1,68 @@
-:root{--bg:#0d1117;--fg:#c9d1d9;--mute:#8b949e;--line:#21262d;--g:#3fb950;--a:#d29922;--r:#f85149;--l:#58a6ff;color-scheme:dark}
+:root{--bg:#0d1117;--fg:#c9d1d9;--mute:#8b949e;--line:#21262d;--g:#3fb950;--a:#d29922;--r:#f85149;--l:#58a6ff;color-scheme:dark;
+  --fs:13px;--fs-meta:11px;--fs-input:16px;--ctl:28px;--hit:44px;--s1:4px;--s2:8px;--s3:12px;--s4:16px}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html,body{overflow-x:hidden;overscroll-behavior-y:contain}
-body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere;padding:0 12px calc(72px + env(safe-area-inset-bottom))}
-header{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;min-height:48px;background:var(--bg);border-bottom:1px solid var(--line)}
+body{margin:0;background:var(--bg);color:var(--fg);font:var(--fs)/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere;padding:0 var(--s3) calc(var(--hit) + var(--ctl) + env(safe-area-inset-bottom))}
+header{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:var(--s2);min-height:calc(var(--hit) + var(--s1));background:var(--bg);border-bottom:1px solid var(--line)}
 header b{flex:1}
 a{color:var(--l)}
 .m{color:var(--mute)}.g{color:var(--g)}.a{color:var(--a)}.r{color:var(--r)}
-h2{font-size:13px;margin:16px 0 4px;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+h2{font-size:var(--fs);margin:var(--s4) 0 var(--s1);display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2)}
 h2>span:first-child{flex:1}
-p{margin:8px 0}
-.tag{border:1px solid currentColor;border-radius:4px;padding:0 4px;font-size:11px}
-.msg{padding:8px;border:1px solid currentColor;border-radius:6px}
+p{margin:var(--s2) 0}
+.tag{border:1px solid currentColor;border-radius:4px;padding:0 var(--s1);font-size:var(--fs-meta)}
+.msg{padding:var(--s2);border:1px solid currentColor;border-radius:6px}
 details,.ev,.kv{border-bottom:1px solid var(--line)}
-summary{display:grid;grid-template-columns:7ch minmax(0,1fr) auto;gap:8px;align-items:center;min-height:44px;cursor:pointer;list-style:none}
+summary{display:grid;grid-template-columns:7ch minmax(0,1fr) auto;gap:var(--s2);align-items:center;min-height:var(--hit);cursor:pointer;list-style:none}
 summary::-webkit-details-marker{display:none}
 summary>span{min-width:0}
-details>p{margin:0 0 8px;padding-left:4px}
+details>p{margin:0 0 var(--s2);padding-left:var(--s1)}
 .lane{border-bottom:1px solid var(--line)}
-.lr{display:grid;grid-template-columns:48px minmax(0,1fr) max-content;gap:0 8px;align-items:center;width:100%;text-align:left;background:none;border:0;border-radius:0;padding:4px 0}
+.lr{display:grid;grid-template-columns:48px minmax(0,1fr) max-content;gap:0 var(--s2);align-items:center;width:100%;text-align:left;background:none;border:0;border-radius:0;padding:var(--s1) 0}
 .lr>span{min-width:0}
 /* #53: grid name/state cells stay on one line; only free text (the reason) wraps, at most 2 lines. */
 .nw{white-space:nowrap;overflow-wrap:normal}.el{overflow:hidden;text-overflow:ellipsis}
-.lr .why{grid-column:2/-1;font-size:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
-h3{font-size:13px;color:var(--mute);margin:12px 0 4px}
-.lane .act{grid-column:1/-1;color:var(--mute);font-size:11px;min-height:1.5em}
+.lr .why{grid-column:2/-1;font-size:var(--fs-meta);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+h3{font-size:var(--fs);color:var(--mute);margin:var(--s3) 0 var(--s1)}
+.lane .act{grid-column:1/-1;color:var(--mute);font-size:var(--fs-meta);min-height:1.5em}
 .roles summary,.done summary,.paused summary{grid-template-columns:1fr}
-form{display:inline-flex;flex-wrap:wrap;align-items:center;gap:16px;margin:0}
-form.role{display:flex;padding:8px 0;border-top:1px solid var(--line)}
-.btns{display:flex;flex-wrap:wrap;gap:16px}
-details.q>form+form{margin-left:16px}
+form{display:inline-flex;flex-wrap:wrap;align-items:center;gap:var(--s4);margin:0}
+form.role{display:flex;padding:var(--s2) 0;border-top:1px solid var(--line)}
+.btns{display:flex;flex-wrap:wrap;gap:var(--s4)}
+details.q>form+form{margin-left:var(--s4)}
 /* #58 amendment B: one terminal-style control. The label in the accent colour inside CSS brackets, 28 px
    visible, no fill (inverted while pressed); the "]" pseudo spans an 8 px ring around it, the 44 px tap
    target. Controls sit 16 px apart so rings never overlap. A select hides behind its `[opus ▾]` label. */
 button{font:inherit;color:var(--fg)}
-button:not(.lr,.hh,.hqh),.pk{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;height:28px;min-width:28px;max-width:100%;
-  margin:0;padding:0 1ch;border:0;border-radius:0;background:none;color:var(--l);font:inherit;font-size:13px;font-weight:400;line-height:1;white-space:nowrap;text-transform:lowercase}
+button:not(.lr,.hh,.hqh),.pk{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;height:var(--ctl);min-width:28px;max-width:100%;
+  margin:0;padding:0 1ch;border:0;border-radius:0;background:none;color:var(--l);font:inherit;font-size:var(--fs);font-weight:400;line-height:1;white-space:nowrap;text-transform:lowercase}
 button:not(.lr,.hh,.hqh)::before,.pk::before{content:"[";position:absolute;left:0}
-button:not(.lr,.hh,.hqh)::after,.pk::after{content:"]";position:absolute;inset:-8px;display:flex;align-items:center;justify-content:flex-end;padding-right:8px}
+button:not(.lr,.hh,.hqh)::after,.pk::after{content:"]";position:absolute;inset:calc(-1 * var(--s2));display:flex;align-items:center;justify-content:flex-end;padding-right:var(--s2)}
 button:not(.lr,.hh,.hqh):active,.pk:active{background:var(--l);color:var(--bg)}
 button:disabled,.pk:has(:disabled){color:var(--mute);opacity:.6}
 .pk::after{pointer-events:none}
-.pk select{position:absolute;inset:-8px;width:calc(100% + 16px);opacity:0;font-size:16px}
+.pk select{position:absolute;inset:calc(-1 * var(--s2));width:calc(100% + 16px);opacity:0;font-size:var(--fs-input)}
 .pick{flex:0 1 auto;min-width:0;text-transform:none}.pick span{overflow:hidden;text-overflow:ellipsis}
-input,textarea{font-size:16px}
-.ev,.kv{padding:8px 0}
+input,textarea{font-size:var(--fs-input)}
+.ev,.kv{padding:var(--s2) 0}
 nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--bg);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
-nav a{flex:1;text-align:center;line-height:52px;color:var(--mute);text-decoration:none}
+nav a{flex:1;text-align:center;line-height:calc(var(--hit) + var(--s2));color:var(--mute);text-decoration:none}
 nav a.on{color:var(--fg);box-shadow:inset 0 2px var(--g)}
-#stale{color:var(--r);font-size:11px}
-.tl{grid-column:1/-1;margin-top:-4px;color:var(--mute);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#stale{color:var(--r);font-size:var(--fs-meta)}
+.tl{grid-column:1/-1;margin-top:calc(-1 * var(--s1));color:var(--mute);font-size:var(--fs-meta);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lh{text-align:right}
-#dot{width:8px;height:8px;border-radius:50%;background:currentColor;font-style:normal;flex:none}
+#dot{width:8px;height:var(--s2);border-radius:50%;background:currentColor;font-style:normal;flex:none}
 #dot.p{animation:p .6s}
 @keyframes p{50%{transform:scale(1.9)}}
-#rf,#herd-on{width:40px}#herd-on{margin-left:8px}#herd-on svg{width:19px;height:14px}
+#rf,#herd-on{width:40px}#herd-on{margin-left:var(--s2)}#herd-on svg{width:19px;height:14px}
 #rf i,#ptr{font-style:normal}#rf.spin i,#ptr.spin{display:inline-block;animation:s 1s linear infinite}
 @keyframes s{to{transform:rotate(1turn)}}
-#ptr{position:fixed;top:56px;left:calc(50% - 8px);z-index:1}
+#ptr{position:fixed;top:calc(var(--hit) + var(--s3));left:calc(50% - var(--s2));z-index:1}
 main{transition:transform .2s}
 .fl{animation:fl .6s}
 @keyframes fl{from{background:color-mix(in srgb,var(--l) 25%,transparent)}}
-.ask pre{white-space:pre-wrap;font-size:11px;margin:4px 0}
+.ask pre{white-space:pre-wrap;font-size:var(--fs-meta);margin:var(--s1) 0}
 @media (prefers-reduced-motion:reduce){#dot.p,#rf.spin i,#ptr.spin,.fl{animation:none}}
 .av{display:flex;align-items:center;justify-content:center;width:48px;height:40px;overflow:hidden}
 .av>*{display:none}
@@ -84,36 +85,45 @@ main{transition:transform .2s}
 @media (prefers-reduced-motion:reduce){.run b,.av .px{animation:none!important}.run b:last-child{visibility:hidden}}
 #sheet{position:fixed;inset:0;z-index:3}
 .bd{position:absolute;inset:0;background:#000a}
-.sh{position:absolute;left:0;right:0;bottom:0;height:78vh;height:78dvh;max-height:100%;display:flex;flex-direction:column;background:var(--bg);border-top:1px solid #30363d;border-radius:14px 14px 0 0;padding:0 12px env(safe-area-inset-bottom);transition:height .2s}
+.sh{position:absolute;left:0;right:0;bottom:0;height:78vh;height:78dvh;max-height:100%;display:flex;flex-direction:column;background:var(--bg);border-top:1px solid #30363d;border-radius:14px 14px 0 0;padding:0 var(--s3) env(safe-area-inset-bottom);transition:height .2s}
 .sh.full{height:100vh;height:100dvh;border-radius:0}
-.grip{flex:none;height:24px;touch-action:none;cursor:grab}
-.grip::after{content:"";display:block;width:40px;height:4px;margin:12px auto 8px;border-radius:3px;background:#30363d}
-.top{flex:none;touch-action:none;border-bottom:1px solid var(--line);padding-bottom:8px}
-.top p{margin:4px 0}
-.chat{flex:1;overflow:hidden auto;display:flex;flex-direction:column;gap:8px;padding:8px 0}
-.b{margin:0;padding:4px 8px;border-radius:10px;background:#161b22;white-space:pre-wrap;font-size:11px;max-width:92%}
+.grip{flex:none;height:calc(2 * var(--s3));touch-action:none;cursor:grab}
+.grip::after{content:"";display:block;width:40px;height:var(--s1);margin:var(--s3) auto var(--s2);border-radius:3px;background:#30363d}
+/* #63 q8: the card takes at most 40 % of the sheet and scrolls inside; dragging is the grip's alone. */
+.top{flex:none;max-height:40%;overflow:hidden auto;overscroll-behavior:contain;touch-action:pan-y;border-bottom:1px solid var(--line);padding-bottom:var(--s2)}
+.top p{margin:var(--s1) 0}
+.chat{flex:1;overflow:hidden auto;display:flex;flex-direction:column;gap:var(--s2);padding:var(--s2) 0}
+.b{margin:0;padding:var(--s1) var(--s2);border-radius:10px;background:#161b22;white-space:pre-wrap;font-size:var(--fs-meta);max-width:92%}
 .b.me{align-self:flex-end;background:#1f3a5f}
-.reply,.pairf{display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:8px 0;flex:none}
-.reply textarea,.pairf input{flex:1;min-width:0;font:inherit;color:var(--fg);background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px;min-height:44px;resize:none;font-size:16px}
-.pairf p{flex-basis:100%;margin:0;font-size:11px}
-.st{flex:none;margin:0;font-size:11px;min-height:1.5em}
-.ask{border:1px solid var(--r);background:color-mix(in srgb,var(--r) 15%,transparent);border-radius:8px;padding:8px;margin:8px 0}
-.ask b{color:var(--r)}.ask form{display:flex;flex-wrap:wrap;gap:16px}.ask input[name=text]{flex:1;min-width:8em;font:inherit;font-size:16px}
+.reply,.pairf{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s4);padding:var(--s2) 0;flex:none}
+.reply textarea,.pairf input{flex:1;min-width:0;font:inherit;color:var(--fg);background:#161b22;border:1px solid #30363d;border-radius:6px;padding:var(--s2);min-height:var(--hit);resize:none;font-size:var(--fs-input)}
+.pairf p{flex-basis:100%;margin:0;font-size:var(--fs-meta)}
+.st{flex:none;margin:0;font-size:var(--fs-meta);min-height:1.5em}
+.ask{border:1px solid var(--r);background:color-mix(in srgb,var(--r) 15%,transparent);border-radius:8px;padding:var(--s2);margin:var(--s2) 0}
+.ask b{color:var(--r)}.ask form{display:flex;flex-wrap:wrap;gap:var(--s4)}.ask input[name=text]{flex:1;min-width:8em;font:inherit;font-size:var(--fs-input)}
 .ask form button[name]{order:-1}
-.ask>button{display:flex;width:fit-content;margin:16px 0}
+.ask>button{display:flex;width:fit-content;margin:var(--s4) 0}
+/* #63 amendment A, the one exception to the 28 px rule: a choice is a sentence, not a label. Full width, wrapping,
+   at most 4 lines (then an ellipsis; the full text is its title), the brackets on the first line, stacked 8 px apart. */
+.ask form:has([name=choice]){row-gap:var(--s2)}.ask .pick+.pick{margin-top:var(--s2)}
+.ask button[name=choice],.ask .pick{display:flex;width:100%;height:auto;min-height:var(--ctl);margin:0;padding:calc((var(--ctl) - 1.35em) / 2) 1ch;
+  justify-content:flex-start;align-items:flex-start;text-align:left;white-space:normal;overflow-wrap:anywhere;line-height:1.35}
+.ask button[name=choice]::after,.ask .pick::after{inset:calc(-1 * var(--s1)) calc(-1 * var(--s2));align-items:flex-start;padding-top:calc(var(--s1) + (var(--ctl) - 1.35em) / 2)}
+.ask button[name=choice]>span,.ask .pick>span{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.ask small{font-size:var(--fs-meta)}
 /* #43: sheet actions, kill/clean confirm, `/` menu, per-turn transcript, tool calls collapsed; the page locked under the sheet. */
 .lock,.lock body{overflow:hidden;overscroll-behavior:none}
 .lock body{position:fixed;left:0;right:0}
-.acts,.cf{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:8px 0}
+.acts,.cf{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:var(--s4);padding:var(--s2) 0}
 .acts [data-op=kill],.cf .yes{color:var(--r)}
-.cf{border:1px solid var(--r);border-radius:8px;padding:8px}.cf p{flex-basis:100%;margin:0;font-size:11px}
+.cf{border:1px solid var(--r);border-radius:8px;padding:var(--s2)}.cf p{flex-basis:100%;margin:0;font-size:var(--fs-meta)}
 .cmds{flex:none;list-style:none;margin:0;padding:0;border:1px solid #30363d;border-radius:6px}
-.cmds li{padding:12px;min-height:44px;border-bottom:1px solid var(--line);cursor:pointer}
-.turn{display:flex;flex-direction:column;gap:4px}
-.tool{border:0;font-size:11px}.tool summary{display:block;min-height:0;padding:4px 8px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmds li{padding:var(--s3);min-height:var(--hit);border-bottom:1px solid var(--line);cursor:pointer}
+.turn{display:flex;flex-direction:column;gap:var(--s1)}
+.tool{border:0;font-size:var(--fs-meta)}.tool summary{display:block;min-height:0;padding:var(--s2);line-height:var(--ctl);color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tool summary::before{content:"▸ "}.tool[open] summary::before{content:"▾ "}
-.tool pre{margin:0;padding:0 8px 4px;white-space:pre-wrap;color:var(--mute)}
+.tool pre{margin:0;padding:0 var(--s2) var(--s1);white-space:pre-wrap;color:var(--mute)}
 .more{align-self:center}
-.unp{margin:auto;padding:12px;text-align:center;border:1px solid var(--a);border-radius:8px;color:var(--a)}
+.unp{margin:auto;padding:var(--s3);text-align:center;border:1px solid var(--a);border-radius:8px;color:var(--a)}
 #dot.demo{color:var(--l)}
 [inert]{opacity:.6}

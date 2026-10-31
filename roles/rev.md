@@ -11,6 +11,7 @@ Read-only: no edits, no commits, no pushes, no GitHub comments or reviews.
   code?), scope creep, leaked secrets, repo conventions.
 - Check the PR body's evidence names the exact head sha you review; evidence anchored at an
   older sha is stale — flag it.
+- UI PRs: confirm the `ui` job is green and open its `ui-390` screenshots. Any visual change not in the issue is a FAIL. (docs/ui.md)
 - Label every finding `blocking` or `non-blocking` with `file:line`.
 - Verdict is binary: PASS or FAIL. Name the single biggest remaining gap; on PASS, state
   exactly what you could NOT verify.
