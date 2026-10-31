@@ -203,7 +203,7 @@ B.insertAdjacentHTML('beforeend', `<div id=sheet hidden><div class=bd></div><div
 <p class=st></p></div></div>`);
 if (DEMO) sync();
 const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st'), now = $('.now'), old = $('.old'), more = $('.more');
-let agent = null, timer = 0, cur = 0, y = 0;
+let agent = null, timer = 0, cur = 0, y = 0, nopane = false;
 // The Lanes row of `agent` (its sheet card), from the needs-you cards and the herd.
 const laneOf = agent => [...$$('.lane')].find(l => l.dataset.agent === agent);
 const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text || '' });
@@ -247,6 +247,8 @@ const render = turns => turns.map(t => {
 });
 const lane = q => fetch(DEMO ? 'lane/' + encodeURIComponent(agent) + '.json' : R + 'lane?agent=' + encodeURIComponent(agent) + '&lines=200' + q);
 async function poll() {
+  // #83: a lane with no pane has no transcript to read.
+  if (nopane) return now.replaceChildren(el('p', 'm', 'no pane: the transcript closed with it'));
   try {
     const r = await lane('');
     // Unpaired (401): say so, with the Pair button; never a silent one-liner.
@@ -273,7 +275,8 @@ more.onclick = async () => {
   more.hidden = !j.more;
   chat.scrollTop += chat.scrollHeight - h;
 };
-function say(msg, ok) { st.textContent = msg; st.className = 'st ' + (ok ? 'g' : 'r'); }
+// `ok` null: a neutral note, e.g. why a control is disabled (#83).
+function say(msg, ok) { st.textContent = msg; st.className = 'st ' + (ok == null ? 'm' : ok ? 'g' : 'r'); }
 // Stop/Kill/Clean call `/act`; kill and clean dry-run first (kill shows what is lost, clean why it is unsafe).
 const act = (op, confirm) => post('act', { agent, op, confirm: confirm ? '1' : '' });
 async function run(op) {
@@ -297,7 +300,7 @@ async function cleanable() {
   const b = $('[data-op=clean]'), r = await act('clean', false), msg = (await r.text()).trim();
   b.disabled = !r.ok;
   b.title = r.ok ? '' : msg;
-  if (!r.ok && r.status !== 401 && !st.textContent) say('clean: ' + msg.split(': ').pop(), false);
+  if (!r.ok && r.status !== 401 && !st.textContent) say('clean: ' + msg.split(': ').pop(), null);
 }
 function open(e) {
   agent = e.dataset.agent;
@@ -308,6 +311,9 @@ function open(e) {
   const rev = e.dataset.role === 'rev';
   $('.reply').hidden = !!B.dataset.ro || rev;
   $('.acts').hidden = !!B.dataset.ro;
+  // #83: a lane with no pane has nothing to stop or kill.
+  nopane = 'gone' in e.dataset;
+  $$('[data-op=stop], [data-op=kill]').forEach(b => b.hidden = nopane);
   $$('.pairf, .cf, .cmds').forEach(x => x.hidden = true);
   now.replaceChildren();
   old.replaceChildren();

@@ -288,9 +288,9 @@ fn lanes_group_by_fleet_with_others() {
         {"agent": "dsh-tui", "agent_status": "blocked", "pane_id": "w5:p1", "cwd": "/p/synergy-apps", "workspace_id": "w5"},
     ]);
     let ws = [("w4".to_string(), "side-project".to_string())].into();
-    let lanes = herdsman::lanes::join(&cfg, &c.worktrees, &events, &st, agents.as_array().unwrap(), &ws);
+    let lanes = herdsman::lanes::join(&cfg, &Fake::default(), &c.worktrees, &events, &st, agents.as_array().unwrap(), &ws);
     let got: Vec<(Option<&str>, &str, &str, &str, bool)> =
-        lanes.iter().map(|l| (l.fleet.as_deref(), l.name.as_str(), l.role.as_str(), l.state.as_str(), l.mismatch)).collect();
+        lanes.iter().map(|l| (l.fleet.as_deref(), l.name.as_str(), l.role.as_str(), l.state.as_str(), l.parked.is_some())).collect();
     assert_eq!(
         got,
         [
@@ -301,8 +301,8 @@ fn lanes_group_by_fleet_with_others() {
             (None, "side-project", "other", "idle", false),
             // Unnamed dsh-TUI agent: matched to its lane by pane.
             (Some("synergy"), "synergy-impl-7", "impl", "blocked", false),
-            // The log has rev #9 open; herdr has no pane for it.
-            (Some("sendmeter"), "sendmeter-rev-9-r1", "rev", "dead", true),
+            // The log has rev #9 open; herdr has no pane for it, and no clean worktree: dead, not parked.
+            (Some("sendmeter"), "sendmeter-rev-9-r1", "rev", "dead", false),
         ]
     );
     assert_eq!((lanes[1].model.as_deref(), lanes[1].effort.as_deref(), lanes[1].issue), (Some("opus"), Some("high"), Some(12)));

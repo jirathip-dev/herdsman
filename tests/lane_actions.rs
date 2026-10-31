@@ -208,7 +208,12 @@ fn clean_lane_refuses_unsafe_lanes() {
     let r = git(&wt, "", "0\n", "").reply("herdr agent list", NO_AGENTS);
     let clean = |r: &Fake| run(&c, r, &["clean", "sendmeter", "--lane", LANE]);
     let (code, out) = clean(&r);
-    assert!(code == 3 && out.contains("REFUSED UNSAFE_CLEAN: sendmeter-impl-12: not merged"), "{out}");
+    assert!(code == 3 && out.contains("REFUSED UNSAFE_CLEAN: sendmeter-impl-12: only after merge"), "{out}");
+    // #83: an open PR is named, so the sheet's disabled [clean] says why without a tap.
+    let cache = c.state.parent().unwrap().join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::write(cache.join("pr-sendmeter-12.json"), json!({"ts": 1, "pr": {"number": 42, "state": "OPEN"}}).to_string()).unwrap();
+    assert!(clean(&r).1.contains("UNSAFE_CLEAN: sendmeter-impl-12: only after merge (PR #42 open)"));
     append(&c.state, &Event::new(T, "sendmeter", Some(12), "merged", json!({}))).unwrap();
     let live = git(&wt, "", "0\n", "").reply("herdr agent list", &agents(&[(LANE, "idle", "/x", "w1:p2")]));
     assert!(clean(&live).1.contains("UNSAFE_CLEAN: sendmeter-impl-12: live agent"));

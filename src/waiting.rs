@@ -104,7 +104,13 @@ pub fn scan(ctx: &Ctx, cfg: &Config, r: &dyn Runner, events: &[Event], agents: &
         let path = spawn.and_then(|e| e.str("worktree")).map(|wt| format!("{wt}/verdict.md"));
         let fresh = |p: &String| std::fs::metadata(p).and_then(|m| m.modified()).is_ok_and(|t| t > std::time::UNIX_EPOCH + std::time::Duration::from_secs(spawn.map_or(0, |e| e.ts)));
         let word = path.as_ref().filter(|p| fresh(p)).and_then(|p| std::fs::read_to_string(p).ok()).map(|v| v.lines().next().unwrap_or_default().trim().to_string());
-        let w = waiting_on(events, &s, head, &pr, &f.required_checks, path.as_deref().zip(word.as_deref()));
+        let mut w = waiting_on(events, &s, head, &pr, &f.required_checks, path.as_deref().zip(word.as_deref()));
+        // #83: a paused fleet's lane with no pane and a clean, pushed worktree is parked until `resume`.
+        let safe = || wt.is_some_and(|wt| crate::spawn::dirty(r, std::path::Path::new(wt)).is_none());
+        if f.paused && !agents.iter().any(|a| a["name"] == lane.as_str() && a["agent_status"] != "parked") && safe() {
+            let pr = pr["number"].as_u64().map_or(String::new(), |p| format!(" (resume to review PR #{p})"));
+            (w.who, w.what, w.next_cmd) = ("none", format!("parked: fleet paused{pr}"), None);
+        }
         out.extend(s.lanes.values().filter(|l| **l != lane && !busy(l)).map(|l| (s.clone(), Waiting { lane: l.clone(), ..w.clone() })));
         out.push((s, w));
     }

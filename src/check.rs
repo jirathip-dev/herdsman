@@ -39,7 +39,10 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
             let unnamed = |a: &&serde_json::Value| a["name"].as_str().is_none_or(str::is_empty) && a["pane_id"].as_str() == pane;
             let agent = agents.iter().find(|a| a["name"] == lane).or_else(|| agents.iter().find(unnamed));
             let status = agent.map(|a| a["agent_status"].as_str().unwrap_or("unknown"));
-            let key = format!("{}:{lane}", s.last_ts);
+            // #83: a gone lane with a clean, pushed worktree is parked: one `lane-dead`, never a stall.
+            let wt = spawned.and_then(|e| e.str("worktree"));
+            let parked = status.is_none() && wt.is_some_and(|wt| dirty(r, Path::new(wt)).is_none());
+            let key = if parked { format!("parked:{lane}") } else { format!("{}:{lane}", s.last_ts) };
             if status.is_none() {
                 hits.push(("lane-dead", key.clone(), format!("{role} lane {lane} is gone ({})", s.state)));
             }
@@ -53,7 +56,7 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
                     capped = Some(name);
                 }
             }
-            if idle > stall && status != Some("working") {
+            if idle > stall && status != Some("working") && !parked {
                 let st = status.unwrap_or("gone");
                 hits.push(("stall", key, format!("no event for {} in {}; {role} lane {lane} is {st}", age(idle), s.state)));
             }
@@ -183,7 +186,8 @@ pub fn clean(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
         } else if closed_issues(ctx, cfg, r, out, &mut closed, &e.fleet).contains(&n) {
             "issue closed"
         } else if lane.is_some() {
-            return unsafe_lane("not merged");
+            let p = Some(gh::cached_pr(ctx, &e.fleet, n)).filter(|p| p["state"] == "OPEN").map(|p| p["number"].clone());
+            return unsafe_lane(&p.map_or("only after merge".into(), |n| format!("only after merge (PR #{n} open)")));
         } else {
             continue;
         };

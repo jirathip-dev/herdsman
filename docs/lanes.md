@@ -62,7 +62,8 @@ read-only: no edits except `verdict.md`, no `git commit|push|merge|rebase|reset`
 
 ## Check and notifiers
 
-`herdsman check` alerts once per state on `stall`, `lane-dead`, `ready-unmerged` and
+`herdsman check` alerts once per state on `stall`, `lane-dead` (a parked lane, clean and pushed with no
+pane, gets one `lane-dead` and never a `stall`), `ready-unmerged` and
 `account-capped`. It is idempotent and exits 0, so it can run from cron:
 
 ```cron
