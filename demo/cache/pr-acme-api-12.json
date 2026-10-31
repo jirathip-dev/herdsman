@@ -1,0 +1,1 @@
+{"ts": 1793429488, "pr": {"number": 31, "title": "Health endpoint reports the DB pool", "state": "OPEN", "baseRefName": "staging", "headRefOid": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "mergeable": "MERGEABLE", "statusCheckRollup": [{"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}]}}

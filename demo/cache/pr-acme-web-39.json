@@ -1,0 +1,1 @@
+{"ts": 1793429488, "pr": {"number": 55, "title": "Footer links open in the same tab", "state": "OPEN", "baseRefName": "staging", "headRefOid": "2727272727272727272727272727272727272727", "mergeable": "MERGEABLE", "statusCheckRollup": [{"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}]}}

@@ -4,6 +4,9 @@
 const B = document.body, $ = s => document.querySelector(s), $$ = s => document.querySelectorAll(s);
 const get = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const put = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+// URLs hang off R (`/` live, `` relative in a `serve --export`). #39 demo: static files, never a POST, never `/live`.
+const R = B.dataset.root ?? '/', DEMO = !!B.dataset.demo;
+if (DEMO) { const f = fetch; window.fetch = (u, o) => o && o.method === 'POST' ? Promise.reject(new Error('demo: no writes')) : f(u, o); }
 function tab(t) {
   $$('main>section').forEach(s => s.hidden = s.id !== t);
   $$('nav a').forEach(a => a.classList.toggle('on', a.hash === '#' + t));
@@ -23,11 +26,13 @@ document.addEventListener('click', e => { if (e.target.id === 'mode') mode(MODES
 const dot = $('#dot'), rf = $('#rf');
 let last = Number(B.dataset.ts) * 1000, es = null, down = Date.now(), tries = 0, poller = 0, busy = false;
 function sync(s) {
+  if (DEMO) s = 'demo';
   dot.className = s;
   rf.classList.toggle('spin', s === 'a' || busy);
   $('#stale').hidden = s !== 'r';
   $('#stale').textContent = 'last update ' + new Date(last).toTimeString().slice(0, 5);
-  $$('form button, form select, .ask button').forEach(b => b.disabled = s === 'r');
+  $$('form button, form select, .ask button').forEach(b => b.disabled = s === 'r' || DEMO);
+  if (DEMO) $$('input, textarea, .acts button').forEach(b => b.disabled = true);
 }
 function pulse() { dot.classList.remove('p'); void dot.offsetWidth; dot.classList.add('p'); }
 const live = () => es && es.readyState === 1;
@@ -62,17 +67,18 @@ document.addEventListener('click', async e => {
     const key = Uint8Array.from(atob(b.dataset.key.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
     const reg = await navigator.serviceWorker.ready;
     const s = (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key })).toJSON();
-    const r = await fetch('/push/subscribe', { method: 'POST', body: new URLSearchParams({ endpoint: s.endpoint, p256dh: s.keys.p256dh, auth: s.keys.auth }) });
+    const r = await fetch(R + 'push/subscribe', { method: 'POST', body: new URLSearchParams({ endpoint: s.endpoint, p256dh: s.keys.p256dh, auth: s.keys.auth }) });
     b.textContent = (await r.text()).trim();
     if (r.ok) refresh();
   } catch (err) { b.textContent = 'alerts failed: ' + err.message; }
 });
 // Network only (the SW passes `?frag=all` through); spins ↻ until done.
 async function refresh() {
+  if (DEMO) return herdPull();
   busy = true;
   sync('a');
   try {
-    const j = await (await fetch('/?frag=all', { cache: 'no-store' })).json();
+    const j = await (await fetch(R + '?frag=all', { cache: 'no-store' })).json();
     for (const id in j) frag(id, j[id]);
     herdPull();
     busy = false;
@@ -82,6 +88,7 @@ async function refresh() {
 }
 // Backoff 1, 2, 5, 10 s; after 30 s down, poll `?frag=all` every 10 s until SSE is back.
 function connect() {
+  if (DEMO) return;
   if (es) es.close();
   try { es = new EventSource('live'); } catch (e) { es = null; return sync('r'); }
   es.onopen = () => { if (down) refresh(); down = 0; tries = 0; clearInterval(poller); poller = 0; sync('g'); };
@@ -112,6 +119,7 @@ B.insertAdjacentHTML('beforeend', `<div id=sheet hidden><div class=bd></div><div
 <ul class=cmds hidden></ul>
 <form class=reply><textarea name=text rows=1 maxlength=2000 placeholder="Message, or / for commands" aria-label=message></textarea><button>Send</button></form>
 <p class=st></p></div></div>`);
+if (DEMO) sync();
 const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st'), now = $('.now'), old = $('.old'), more = $('.more');
 let agent = null, timer = 0, cur = 0, y = 0;
 const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text || '' });
@@ -128,7 +136,7 @@ const render = turns => turns.map(t => {
   }
   return d;
 });
-const lane = q => fetch('/lane?agent=' + encodeURIComponent(agent) + '&lines=200' + q);
+const lane = q => fetch(DEMO ? 'lane/' + encodeURIComponent(agent) + '.json' : R + 'lane?agent=' + encodeURIComponent(agent) + '&lines=200' + q);
 async function poll() {
   try {
     const r = await lane('');
@@ -158,7 +166,7 @@ more.onclick = async () => {
 };
 function say(msg, ok) { st.textContent = msg; st.className = 'st ' + (ok ? 'g' : 'r'); }
 // Stop/Kill/Clean call `/act`; kill and clean dry-run first (kill shows what is lost, clean why it is unsafe).
-const act = (op, confirm) => fetch('/act', { method: 'POST', body: new URLSearchParams({ agent, op, confirm: confirm ? '1' : '' }) });
+const act = (op, confirm) => fetch(R + 'act', { method: 'POST', body: new URLSearchParams({ agent, op, confirm: confirm ? '1' : '' }) });
 async function run(op) {
   const r = await act(op, op === 'stop'), msg = (await r.text()).trim();
   if (r.status === 401) $('.pairf').hidden = false;
@@ -200,7 +208,7 @@ function open(e) {
   S.hidden = false;
   fit();
   poll();
-  if (!B.dataset.ro) cleanable();
+  if (!B.dataset.ro && !DEMO) cleanable();
   timer = setInterval(poll, 5000);
 }
 function close() {
@@ -239,7 +247,7 @@ document.addEventListener('click', async e => {
   const a = b.closest('.ask'), lane = [...$$('.lane')].find(l => l.dataset.agent === a.dataset.ask);
   if (b.classList.contains('rp')) return lane && open(lane);
   // `h` names the menu this card shows: the server refuses a tap on a menu that has since changed.
-  const r = await fetch('/answer', { method: 'POST', body: new URLSearchParams({ agent: a.dataset.ask, choice: b.value, h: b.dataset.h }) });
+  const r = await fetch(R + 'answer', { method: 'POST', body: new URLSearchParams({ agent: a.dataset.ask, choice: b.value, h: b.dataset.h }) });
   const msg = (await r.text()).trim();
   // Re-render (fresh pane read) so stale buttons go at once; the message lands on the new card.
   await refresh();
@@ -263,7 +271,7 @@ let y0 = null;
 });
 $('.reply').onsubmit = async e => {
   e.preventDefault();
-  const r = await fetch('/send', { method: 'POST', body: new URLSearchParams({ agent, text: e.target.text.value }) });
+  const r = await fetch(R + 'send', { method: 'POST', body: new URLSearchParams({ agent, text: e.target.text.value }) });
   const msg = (await r.text()).trim();
   if (r.status === 401) $('.pairf').hidden = false;
   say(msg, r.ok);
@@ -271,7 +279,7 @@ $('.reply').onsubmit = async e => {
 };
 $('.pairf').onsubmit = async e => {
   e.preventDefault();
-  const r = await fetch('/pair', { method: 'POST', body: new URLSearchParams({ code: e.target.code.value }) });
+  const r = await fetch(R + 'pair', { method: 'POST', body: new URLSearchParams({ code: e.target.code.value }) });
   say((await r.text()).trim(), r.ok);
   e.target.code.value = '';
   if (r.ok) { e.target.hidden = true; poll(); if (ta.value.trim()) $('.reply').requestSubmit(); }

@@ -160,6 +160,12 @@ enum Cmd {
         /// GET only: no buttons, every POST is 405
         #[arg(long)]
         read_only: bool,
+        /// Write the page as static files into this dir instead of serving (docs/serve.md)
+        #[arg(long)]
+        export: Option<std::path::PathBuf>,
+        /// With --export: the inert demo, its herdr/gh/host reads canned in runner.json next to fleet.toml
+        #[arg(long, requires = "export")]
+        demo: bool,
     },
     /// Web push to the page's subscribed devices
     Push {
@@ -397,6 +403,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
         }
         Cmd::Asks { fleet, json } => crate::asks(ctx, out, fleet.as_deref(), json)?,
         Cmd::Serve { cmd: Some(ServeCmd::Pair), .. } => writeln!(out, "pairing code {} (5 min, one use)", devices::new_code(ctx)?)?,
+        Cmd::Serve { export: Some(dir), demo, .. } => serve::export(ctx, r, &dir, demo)?,
         Cmd::Serve { addr, read_only, .. } => serve::serve(ctx, r, &addr, read_only)?,
         Cmd::Push { cmd: PushCmd::Test } => {
             let cfg = Config::load(&ctx.config)?;

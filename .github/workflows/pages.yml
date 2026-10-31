@@ -1,0 +1,39 @@
+name: pages
+# #39: the public demo (synthetic data in demo/) at https://jirathip-dev.github.io/herdsman/ on every staging push.
+on:
+  push:
+    branches: [staging]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      HERDSMAN_HOME: ${{ github.workspace }}/demo
+      FLEET_CONFIG: ${{ github.workspace }}/demo/fleet.toml
+      FLEET_STATE: ${{ github.workspace }}/demo/events.jsonl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: build
+        run: cargo build --release --locked
+      - name: export the demo
+        run: ./target/release/herdsman serve --export site --demo
+      - name: leak gate (no ts.net hostname, chat ID or /Users/ path)
+        run: "! grep -rnE '[A-Za-z0-9-]\\.ts\\.net|telegram:-?[0-9]|/Users/' demo/ site/"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

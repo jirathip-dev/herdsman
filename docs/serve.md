@@ -147,3 +147,22 @@ logged, printed or served; the page gets only the public key and each device's l
 Dependencies: the allowed crates are clap, serde, serde_json, toml and anyhow/thiserror, plus, for web
 push only, the pure-Rust RustCrypto set p256, aes-gcm, hkdf, sha2 and base64 (no async, no HTTP
 client). CI's deps gate fails on any other direct dependency.
+
+## Static export and the public demo
+
+`herdsman serve --export <dir>` writes the page as static files instead of serving it: `index.html`,
+`herd.json`, `manifest.webmanifest`, `sw.js` and the icons, rendered by the same code as the live page.
+Every URL in them is relative and the service worker keys its paths and cache on its registration scope,
+so the files work under a sub-path (the live server at `/` behaves as before). A plain export is the
+read-only view, without pane text or transcripts.
+
+`--demo` (#39) is the public demo at <https://jirathip-dev.github.io/herdsman/>, built from the synthetic
+`demo/` (3 made-up repos, `fleet.toml`, `events.jsonl`, `cache/` for issue/PR titles and CI, and
+`runner.json`: the canned `herdr agent list`, pane text and host values by command-line prefix). Nothing
+runs: no herdr, no gh, no network. "Now" is a minute after the log's last event, so ages never go stale.
+The page carries a `demo` badge and a one-line note; every form is `inert` and every button, select and
+the reply box disabled; no POST is ever sent, there is no `/live` stream (the dot is a static blue), no
+pairing and no "Enable alerts". The sheet's transcript reads `lane/<agent>.json`, Herd reads the static
+`herd.json`, and a calm / gusty / storm / fog switcher sets the weather client-side.
+`.github/workflows/pages.yml` publishes it on every push to `staging`; CI exports it too and runs the
+leak gate over `docs/`, `demo/` and the export.

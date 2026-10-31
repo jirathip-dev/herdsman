@@ -1,0 +1,53 @@
+# Synthetic demo fleet for `herdsman serve --export site --demo` (#39). Nothing here is real.
+models = ["opus", "sonnet"]
+
+[limits]
+stall_minutes = 240
+
+[fleet.acme-web]
+repo = "acme-example/acme-web"
+local = "/srv/acme/acme-web"
+integration = "staging"
+
+[fleet.acme-web.role.orch]
+harness = "claude"
+model = "sonnet"
+
+[fleet.acme-web.role.impl]
+harness = "claude"
+model = "opus"
+effort = "xhigh"
+
+[fleet.acme-web.role.rev]
+harness = "hermes"
+profile = "fleet-rev"
+
+[fleet.acme-api]
+repo = "acme-example/acme-api"
+local = "/srv/acme/acme-api"
+integration = "staging"
+
+[fleet.acme-api.role.orch]
+harness = "claude"
+model = "sonnet"
+
+[fleet.acme-api.role.impl]
+harness = "dsh"
+
+[fleet.acme-api.role.rev]
+harness = "claude"
+model = "opus"
+
+[fleet.docs]
+repo = "acme-example/docs"
+local = "/srv/acme/docs"
+integration = "staging"
+
+[fleet.docs.role.orch]
+harness = "hermes"
+profile = "fleet-orch"
+
+[fleet.docs.role.impl]
+harness = "claude"
+model = "sonnet"
+effort = "high"

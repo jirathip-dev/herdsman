@@ -90,6 +90,8 @@ pub struct Server<'a> {
     clients: Clients,
     kick: Arc<AtomicBool>,
     watch: RefCell<Watch>,
+    /// `serve --export` (#39): Some(demo), static files with relative URLs; `true` is the inert demo.
+    export: Option<bool>,
 }
 
 fn header<'h>(head: &'h str, name: &str) -> Option<&'h str> {
@@ -220,7 +222,7 @@ fn kind(head: &str) -> &'static str {
 
 impl<'a> Server<'a> {
     pub fn new(ctx: &'a Ctx, r: &'a dyn Runner, addr: Option<String>) -> Self {
-        Server { ctx, r, addr, cache: RefCell::default(), host: RefCell::default(), sent: RefCell::default(), clients: Arc::default(), kick: Arc::default(), watch: RefCell::default() }
+        Server { ctx, r, addr, cache: RefCell::default(), host: RefCell::default(), sent: RefCell::default(), clients: Arc::default(), kick: Arc::default(), watch: RefCell::default(), export: None }
     }
 
     fn handle(&self, mut s: TcpStream) -> std::io::Result<()> {
@@ -602,13 +604,17 @@ impl<'a> Server<'a> {
             format!("<p class=\"msg {}\">{}</p>", if bad { "r" } else { "g" }, esc(m))
         });
         let ro = if self.addr.is_some() { "" } else { " data-ro=1" };
+        let (root, demo) = if self.export.is_some() { ("", self.export == Some(true)) } else { ("/", false) };
+        let ro = format!("{ro}{}{}", if root.is_empty() { " data-root=\"\"" } else { "" }, if demo { " data-demo=1" } else { "" });
+        let msg = if demo { "<p class=\"msg a\">Demo with fake data. Install herdsman to run your own.</p>".to_string() } else { msg };
+        let badge = if demo { "<span class=tag id=demo>demo</span>" } else { "" };
         Ok(format!(
             "<!doctype html><html lang=en><head><meta charset=utf-8>\
              <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
              <meta name=theme-color content=\"#1f2a38\"><meta name=apple-mobile-web-app-capable content=yes>\
-             <link rel=manifest href=/manifest.webmanifest><link rel=icon href=/icon-192.png><link rel=apple-touch-icon href=/icon-180.png>\
+             <link rel=manifest href={root}manifest.webmanifest><link rel=icon href={root}icon-192.png><link rel=apple-touch-icon href={root}icon-180.png>\
              <title>herdsman</title><style>{CSS}{HERD_CSS}</style></head>\
-             <body data-ts={} data-mode=horse{ro}><header><b>herdsman</b><span id=stale hidden></span><i id=dot class=a></i>\
+             <body data-ts={} data-mode=horse{ro}><header><b>herdsman</b>{badge}<span id=stale hidden></span><i id=dot class=a></i>\
              <button id=rf type=button aria-label=refresh>↻</button><button id=herd-on type=button aria-label=\"herd mode\">🐎</button></header><i id=ptr hidden>↻</i>{msg}<div id=needs>{}</div><main>\
              <section id=queue>{}</section><section id=lanes>{}</section><section id=host>{}</section>\
              <section id=events>{}</section></main><nav><a href=#queue>Queue</a><a href=#lanes>Lanes</a>\
@@ -907,7 +913,7 @@ impl<'a> Server<'a> {
             Some(Err(hint)) => h += &format!("<p class=m>deepseek · {}</p>", esc(&hint)),
             None => {}
         }
-        if self.addr.is_some() {
+        if self.addr.is_some() && self.export.is_none() {
             let (all, mt) = (devices::load(ctx), mtime(ctx));
             h += "<h2>Paired devices</h2>";
             if all.is_empty() {
@@ -936,6 +942,47 @@ impl<'a> Server<'a> {
         }
         h
     }
+}
+
+/// `--demo`'s runner (#39): `runner.json` maps a command line's prefix to its stdout (the longest match
+/// wins); anything else exits 1. Nothing runs.
+#[derive(Default)]
+struct Canned(BTreeMap<String, String>);
+
+impl Runner for Canned {
+    fn run(&self, prog: &str, args: &[String]) -> Result<crate::runner::Out> {
+        let line = format!("{prog} {}", args.join(" "));
+        let out = self.0.iter().filter(|(k, _)| line.starts_with(k.as_str())).max_by_key(|(k, _)| k.len());
+        Ok(crate::runner::Out { code: if out.is_some() { 0 } else { 1 }, stdout: out.map_or(String::new(), |o| o.1.clone()), stderr: String::new() })
+    }
+    fn sleep(&self, _: u64) {}
+}
+
+/// `serve --export <dir> [--demo]` (#39): the page, `herd.json`, manifest, sw and icons as static files with
+/// relative URLs. `--demo`: `runner.json`'s canned reads (`r` is never called), "now" a minute after the log's
+/// last event, pane text shown, every form inert, plus each lane's `lane/<agent>.json` transcript.
+pub fn export(ctx: &Ctx, r: &dyn Runner, dir: &std::path::Path, demo: bool) -> Result<()> {
+    let canned = if demo { Canned(serde_json::from_str(&std::fs::read_to_string(ctx.config.with_file_name("runner.json"))?)?) } else { Canned::default() };
+    let (r, events): (&dyn Runner, _) = (if demo { &canned } else { r }, read(&ctx.state)?);
+    let ctx = &Ctx { now: if demo { events.iter().map(|e| e.ts).max().unwrap_or(0) + 60 } else { ctx.now }, ..ctx.clone() };
+    let s = Server { export: Some(demo), ..Server::new(ctx, r, demo.then(|| "demo".into())) };
+    // The live page registers `/sw.js` (its tests pin that); a sub-path needs it relative.
+    let page = s.page(ctx, &BTreeMap::new(), demo)?.replace("<form method=post", "<form inert").replace("register('/sw.js')", "register('sw.js')");
+    let herd = s.herd(ctx, None)?.to_string();
+    std::fs::create_dir_all(dir.join("lane"))?;
+    let files: [(&str, &[u8]); 7] = [("index.html", page.as_bytes()), ("herd.json", herd.as_bytes()), ("manifest.webmanifest", MANIFEST.as_bytes()),
+        ("sw.js", SW.as_bytes()), ("icon-180.png", ICON_180), ("icon-192.png", ICON_192), ("icon-512.png", ICON_512)];
+    for (name, body) in files {
+        std::fs::write(dir.join(name), body)?;
+    }
+    let (cfg, st) = (Config::load(&ctx.config)?, fold(&events));
+    for l in s.lanes(ctx.now, &cfg, &events, &st).unwrap_or_default().into_iter().filter(|_| demo) {
+        let safe = !l.name.starts_with('.') && l.name.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+        if let Some(j) = s.transcript(ctx, &BTreeMap::from([("agent".to_string(), l.name.clone())])).filter(|_| safe) {
+            std::fs::write(dir.join("lane").join(format!("{}.json", l.name)), j)?;
+        }
+    }
+    Ok(())
 }
 
 /// `PR #11 · CI ✓ · rev PASS r1`, from the cached `herdsman pr` read only (never calls `gh`).
@@ -1044,7 +1091,7 @@ fn events_tab(ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States, al
         );
     }
     if !all {
-        h += "<p><a href=\"/?all=1\">all events, unfolded</a></p>";
+        h += "<p><a href=\"?all=1\">all events, unfolded</a></p>";
     }
     h
 }
