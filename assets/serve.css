@@ -127,3 +127,4 @@ main{transition:transform .2s}
 .unp{margin:auto;padding:var(--s3);text-align:center;border:1px solid var(--a);border-radius:8px;color:var(--a)}
 #dot.demo{color:var(--l)}
 [inert]{opacity:.6}
+#rf{min-height:var(--hit)}
