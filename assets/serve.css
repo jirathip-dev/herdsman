@@ -90,15 +90,22 @@ main{transition:transform .2s}
 .av.r .px{filter:sepia(1) saturate(6) hue-rotate(-50deg)}
 @media (prefers-reduced-motion:reduce){.run b,.av .px{animation:none!important}.run b:last-child{visibility:hidden}}
 #sheet{position:fixed;inset:0;z-index:3}
-.bd{position:absolute;inset:0;background:#000a}
-.sh{position:absolute;left:0;right:0;bottom:0;height:78vh;height:78dvh;max-height:100%;display:flex;flex-direction:column;background:var(--bg);border-top:1px solid #30363d;border-radius:14px 14px 0 0;padding:0 var(--s3) env(safe-area-inset-bottom);transition:height .2s}
-.sh.full{height:100vh;height:100dvh;border-radius:0}
-.grip{flex:none;height:calc(2 * var(--s3));touch-action:none;cursor:grab}
-.grip::after{content:"";display:block;width:40px;height:var(--s1);margin:var(--s3) auto var(--s2);border-radius:3px;background:#30363d}
-/* #63 q8: the card takes at most 40 % of the sheet and scrolls inside; dragging is the grip's alone. */
+.bd{position:absolute;inset:0;background:#000a;transition:opacity .28s cubic-bezier(.2,.8,.2,1)}
+/* #70: a full-height box placed by translateY (serve.js: half 50 %, mid 78 %, full); it follows the finger
+   (.drag), snaps (.28 s) and slides off to close (.out, .22 s ease-in); the backdrop fades with it. */
+.sh{position:absolute;left:0;right:0;top:env(safe-area-inset-top);bottom:0;display:flex;flex-direction:column;background:var(--bg);border-top:1px solid #30363d;border-radius:14px 14px 0 0;padding:0 var(--s3) env(safe-area-inset-bottom);transform:translateY(100%);transition:transform .28s cubic-bezier(.2,.8,.2,1);will-change:transform}
+.sh.full{border-radius:0}
+#sheet.drag>*{transition:none}
+#sheet.out>*{transition-duration:.22s;transition-timing-function:ease-in}
+@media (prefers-reduced-motion:reduce){#sheet .sh{transition:none}}
+/* The handle: the pill plus the title row, at least 56 px; it alone drags (the chat hands off at its top). */
+.hd{flex:none;min-height:calc(var(--hit) + var(--s3));padding-bottom:var(--s2);touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+.hd::before{content:"";display:block;width:40px;height:var(--s1);margin:var(--s2) auto;border-radius:3px;background:#30363d}
+.hd p{margin:0}
+/* #63 q8: the card takes at most 40 % of the sheet and scrolls inside; it never drags. */
 .top{flex:none;max-height:40%;overflow:hidden auto;overscroll-behavior:contain;touch-action:pan-y;border-bottom:1px solid var(--line);padding-bottom:var(--s2)}
 .top p{margin:var(--s1) 0}
-.chat{flex:1;overflow:hidden auto;display:flex;flex-direction:column;gap:var(--s2);padding:var(--s2) 0}
+.chat{flex:1;overflow:hidden auto;overscroll-behavior:contain;touch-action:pan-y;display:flex;flex-direction:column;gap:var(--s2);padding:var(--s2) 0}
 .b{margin:0;padding:var(--s1) var(--s2);border-radius:10px;background:#161b22;white-space:pre-wrap;font-size:var(--fs-meta);max-width:92%}
 .b.me{align-self:flex-end;background:#1f3a5f}
 .reply,.pairf{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s4);padding:var(--s2) 0;flex:none}

@@ -35,6 +35,37 @@
       mid('clean refused');
       await canned(502, LONG.send, () => $('.reply').requestSubmit());
     },
+    // #70: the handle is ≥ 56 px; a −200 px pointer drag moves the sheet mid-drag, release snaps to a detent,
+    // and close leaves it shown, sliding off-screen, for a frame before `hidden` (the slide exists). Virtual time
+    // (--virtual-time-budget) runs no frames and freezes transitions: rAF is a 16 ms timer here, and the slide is
+    // read as its target transform while `.out` is on.
+    'sheet-drag': async () => {
+      window.requestAnimationFrame = f => setTimeout(() => f(performance.now()), 16);
+      tab('lanes');
+      open($('.lane'));
+      await wait();
+      const r = hd.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, frame = () => new Promise(f => requestAnimationFrame(() => requestAnimationFrame(f)));
+      const pe = (type, y) => hd.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y, bubbles: true }));
+      const tz = () => new DOMMatrix(getComputedStyle(sh).transform).m42, aim = () => new DOMMatrix(sh.style.transform).m42, ds = ['full', 'mid', 'half'].map(off), t0 = aim();
+      if (hd.offsetHeight < 56) dragged.push(`handle ${hd.offsetHeight}px tall, under 56`);
+      if (Math.abs(t0 - ds[1]) > 1) dragged.push(`opened at ${t0 | 0}px, not the 78 % detent ${ds[1] | 0}`);
+      pe('pointerdown', y);
+      for (let i = 1; i <= 4; i++) {
+        pe('pointermove', y - 50 * i);
+        await frame();
+        if (i === 2 && Math.abs(tz() - (t0 - 100)) > 1) dragged.push(`mid-drag (−100 px) the sheet is at ${tz() | 0}px, not ${t0 - 100 | 0}`);
+      }
+      pe('pointerup', y - 200);
+      await wait();
+      if (!ds.some(o => Math.abs(o - aim()) < 1)) dragged.push(`released at ${aim() | 0}px, not a detent (${ds.map(o => o | 0)})`);
+      close();
+      await frame();
+      const slide = getComputedStyle(sh).transitionDuration;
+      if (S.hidden || !S.matches('.out') || aim() < sh.offsetHeight - 1 || slide !== '0.22s') dragged.push(`a frame after close: hidden ${S.hidden}, sliding to ${aim() | 0}px of ${sh.offsetHeight} over ${slide}: no slide`);
+      await wait();
+      if (!S.hidden) dragged.push('300 ms after close the sheet is still shown');
+      if (!DBG.get('check')) { open($('.lane')); S.classList.add('drag'); snap('half'); } // the screenshot: the sheet at half, unanimated
+    },
     host: async () => { // the live Host tab's Alerts (the export leaves it out) as the Home Screen app shows it: an error, then unpaired
       tab('host');
       const push = Object.assign(document.createElement('button'), { id: 'push', type: 'button', textContent: 'Enable alerts' });
@@ -70,6 +101,7 @@
     },
   };
   let toasted = null;
+  const dragged = [];
   const ROOTS = { sheet: () => [$('#sheet')], herd1: () => [hp(0), $('.hx'), $('.hwx')], herd2: () => [hp(1), $('.hx'), $('.hwx')] };
   const CTL = 'button:not(.lr,.hh,.hqh), .pk, [role=button]', ROW = 'summary, .lr, .hh, .hqh', NAME = '.nw, .hl b';
   const CHOICE = '.ask button[name=choice], .ask .pick'; // amendment A: wraps, ≤ 4 lines, instead of 28 px
@@ -187,6 +219,7 @@
     return out.size;
   }
   const SCROLL = {
+    'sheet-drag': () => ({ view: V, controls: 1, outliers: dragged }),
     toast: () => {
       const bad = [];
       if (toasted !== 'moved #12 before #18') bad.push(`toast after the POST: ${toasted}`);

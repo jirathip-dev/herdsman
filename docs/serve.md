@@ -34,7 +34,9 @@ fleet.toml changed since the page was rendered.
 
 Lanes are grouped like Corral: state sections blocked → working → idle → done → dead, each
 split into fleet subgroups (alphabetical, Others last), newest-changed first. Tapping a lane
-opens a bottom sheet (78 % high, drag up for full, swipe down / backdrop / Esc to close) with
+opens a bottom sheet that slides up to 78 % and drags like an iOS sheet (it follows the finger from the
+56 px handle, or from the conversation's top; snaps to 50 %, 78 % or full by position and flick; below 50 %, a
+down flick, the backdrop or Esc slide it closed) with
 its details card and a transcript: `/lane?agent=&lines=200&before=<n>` returns up to 200 masked
 pane lines (the cap is server-side) grouped per turn (a typed prompt opens one); tool calls
 (Claude `⏺ Bash(…)`/`Read(…)` plus their indented output, Hermes `┊` runs) collapse to one line
