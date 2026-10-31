@@ -91,6 +91,7 @@ src.querySelectorAll('g.horse').forEach((g, k) => {
   s.querySelectorAll('[fill="var(--m)"],[stroke="var(--m)"]').forEach(m => m.setAttribute('style', 'transform-box:fill-box;transform-origin:100% 100%;transform:skewX(var(--mane, 0deg))'));
   defs.append(s);
 });
+B.classList.add('hz');
 }).catch(() => {});
 
 B.insertAdjacentHTML('beforeend', `<div id=herd hidden><div class=hpages></div><div class=hrain></div><div class=hflash></div>

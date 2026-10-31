@@ -65,7 +65,8 @@ main{transition:transform .2s}
 @media (prefers-reduced-motion:reduce){#dot.p,#rf.spin i,#ptr.spin,.fl{animation:none}}
 .av{display:flex;align-items:center;justify-content:center;width:48px;height:40px;overflow:hidden}
 .av>*{display:none}
-[data-mode=glyph] .av .gl,[data-mode=horse] .av .px{display:block}
+/* Horse mode shows the glyph until herd.js's symbols land (`.hz`): no fetch or JS, no blank avatar. */
+[data-mode=glyph] .av .gl,[data-mode=horse]:not(.hz) .av .gl,[data-mode=horse].hz .av .px{display:block}
 [data-mode=ascii] .av .asc{display:grid}
 .gl{font-style:normal;font-size:20px}
 .px{width:48px;height:36px}

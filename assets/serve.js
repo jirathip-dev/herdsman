@@ -92,8 +92,8 @@ function connect() {
   if (DEMO) return;
   if (es) es.close();
   try { es = new EventSource('live'); } catch (e) { es = null; return sync('r'); }
-  // The first open (a cached page painted) stays amber until `?frag=all` lands.
-  es.onopen = () => { sync('g'); if (down) refresh(); down = 0; tries = 0; clearInterval(poller); poller = 0; };
+  // After a gap (the first open included: a cached page may have painted) the dot is refresh()'s: amber until `?frag=all` lands.
+  es.onopen = () => { if (down) refresh(); else sync('g'); down = 0; tries = 0; clearInterval(poller); poller = 0; };
   es.addEventListener('frag', e => { const j = JSON.parse(e.data); frag(j.id, j.html); sync('g'); pulse(); });
   es.addEventListener('herd', e => herdData(JSON.parse(e.data)));
   es.onerror = () => {

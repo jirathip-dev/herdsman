@@ -476,5 +476,6 @@ fn page_never_samples_the_host_and_links_immutable_assets() {
         assert!(sw.contains(&format!("'{f}'")) && sw.contains(&format!("P + 'a/{v}/'")), "{f} precached");
     }
     assert!(get(&s, "/a/00000000/serve.js").starts_with("HTTP/1.1 404 "), "another build's hash");
+    assert!(get(&s, "/icon-192.png").contains("Cache-Control: public, max-age=86400\r\n") && get(&s, "/sw.js").contains("Cache-Control: no-store\r\n"));
     assert_eq!(r.count("vm_stat"), 0);
 }
