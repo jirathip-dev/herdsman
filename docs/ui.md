@@ -74,6 +74,8 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
    each step. The demo fixture carries a 60-char agent name, a 200-char title, a Thai title, an 80-char path
    and a 140-char event line.
    Screenshots are uploaded as the `ui-390` artifact on every run.
+   A Chrome run that does not return in `UI_AUDIT_TIMEOUT` s (default 60; needs `timeout`) is killed and fails its view
+   with its stderr tail (#71); the job itself stops at 20 min.
 
 Run both locally:
 ```sh

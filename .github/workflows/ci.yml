@@ -40,6 +40,7 @@ jobs:
   # #63 gate 2 (docs/ui.md): headless Chrome (preinstalled on ubuntu-latest) audits the demo at 390 px.
   ui:
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # #71: backstop; ui-audit.sh kills a hung Chrome run after 60 s
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.99.1
