@@ -14,6 +14,8 @@
     events: () => tab('events'),
     herd1: () => herd(true),
     herd2: () => herd(true),
+    'herd-scroll': () => herd(true),
+    'queue-scroll': () => { tab('queue'); $$('#queue details.q').forEach(d => { d.open = true; }); },
   };
   const ROOTS = { sheet: () => [$('#sheet')], herd1: () => [hp(0), $('.hx'), $('.hwx')], herd2: () => [hp(1), $('.hx'), $('.hwx')] };
   const CTL = 'button:not(.lr,.hh,.hqh), .pk, [role=button]', ROW = 'summary, .lr, .hh, .hqh', NAME = '.nw, .hl b';
@@ -23,7 +25,7 @@
   const label = e => (e.getAttribute('aria-label') || e.textContent).trim().replace(/\s+/g, ' ').slice(0, 24) || e.tagName.toLowerCase();
   function check() {
     let res;
-    try { res = measure(); } catch (e) { res = { view: V, controls: 0, outliers: ['audit error: ' + e.message] }; }
+    try { res = (SCROLL[V] || measure)(); } catch (e) { res = { view: V, controls: 0, outliers: ['audit error: ' + e.message] }; }
     const out = document.createElement('pre');
     out.id = 'audit';
     out.textContent = JSON.stringify(res);
@@ -73,10 +75,87 @@
     const se = document.scrollingElement;
     if (se.scrollWidth > se.clientWidth) bad.push(`page scrolls sideways: ${se.scrollWidth}>${se.clientWidth}`);
     if (V.startsWith('herd')) {
-      for (const e of [hp(+V.slice(4) - 1).querySelector('.hs'), $('.hx')]) if (e.offsetHeight !== 28) bad.push(`${e.className}: Herd strip/[×] ${e.offsetHeight}px, not 28`);
+      const p = hp(+V.slice(4) - 1), pr = p.getBoundingClientRect();
+      for (const e of [p.querySelector('.hs'), $('.hx')]) if (e.offsetHeight !== 28) bad.push(`${e.className}: Herd strip/[×] ${e.offsetHeight}px, not 28`);
+      // #65: Corral's size: lane horses 132 px wide, queued ones 53 (40 %).
+      for (const [sel, w] of [['.hh svg', 132], ['.hqh svg', 53]]) {
+        for (const e of p.querySelectorAll(sel)) { const x = e.getBoundingClientRect().width; if (Math.abs(x - w) > 1) bad.push(`${label(e.parentNode)}: ${sel} ${x.toFixed(1)}px wide, not ${w}`); }
+      }
+      // #65 A: nothing on the page pokes past its sides (`.hp` clips, so the page-level check cannot see it).
+      for (const e of p.querySelectorAll('.hs *, .hb *')) {
+        if (e.parentElement.closest('svg') || !seen(e) || getComputedStyle(e).display === 'inline') continue; // inline text: its box clips it
+        const r = e.getBoundingClientRect();
+        if (r.left < pr.left - 1 || r.right > pr.right + 1) bad.push(`${label(e)}: past the page's side (${r.left | 0}..${r.right | 0} of ${pr.left | 0}..${pr.right | 0})`);
+      }
+      // #65 A: scrolled to the end, no text sits under the weather caption or the demo's switcher.
+      p.scrollTo({ top: p.scrollHeight, behavior: 'instant' });
+      const bars = [cap, $('.hwx')].filter(Boolean).map(e => [e.className, e.getBoundingClientRect()]), w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+      for (let t; (t = w.nextNode());) {
+        if (!t.data.trim() || !seen(t.parentElement)) continue;
+        const g = document.createRange();
+        g.selectNodeContents(t);
+        const r = g.getBoundingClientRect();
+        for (const [k, c] of bars) if (r.bottom > c.top && r.top < c.bottom && r.right > c.left && r.left < c.right) bad.push(`"${t.data.trim().slice(0, 20)}": under .${k}`);
+      }
+      // #65 A: no strip text is cut to an ellipsis, also at the owner's counts (13 queued, 11 done, 5 idle, 3 working).
+      const clip = () => [...p.querySelectorAll('.hs p')].filter(e => e.scrollWidth > e.clientWidth).forEach(e => bad.push(`"${e.textContent.slice(0, 24)}": strip text ellipsized, ${e.scrollWidth}>${e.clientWidth}`));
+      clip();
+      if (V === 'herd1') {
+        const f = structuredClone(data), l = f.fleets[0].lanes[0], q = f.fleets[0].queue[0];
+        f.fleets[0].lanes = [...'wwwiiiiiddddddddddd'].map((s, i) => ({ ...l, name: 'audit-' + i, state: { w: 'working', i: 'idle', d: 'done' }[s] }));
+        f.fleets[0].queue = Array.from({ length: 13 }, (_, i) => ({ ...q, issue: 900 + i }));
+        herdData(f);
+        clip();
+      }
     }
     return { view: V, controls: ctl.length, outliers: bad };
   }
+  // #65: a live update never moves the scroll or replaces a kept node. Scroll to 400 px, push a changed fixture
+  // through the live path (herdData / frag), and count what the MutationObserver saw leave the tree for good.
+  function gone(root, run, sel) {
+    const mo = new MutationObserver(() => {}), out = new Set();
+    mo.observe(root, { childList: true, subtree: true });
+    run();
+    for (const r of mo.takeRecords()) for (const n of r.removedNodes) if (n.nodeType === 1) for (const e of [n, ...n.querySelectorAll(sel)]) if (e.matches(sel) && !e.isConnected) out.add(e);
+    mo.disconnect();
+    return out.size;
+  }
+  const SCROLL = {
+    'herd-scroll': () => {
+      const base = structuredClone(data), bad = [], f = base.fleets[0];
+      // Tall enough to scroll 400 px: the first fleet's lanes ×3.
+      f.lanes.slice().concat(f.lanes).forEach((l, i) => f.lanes.push({ ...l, name: 'audit-' + i }));
+      herdData(base);
+      const p = hp(0), next = structuredClone(base), l = next.fleets[0].lanes;
+      p.scrollTo({ top: 400, behavior: 'instant' });
+      const top = p.scrollTop, keep = new Map([...p.querySelectorAll('.hh, .hqh')].map(e => [e.dataset.agent || e.dataset.i, e]));
+      if (top !== 400) bad.push(`Herd page 1 scrolled to ${top}, not 400`);
+      l[1].age = '1m'; // a label changes
+      Object.assign(l[0], { state: 'working', shown: 'working' }); // a horse changes band
+      l.splice(2, 1); // a lane goes
+      l.push({ ...l[0], name: 'audit-new' }); // one comes
+      next.fleets[0].queue.shift(); // a queued issue goes
+      const n = gone(p, () => herdData(next), '.hh, .hqh');
+      if (p.scrollTop !== top) bad.push(`Herd page 1 scrollTop ${top} -> ${p.scrollTop} on a live update`);
+      if (n !== 2) bad.push(`${n} horse nodes removed, 2 agents/issues left`);
+      for (const [k, e] of keep) if (p.querySelector(`[data-agent="${k}"], [data-i="${k}"]`) !== e && (l.some(x => x.name === k) || next.fleets[0].queue.some(q => String(q.issue) === k))) bad.push(`${k}: horse replaced, not patched`);
+      return { view: V, controls: keep.size, outliers: bad };
+    },
+    'queue-scroll': () => {
+      const q = $('#queue'), x = q.cloneNode(true), rows = x.querySelectorAll('details.q'), bad = [];
+      scrollTo({ top: 400, behavior: 'instant' });
+      const top = scrollY, keep = [...q.querySelectorAll('details')];
+      if (top !== 400) bad.push(`Queue scrolled to ${top}, not 400`);
+      rows[0].querySelector('summary .m').textContent = '1m'; // a row changes
+      rows[rows.length - 1].remove(); // a row goes
+      const n = gone(q, () => frag('queue', x.innerHTML), 'details');
+      if (scrollY !== top) bad.push(`Queue scrollY ${top} -> ${scrollY} on a live update`);
+      if (n !== 1) bad.push(`${n} rows removed, 1 left`);
+      if (keep.filter(d => !d.isConnected).length !== 1) bad.push('a kept row was replaced, not patched');
+      if (keep.some(d => d.isConnected && d.matches('.q') && !d.open)) bad.push('an open row closed');
+      return { view: V, controls: keep.length, outliers: bad };
+    },
+  };
   const go = () => {
     VIEWS[V]();
     setTimeout(() => {

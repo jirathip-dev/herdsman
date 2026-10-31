@@ -1,16 +1,14 @@
 /* #37 Herd mode: full screen over the tabs, one page per fleet (scroll-snap X), ranch strip on top, pasture bands below.
-   #58: every lane horse is 1/--n of the width in every band; queued horses 60 % of that. */
+   #65: Corral's size: a lane horse is a fixed 132×100 drawing in a 156 px slot, rows wrap centred; queued ones are 40 %. */
 .herding,.herding body{overflow:hidden}
-#herd{position:fixed;inset:0;z-index:2;overflow:hidden;background:#485e3b;--sky1:#388fc4;--sky2:#8ebbc6;--n:2;color:#f4ecd8}
-@media (min-width:600px){#herd{--n:3}}
-@media (min-width:900px){#herd{--n:4}}
+#herd{position:fixed;inset:0;z-index:2;overflow:hidden;background:#485e3b;--sky1:#388fc4;--sky2:#8ebbc6;color:#f4ecd8}
 #herd.storm{--sky1:#1d2530;--sky2:#4f5a63}
 .herding #ptr{z-index:4}
 .hdefs{position:absolute;width:0;height:0}
 .hpages{display:flex;height:100%;overflow:auto hidden;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;scrollbar-width:none}
 .hpages::-webkit-scrollbar{display:none}
 .hp{flex:0 0 100%;height:100%;overflow:hidden auto;scroll-snap-align:start;scroll-snap-stop:always;scroll-behavior:smooth;overscroll-behavior-y:contain;
-  background:linear-gradient(#a9b06c,#7f8f50 40vh,#4c6340);padding-bottom:calc(2 * var(--s3) + env(safe-area-inset-bottom))}
+  background:linear-gradient(#a9b06c,#7f8f50 40vh,#4c6340);padding-bottom:calc(2 * var(--ctl) + env(safe-area-inset-bottom))}
 /* The strip: one 28 px dark bar, `[×]` inside it on the right; the counts share its line when they fit, else wrap to an 11 px second line in the same bar. */
 #herd .hx{position:fixed;z-index:3;top:env(safe-area-inset-top);right:var(--s2)}
 .hs{position:sticky;top:0;z-index:1;display:flex;flex-wrap:wrap;align-content:center;column-gap:var(--s2);height:calc(var(--ctl) + env(safe-area-inset-top));padding:env(safe-area-inset-top) calc(var(--hit) + var(--s2)) 0 var(--s3);
@@ -33,29 +31,33 @@
   background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M10 0l-3 14M40 20l-3 14M25 40l-3 14M52 46l-3 14M3 28l-3 14' stroke='%23d8e6f5' stroke-opacity='.6'/%3E%3C/svg%3E")}
 .storm .hrain{display:block}
 .hflash{position:absolute;inset:0;pointer-events:none;background:#fff;opacity:0}
-.hcap{position:fixed;z-index:2;left:var(--s2);bottom:calc(var(--s1) + env(safe-area-inset-bottom));margin:0;padding:0 var(--s1);border-radius:4px;background:#0006;font-size:var(--fs-meta);pointer-events:none}
+/* #65 A: the weather caption is a solid 28 px bar at the bottom; `.hp` is padded past it (and the demo's switcher above it). */
+.hcap{position:fixed;z-index:2;left:0;right:0;bottom:0;margin:0;padding:0 var(--s2) env(safe-area-inset-bottom);background:#1f2a38;font-size:var(--fs-meta);line-height:var(--ctl);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 .hcap[data-fps]::after{content:" · " attr(data-fps)}
 .hb{padding-top:var(--s2)}
 .band h4{margin:0;padding:var(--s3) var(--s3) var(--s1);font-size:var(--fs);color:#f4ecd8;text-shadow:0 1px 2px #0008}
 .band h4 span{opacity:.8;font-weight:400}
 .b-blocked{background:#b3261e22}
-.field{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));align-items:start}
-.hh,.hqh{background:none;border:0;border-radius:0;padding:0;min-height:var(--hit);color:inherit;font:inherit;text-align:center}
-.hh{min-width:0;padding-bottom:var(--s2)}
-.hh svg,.hqh svg{display:block;width:100%;height:auto;aspect-ratio:132/100;overflow:visible}
+.field{display:flex;flex-wrap:wrap;justify-content:center;align-items:start;gap:var(--s2)}
+.hh,.hqh{background:none;border:0;border-radius:0;padding:0;color:inherit;font:inherit;text-align:center}
+.hh{flex:0 0 156px;display:flex;flex-direction:column;align-items:center;min-height:var(--hit);padding-bottom:var(--s2)}
+.hh svg,.hqh svg{display:block;height:auto;aspect-ratio:132/100;overflow:visible}
+.hh svg{width:132px}
+.hqh svg{width:53px;margin:0 auto}
 .hh.done svg{opacity:.75}
 .hh.blocked svg,.hh.dead svg{filter:sepia(1) saturate(5) hue-rotate(-50deg)}
-.hl{display:flex;flex-direction:column;margin:calc(-1 * var(--s1)) var(--s2) 0;padding:var(--s1) var(--s2);border-radius:8px;background:#f4ecd8;color:#3a332e;font-size:var(--fs-meta);line-height:1.3;box-shadow:0 1px 3px #0004}
-.hl b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hl{display:flex;flex-direction:column;max-width:164px;margin:calc(-1 * var(--s1)) 0 0;padding:var(--s1) var(--s2);border-radius:8px;background:#f4ecd8;color:#3a332e;font-size:var(--fs-meta);line-height:1.3;box-shadow:0 1px 3px #0004}
+.hl b,.hl>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hl i{font-style:normal;font-weight:600}
 .hl .g{color:#2f7d32}.hl .a{color:#8a5d00}.hl .r{color:#b3261e}.hl .m{color:#6b625a}
 .b-blocked .hl{background:#f6d9d3}
-/* The gate: queued horses (60 %) line up in queue order in their own rows, behind its posts and rails. */
-.gate{position:relative;display:flex;flex-wrap:wrap;padding-top:var(--s2)}
+/* The gate: queued horses (53×40 in a 60 px slot) line up in queue order in their own rows, after its posts (#65 A: the row starts 8 px past them). */
+.gate{position:relative;display:flex;flex-wrap:wrap;padding:var(--s2) 0 0 calc(var(--s1) + 2 * var(--s2))}
 .gate::after{content:"";position:absolute;inset:0 auto 0 var(--s1);width:8px;border-left:5px solid #9c916a;pointer-events:none;
   background:repeating-linear-gradient(#0000 0 10px,#8b825d 10px 14px,#0000 14px 26px)}
-.hqh{width:calc(60% / var(--n));font-size:var(--fs-meta)}
-.hqh span{display:block;margin:calc(-1 * var(--s1)) var(--s1) 0;border-radius:6px;background:#f4ecd8;color:#3a332e}
+.hqh{position:relative;flex:0 0 60px;font-size:var(--fs-meta)}
+.hqh::before{content:"";position:absolute;left:50%;top:50%;width:max(100%,var(--hit));height:max(100%,var(--hit));transform:translate(-50%,-50%)}
+.hqh span{display:block;margin:calc(-1 * var(--s1)) var(--s1) 0;border-radius:6px;background:#f4ecd8;color:#3a332e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hq{position:fixed;z-index:3;left:var(--s3);right:var(--s3);bottom:calc(var(--ctl) + env(safe-area-inset-bottom));padding:var(--s2) var(--s3);border-radius:12px;background:#f4ecd8;color:#3a332e;box-shadow:0 4px 16px #0008}
 .hq p{margin:var(--s1) 0}.hq .r{color:#b3261e}.hq .m{color:#6b625a;font-size:var(--fs-meta)}
 .empty{padding:var(--s3);color:#f4ecd8}

@@ -31,7 +31,7 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
   line, stacked 8 px apart, the recommended one first with an 11 px `(recommended)`.
 - **Type scale:** text is 13 or 11 px, nothing else; inputs 16 px (iOS zooms below 16 px).
 - **Herd strip:** one 28 px bar on top of each Herd page with `[×]` inside it on the right; the
-  counts share its line or wrap to an 11 px second line in the same bar.
+  counts share its line or wrap to an 11 px second line in the same bar, and are never ellipsised (#65 A).
 - Names never wrap vertically (`.nw` cells stay on one line, horse labels clamp at 2 lines);
   text that does not fit ellipsises. Nothing scrolls sideways at 390 px.
 
@@ -44,8 +44,15 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
 2. **Browser audit** — the `ui` CI job: headless Chrome opens the exported demo at 390×844, DPR 3,
    on Queue, Queue with a row open, Lanes, a Lanes sheet, Host, Events, Herd page 1 and page 2.
    `assets/ui-audit.js` (only in the `--demo` export, `?audit=<view>&check=1`) fails on a control
-   not 28 px tall (a choice: over 4 lines), text not 11/13 px (inputs 16), a tap area under 44 px, sideways scroll, a name
-   over 2 lines, text overflowing its box without an ellipsis, or a Herd strip/`[×]` not 28 px.
+   not 28 px tall (a choice: over 4 lines), text not 11/13 px (inputs 16), a tap area under 44 px, sideways scroll
+   (on Herd pages too: no box past the page's sides), a name over 2 lines, text overflowing its box without an
+   ellipsis, a Herd strip/`[×]` not 28 px, a lane horse not 132±1 px wide or a queued one not 53±1 (#65), or
+   text under the weather caption or the demo's weather switcher with the page scrolled to its end, or ellipsised
+   strip text, also with a fixture of the owner's counts (13 queued, 11 done, 5 idle, 3 working) (#65 A).
+   Two more views (#65) prove updates never move the scroll: `herd-scroll` scrolls Herd page 1 to 400 px and
+   pushes a changed fixture through `herdData()` (a label, a band move, a lane and a queued issue gone, one lane
+   added); `queue-scroll` opens every Queue row, scrolls to 400 px and pushes a changed section through `frag()`.
+   Each fails if the scroll moved, a row closed, or the MutationObserver saw more nodes leave than were removed.
    Screenshots are uploaded as the `ui-390` artifact on every run.
 
 Run both locally:
