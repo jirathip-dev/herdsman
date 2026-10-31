@@ -226,8 +226,10 @@ fn ago(now: u64, t: u64) -> String {
     if t > 0 { age(now.saturating_sub(t)) } else { String::new() }
 }
 
-/// A lane as the Lanes row, its sheet card and herd.json show it: (cached title, tone, shown state, age); #46: idle shows what it waits on.
-fn view(ctx: &Ctx, l: &lanes::Lane, waits: &[crate::waiting::Waiting]) -> (Option<String>, &'static str, String, String) {
+/// A lane as the Lanes row, its sheet card and herd.json show it: (cached title, tone, shown state, age).
+/// #46: an idle lane shows what it waits on, coloured by who; a working one keeps its state.
+type View = (Option<String>, &'static str, String, String);
+fn view(ctx: &Ctx, l: &lanes::Lane, waits: &[crate::waiting::Waiting]) -> View {
     let title = l.issue.zip(l.fleet.as_ref()).and_then(|(n, f)| gh::cached_title(ctx, f, n));
     let (tone, shown) = wait_of(l, waits).map_or_else(|| (tone(&l.state), l.state.clone()), |w| (w.tone(ctx.now), w.label(ctx.now)));
     (title, tone, shown, ago(ctx.now, l.since))
@@ -324,7 +326,8 @@ impl<'a> Server<'a> {
             w.herdr = (now, hash(&out));
             lock(&self.cache).insert("herdr agent list".into(), (now, out));
         }
-        // #37: Herd's data rides the same stream, re-read every 10 s (host weather) while anyone listens; pushed on a change.
+        // #37: Herd's data rides the same stream, re-read every 10 s (host weather) while anyone listens;
+        // like a frag, pushed only on a change (the page reads `/herd.json` when Herd opens).
         if (changed || now >= w.herd.0 + 10) && !lock(&self.clients).is_empty() {
             let j = self.herd(&Ctx { now, ..self.ctx.clone() }, None).map(|v| v.to_string()).unwrap_or_default();
             if w.herd.0 > 0 && hash(&j) != w.herd.1 && !j.is_empty() {
@@ -373,7 +376,8 @@ impl<'a> Server<'a> {
             return see("/");
         }
         // Host/Origin-checked: the live stream, transcripts, Herd's data and every write.
-        let guarded = method == "GET" && ["/live", "/lane", "/herd.json"].contains(&path) || method == "POST" && self.addr.is_some();
+        let guarded = method == "GET" && ["/live", "/lane", "/herd.json"].contains(&path)
+            || method == "POST" && self.addr.is_some();
         let (status, ctype, body) = match (method, path) {
             ("GET", _) if frags => self.frags(ctx, false, self.device(ctx, head).is_some()).map_or_else(fail, |f| {
                 ("200 OK", JSON, serde_json::to_vec(&f.into_iter().collect::<BTreeMap<_, _>>()).unwrap_or_default())
@@ -381,8 +385,14 @@ impl<'a> Server<'a> {
             ("POST", _) if self.addr.is_none() => ("405 Method Not Allowed", "text/plain", text("read-only: GET only\n")),
             _ if guarded && !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("GET", "/live") => ("503 Service Unavailable", "text/plain", text("8 live clients already: the page polls instead\n")),
-            ("GET", "/") => self.page(ctx, &form(query), self.device(ctx, head).is_some()).map_or_else(fail, |b| ("200 OK", HTML, b.into_bytes())),
-            ("GET", "/frag") => self.part(ctx, &form(query)).map_or(("404 Not Found", "text/plain", text("no such part\n")), |h| ("200 OK", HTML, h.into_bytes())),
+            ("GET", "/") => match self.page(ctx, &form(query), self.device(ctx, head).is_some()) {
+                Ok(b) => ("200 OK", HTML, b.into_bytes()),
+                Err(e) => fail(e),
+            },
+            ("GET", "/frag") => match self.part(ctx, &form(query)) {
+                Some(h) => ("200 OK", HTML, h.into_bytes()),
+                None => ("404 Not Found", "text/plain", text("no such part\n")),
+            },
             ("GET", "/lane") if self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("pair this device to read transcripts\n")),
             ("GET", "/lane") => match self.transcript(ctx, &form(query)) {
                 Some(j) => ("200 OK", JSON, j.into_bytes()),
@@ -399,7 +409,10 @@ impl<'a> Server<'a> {
                 a.or_else(|| FILES.iter().find(|f| p.strip_prefix('/') == Some(f.0)).inspect(|_| cache = "public, max-age=86400")).map_or(("404 Not Found", "text/plain", text("not found\n")), |f| ("200 OK", f.1, f.2.to_vec()))
             }
             ("POST", "/") if form(body.trim()).get("op").is_some_and(|o| o == "unpair" || o == "answer") && self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("only a paired device may remove devices or answer asks\n")),
-            ("POST", "/") => return see(&format!("/?msg={}", enc(&self.write(ctx, &form(body.trim())).unwrap_or_else(|e| shown(&e))))),
+            ("POST", "/") => {
+                let msg = self.write(ctx, &form(body.trim())).unwrap_or_else(|e| shown(&e));
+                return see(&format!("/?msg={}", enc(&msg)));
+            }
             // #59: the request's `hd=` token (10 min) works once `serve approve` clears its code; `/pair/claim` then keeps it a year.
             ("POST", "/pair/request") => match devices::request(ctx, &kind(head), header(head, "x-peer").unwrap_or_default()) {
                 Ok(Some((code, t))) => (extra = format!("Set-Cookie: hd={t}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Strict\r\n"), ("200 OK", "text/plain", format!("{code}\n").into_bytes())).1,
@@ -417,7 +430,8 @@ impl<'a> Server<'a> {
             },
             ("POST", "/push/unsubscribe") => {
                 let id = form(body.trim()).get("id").cloned().unwrap_or_default();
-                return see(&format!("/?msg={}", enc(&crate::webpush::remove(&ctx.state, &[id]).map_or_else(|e| shown(&e), |n| format!("{n} alert device removed")))));
+                let msg = crate::webpush::remove(&ctx.state, &[id]).map_or_else(|e| shown(&e), |n| format!("{n} alert device removed"));
+                return see(&format!("/?msg={}", enc(&msg)));
             }
             ("POST", p @ ("/send" | "/answer" | "/act")) => {
                 let (status, msg) = self.send(ctx, head, &form(body.trim()), p);
@@ -773,8 +787,13 @@ impl<'a> Server<'a> {
             }
             // #60: the live page loads a fleet's role forms when the row is opened (`/frag`); an export inlines them.
             body += &match self.export {
-                Some(_) => format!("<details class=roles><summary><span>roles</span></summary>{}</details>", roles(cfg, f, fc, rw, &mt)),
-                None => format!("<details class=roles data-src=\"frag?id=roles&amp;fleet={}\"><summary><span>roles</span></summary></details>", enc(f)),
+                Some(_) => {
+                    format!("<details class=roles><summary><span>roles</span></summary>{}</details>", roles(cfg, f, fc, rw, &mt))
+                }
+                None => {
+                    let src = format!("frag?id=roles&amp;fleet={}", enc(f));
+                    format!("<details class=roles data-src=\"{src}\"><summary><span>roles</span></summary></details>")
+                }
             };
             let button = |op: &str, label: &str| if rw { format!("<form method=post>{}<button>{label}</button></form>", hidden(op, f, &mt)) } else { String::new() };
             if fc.paused {
@@ -822,7 +841,8 @@ impl<'a> Server<'a> {
         crate::waiting::scan(ctx, cfg, &self.cached(ctx.now, 30), events, &live, false).into_iter().map(|x| x.1).collect()
     }
 
-    /// #37: Herd mode's data (`/herd.json`, the `herd` event; docs/serve.md); `weather` (loopback only) forces the host values.
+    /// #37: Herd mode's data (`/herd.json`, the `herd` event; docs/serve.md).
+    /// `weather` (loopback only) forces the host values.
     fn herd(&self, ctx: &Ctx, weather: Option<&str>) -> Result<serde_json::Value> {
         let events = read(&ctx.state)?;
         let (cfg, st) = (Config::load(&ctx.config)?, fold(&events));

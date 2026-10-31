@@ -95,7 +95,9 @@ pub fn close(r: &dyn Runner, pane: &str) -> Result<String> {
 
 /// herdr's `{"error": {"code": "timeout"}}` answer (on stderr or stdout).
 pub fn timed_out(o: &Out) -> bool {
-    [&o.stderr, &o.stdout].iter().any(|s| serde_json::from_str::<Value>(s.trim()).is_ok_and(|v| v["error"]["code"] == "timeout"))
+    [&o.stderr, &o.stdout]
+        .iter()
+        .any(|s| serde_json::from_str::<Value>(s.trim()).is_ok_and(|v| v["error"]["code"] == "timeout"))
 }
 
 pub fn rename_argv(pane: &str, agent: &str) -> Vec<String> {
@@ -139,7 +141,10 @@ pub fn workspace_create_argv(local: &str, label: &str) -> Vec<String> {
 }
 
 pub fn worktree_create_argv(local: &str, branch: &str, base: &str, path: &str, label: &str) -> Vec<String> {
-    argv(&["worktree", "create", "--cwd", local, "--branch", branch, "--base", base, "--path", path, "--label", label, "--no-focus"])
+    argv(&[
+        "worktree", "create", "--cwd", local, "--branch", branch, "--base", base,
+        "--path", path, "--label", label, "--no-focus",
+    ])
 }
 
 pub fn worktree_open_argv(local: &str, path: &str) -> Vec<String> {

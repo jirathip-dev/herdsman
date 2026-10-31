@@ -108,8 +108,13 @@ pub fn deepseek(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> Option<Result<(Balan
         Some(b) if ctx.now < b.ts + POLL => b,
         _ => {
             let got = curl(r, "https://api.deepseek.com/user/balance", &format!("header = \"Authorization: Bearer {}\"\n", q(&key)));
-            // A failed read keeps the last balance.
-            got.filter(|g| g.0 == 200).and_then(|g| parse_balance(&g.2, ctx.now)).inspect(|b| drop(save(&path, b))).or(cached)?
+            match got.filter(|g| g.0 == 200).and_then(|g| parse_balance(&g.2, ctx.now)) {
+                Some(b) => {
+                    let _ = save(&path, &b);
+                    b
+                }
+                None => cached?,
+            }
         }
     };
     let low = b.total < p.warn_below;
