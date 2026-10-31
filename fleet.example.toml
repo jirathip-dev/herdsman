@@ -82,6 +82,16 @@ C = "CLAUDE_CODE_OAUTH_TOKEN_C"
 # cap_reset_minutes = 300
 # cap_pattern = "usage limit reached|hit your limit"   # `|`-separated, case-insensitive
 
+# The usage meter: each account's own `claude` login folder (docs/providers.md); never given to lanes.
+# [accounts.usage]
+# A = "~/.config/claude-accounts/A"
+
+# The DeepSeek balance row; the key is read from an env file, never from here.
+# [providers.deepseek]
+# key_env = "DEEPSEEK_API_KEY"
+# env_file = "~/.config/deepseek.env"   # default: accounts_env
+# warn_below = 5
+
 [limits]
 review_rounds = 3
 stall_minutes = 30   # herdsman check: stall / ready-unmerged threshold

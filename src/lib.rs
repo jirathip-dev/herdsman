@@ -16,6 +16,7 @@ pub mod queue;
 pub mod runner;
 pub mod serve;
 pub mod spawn;
+pub mod usage;
 
 pub use cli::{main_with, usage_doc};
 use anyhow::{bail, Context, Result};

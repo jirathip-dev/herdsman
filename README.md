@@ -45,7 +45,7 @@ Full setup, from install to the board on your phone over Tailscale: [docs/setup.
 | `check` / `ask` / `answer` / `asks` | alerts (stall, dead lane, unmerged ready, silent orch hold); ask for a decision, answer it |
 | `clean` | remove worktrees and panes of merged or closed lanes (dry run unless `--yes`) |
 | `set` / `profiles` | switch a role's harness or model; write per-role folders and hooks |
-| `accounts` | which Claude accounts are capped, and which lanes use them |
+| `accounts` | Claude accounts: cap, usage, lane-hours, lanes; DeepSeek balance ([docs](docs/providers.md)) |
 | `protection` | is branch protection on for every fleet repo? |
 | `migrate` | move pre-rename `fleet` config and state to the herdsman paths |
 | `help --agent` | the usage doc agents get; refusals exit 3 with `REFUSED <CODE>: why` |
@@ -83,7 +83,7 @@ cmd = "hermes send -q -t telegram:<chat_id>"
 on = ["stall", "lane-dead", "merged", "needs-human"]
 ```
 
-More: [architecture](docs/architecture.md), [lanes and hooks](docs/lanes.md), [dsh](docs/dsh.md), [phone page](docs/serve.md).
+More: [architecture](docs/architecture.md), [lanes and hooks](docs/lanes.md), [dsh](docs/dsh.md), [phone page](docs/serve.md), [providers and keys](docs/providers.md).
 
 ## License
 

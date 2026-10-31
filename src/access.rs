@@ -2,7 +2,8 @@
 use crate::config::{expand, Config, Fleet, Role};
 use crate::events::{emit, fold, last_spawn, read, Event};
 use crate::gate::refused;
-use crate::runner::{argv, Runner};
+use crate::runner::Runner;
+use crate::usage;
 use crate::Ctx;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Map, Value};
@@ -22,11 +23,19 @@ pub fn capped_until(cfg: &Config, events: &[Event], name: &str, now: u64) -> Opt
     (last.kind == "account-capped" && until > now).then_some(until)
 }
 
-/// The role's first uncapped account and the pane-shell assignment that exports its token straight from the env file.
-pub fn pick(cfg: &Config, events: &[Event], role: &Role, now: u64) -> Result<Option<(String, String)>> {
-    let names = role.account_list();
+/// The role's first uncapped account (the lowest weekly usage when every one was read in the last 30 min) and the
+/// pane-shell assignment that exports its token straight from the env file.
+pub fn pick(ctx: &Ctx, cfg: &Config, events: &[Event], role: &Role) -> Result<Option<(String, String)>> {
+    let now = ctx.now;
+    let mut names = role.account_list();
     if names.is_empty() {
         return Ok(None);
+    }
+    let week = |n: &String| crate::usage::cached(ctx, n).filter(|m| m.ts + 1800 > now).and_then(|m| m.week).map(|w| w.0);
+    let free: Vec<&String> = names.iter().filter(|n| capped_until(cfg, events, n, now).is_none()).collect();
+    if let Some(mut w) = free.iter().map(|n| week(n).map(|w| (w, (*n).clone()))).collect::<Option<Vec<_>>>() {
+        w.sort_by(|a, b| a.0.total_cmp(&b.0));
+        names = w.into_iter().map(|w| w.1).collect();
     }
     let name = names.iter().find(|n| capped_until(cfg, events, n, now).is_none()).ok_or_else(|| {
         anyhow!("every account of this role is capped ({}); wait, or `herdsman accounts reset <name>`", names.join(", "))
@@ -68,9 +77,15 @@ pub fn list(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Res
         writeln!(out, "no [accounts] configured")?;
     }
     for name in cfg.accounts.names.keys() {
-        let state = capped_until(cfg, &events, name, ctx.now).map_or("ok".into(), |t| format!("capped until {}", hhmm(r, t)));
         let lanes: Vec<&str> = on.iter().filter(|(a, n)| *n == name && open(a)).map(|(a, _)| *a).collect();
-        writeln!(out, "{name:<8} {state:<20} {}", if lanes.is_empty() { "-".into() } else { lanes.join(" ") })?;
+        writeln!(out, "{name:<8} {:<28} {} lanes {}", cap_line(cfg, r, &events, name, ctx.now), lanes.len(), lanes.join(" "))?;
+        if let Some(m) = usage::meter(ctx, cfg, r, name) {
+            writeln!(out, "{:<8} {}", "", usage::meter_line(r, &m, &cfg.accounts.usage[name], ctx.now))?;
+        }
+        writeln!(out, "{:<8} {}", "", usage::lane_hours(&events, name, ctx.now))?;
+    }
+    if let Some((b, low)) = usage::deepseek(ctx, cfg, r) {
+        writeln!(out, "deepseek · {} {:.2} · {}", b.currency, b.total, if low { "low" } else { "ok" })?;
     }
     Ok(())
 }
@@ -89,12 +104,10 @@ pub fn reset(ctx: &Ctx, cfg: &Config, out: &mut dyn Write, name: &str) -> Result
     Ok(())
 }
 
-/// Local hh:mm of `ts` (UTC when `date` cannot tell).
-pub fn hhmm(r: &dyn Runner, ts: u64) -> String {
-    match r.run("date", &argv(&["-r", &ts.to_string(), "+%H:%M"])) {
-        Ok(o) if o.code == 0 => o.stdout.trim().to_string(),
-        _ => format!("{:02}:{:02} UTC", ts % 86400 / 3600, ts % 3600 / 60),
-    }
+/// `capped 02:10 · resets 07:10` while the account's latest cap holds, else `ok`.
+pub fn cap_line(cfg: &Config, r: &dyn Runner, events: &[Event], name: &str, now: u64) -> String {
+    let hhmm = |t| usage::date(r, t, "+%H:%M");
+    capped_until(cfg, events, name, now).map_or("ok".into(), |t| format!("capped {} · resets {}", hhmm(t - cfg.accounts.cap_reset_minutes * 60), hhmm(t)))
 }
 
 /// `*`-wildcard match on lowercased bytes (callers lowercase both sides).

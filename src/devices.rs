@@ -20,7 +20,7 @@ fn dir(ctx: &Ctx) -> PathBuf {
 }
 
 /// Write `v` as JSON, mode 0600.
-fn save(p: &Path, v: &impl Serialize) -> Result<()> {
+pub(crate) fn save(p: &Path, v: &impl Serialize) -> Result<()> {
     std::fs::create_dir_all(p.parent().unwrap_or(p))?;
     let _ = std::fs::remove_file(p);
     let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(p)?;

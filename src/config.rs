@@ -19,6 +19,26 @@ pub struct Config {
     /// The models `herdsman serve` offers per role (its model dropdown).
     pub models: Vec<String>,
     pub serve: Serve,
+    pub providers: Providers,
+}
+
+/// `[providers]`: API providers whose balance the Host tab shows (docs/providers.md).
+#[derive(Debug, Default, Deserialize)]
+pub struct Providers {
+    pub deepseek: Option<Provider>,
+}
+
+/// The key is read from `env_file` (else `[accounts].accounts_env`, else the environment), never from fleet.toml.
+#[derive(Debug, Deserialize)]
+pub struct Provider {
+    pub key_env: String,
+    pub env_file: Option<String>,
+    #[serde(default = "warn_below")]
+    pub warn_below: f64,
+}
+
+fn warn_below() -> f64 {
+    5.0
 }
 
 fn mcp_deny() -> Vec<String> {
@@ -41,13 +61,15 @@ pub struct Accounts {
     /// Usage-limit banner, `|`-separated substrings (default `access::CAP_PATTERN`).
     pub cap_pattern: Option<String>,
     pub cap_reset_minutes: u64,
+    /// `[accounts.usage]`: account name -> the `CLAUDE_CONFIG_DIR` of its own `claude` login, read only for the usage meter.
+    pub usage: BTreeMap<String, String>,
     #[serde(flatten)]
     pub names: BTreeMap<String, String>,
 }
 
 impl Default for Accounts {
     fn default() -> Self {
-        Accounts { accounts_env: None, cap_pattern: None, cap_reset_minutes: 300, names: BTreeMap::new() }
+        Accounts { accounts_env: None, cap_pattern: None, cap_reset_minutes: 300, usage: BTreeMap::new(), names: BTreeMap::new() }
     }
 }
 
@@ -147,6 +169,9 @@ impl Config {
     pub fn parse(text: &str) -> Result<Config> {
         let c: Config = toml::from_str(text)?;
         let raw: toml::Table = toml::from_str(text)?;
+        if let Some((k, _)) = strings("", &toml::Value::Table(raw.clone())).into_iter().find(|(_, v)| crate::lanes::mask(v) != *v) {
+            return crate::gate::refused("SECRET_IN_CONFIG", format!("{k} looks like a secret; keep keys in an env file (docs/providers.md)"));
+        }
         if raw.get("limits").and_then(|l| l.get("max_agents")).is_some() {
             eprintln!("herdsman: [limits].max_agents is no longer used; ignoring it");
         }
@@ -209,6 +234,17 @@ impl Fleet {
     /// `path` matches a `serial_paths` glob.
     pub fn serial_path(&self, path: &str) -> bool {
         self.serial_paths.iter().any(|g| glob(g.as_bytes(), path.as_bytes()))
+    }
+}
+
+/// Every string value under `v`, with its dotted key.
+fn strings(key: &str, v: &toml::Value) -> Vec<(String, String)> {
+    let sub = |k: String, v| strings(&k, v);
+    match v {
+        toml::Value::String(s) => vec![(key.into(), s.clone())],
+        toml::Value::Table(t) => t.iter().flat_map(|(k, v)| sub(format!("{key}{}{k}", if key.is_empty() { "" } else { "." }), v)).collect(),
+        toml::Value::Array(a) => a.iter().enumerate().flat_map(|(i, v)| sub(format!("{key}[{i}]"), v)).collect(),
+        _ => vec![],
     }
 }
 

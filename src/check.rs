@@ -91,6 +91,19 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
         let why = format!("{what}, orch idle {}, no ask", age(idle));
         fire(ctx, cfg, out, &events, (fleet, None), "orch-holding", json!({"key": last.to_string(), "reason": why}))?;
     }
+    // DeepSeek under `warn_below`: once per crossing (a recovery logs `provider-ok`).
+    if let Some((b, low)) = crate::usage::deepseek(ctx, cfg, r) {
+        let last = events.iter().rev().find(|e| e.fleet == "deepseek" && matches!(e.kind.as_str(), "provider-low" | "provider-ok"));
+        if low != last.is_some_and(|e| e.kind == "provider-low") {
+            let warn = cfg.providers.deepseek.as_ref().map_or(0.0, |p| p.warn_below);
+            let why = format!("balance {} {:.2} (warn below {warn})", b.currency, b.total);
+            let ev = Event::new(ctx.now, "deepseek", None, if low { "provider-low" } else { "provider-ok" }, json!({"reason": why}));
+            if low {
+                writeln!(out, "{}", plain(&ev))?;
+            }
+            emit(&ctx.state, cfg, ev)?;
+        }
+    }
     Ok(())
 }
 
