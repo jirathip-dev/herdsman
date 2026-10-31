@@ -74,6 +74,10 @@ use; `serve pending` lists requests). The approval is logged, so the waiting pag
 changes and the page POSTs `/pair/claim`, which keeps the same cookie for a year. At most 3 requests
 are open, 2 per peer address, and a new code never repeats an open one. Only the token's SHA-256 is kept, in `<state>/serve/devices.json`
 (0600); the Host tab lists paired devices with a Remove button.
+The panel reads `Approve on the Mac: herdsman serve approve <code>`. An optional `[serve] approve_hint`
+(a string, `{code}` replaced by the code) is appended after ` · `, e.g.
+`approve_hint = "or send 'pair {code}' to the owner"`; `/pair/request` returns it as a second line and
+the page sets it as text, never HTML.
 Sends pass the same Host/Origin checks, are limited to 10 a minute per device, and are refused
 `PAUSED` (paused fleet), `REV_READONLY` (reviewer lanes) or `BAD_VALUE` (empty, over 2,000
 chars, or a control character other than newline). Removing a device also needs a paired cookie. Each send logs `{"type":"prompt","via":"web","agent","device","chars"}`, never the

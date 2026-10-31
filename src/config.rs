@@ -45,11 +45,13 @@ fn mcp_deny() -> Vec<String> {
     vec!["*prod*".into()]
 }
 
-/// `[serve]`: extra `Host` names (e.g. the `*.ts.net` name of `tailscale serve`) a POST may come from.
+/// `[serve]`: extra `Host` names (e.g. the `*.ts.net` name of `tailscale serve`) a POST may come from,
+/// and `approve_hint`, appended to the pairing panel's Mac line (`{code}` substituted).
 #[derive(Debug, Default, Deserialize)]
 pub struct Serve {
     #[serde(default)]
     pub allowed_hosts: Vec<String>,
+    pub approve_hint: Option<String>,
 }
 
 /// `[accounts]`: account name -> env var holding its token, plus the settings below.

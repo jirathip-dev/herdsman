@@ -21,7 +21,7 @@ integration = "staging"
 
 [fleet.app.role.impl]
 harness = "claude"
-profile = "fleet-impl"
+profile = "lane-impl"
 EOF
 herdsman profiles sync                # per-role Claude Code folders and the lane hook
 herdsman spawn app 12 impl --dry-run  # print the plan; drop --dry-run to launch it
@@ -75,11 +75,11 @@ integration = "staging"           # merge target; main never is
 
 [fleet.app.role.impl]
 harness = "claude"                # claude | hermes | dsh
-profile = "fleet-impl"
+profile = "lane-impl"
 model = "opus"
 
 [[notify]]
-cmd = "hermes send -q -t telegram:<chat_id>"
+cmd = "notify <chat>"                # any command; one line on stdin
 on = ["stall", "lane-dead", "merged", "needs-human"]
 ```
 

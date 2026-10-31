@@ -77,11 +77,11 @@ fn gh(t: &[&str]) -> Option<String> {
     comment.then(|| "lanes never comment on GitHub: report in your pane; fleet logs routing, verdicts and the merge".into())
 }
 
-/// `herdsman spawn … design` (or pre-rename `fleet`): design lanes are conductor-only.
+/// `herdsman spawn … design` (or pre-rename `fleet`): design lanes are owner-only.
 fn design_spawn(t: &[&str]) -> Option<String> {
     let i = t.iter().position(|w| matches!(w.rsplit('/').next(), Some("herdsman" | "fleet")))?;
     (t.get(i + 1) == Some(&"spawn") && t[i + 2..].contains(&"design"))
-        .then(|| "design lanes are conductor-only: only the owner runs `herdsman spawn … design`, never a lane".into())
+        .then(|| "design lanes are owner-only: only the owner runs `herdsman spawn … design`, never a lane".into())
 }
 
 /// `gh api` sends a write: a non-GET method, or fields/input (which default to POST).

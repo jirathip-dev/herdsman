@@ -184,7 +184,7 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
     if let Err(e) = crate::check::teardown(ctx, cfg, r, out, fleet, issue) {
         writeln!(out, "teardown: {e:#}")?;
     }
-    if f.repo == "jirathip-dev/herdsman" {
+    if f.repo.ends_with("/herdsman") {
         // Dogfood fleet: say how to pick up the merged code; never run it.
         let exe = std::path::Path::new(&ctx.exe);
         let root = exe.parent().and_then(|b| b.parent()).unwrap_or(exe);

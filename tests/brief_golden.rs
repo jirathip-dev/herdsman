@@ -1,12 +1,13 @@
 //! #34: the lane briefs (impl, impl fix round, rev, design, orch) are byte-identical to staging's.
 //! Goldens in tests/golden/briefs/ were written by staging's build; `BLESS=1` rewrites them.
+//! #82: the fixture fleet is renamed `api` (`acme/api`), so the goldens carry neutral names.
 mod common;
 use common::*;
 use herdsman::events::{append, Event};
 use serde_json::json;
 use std::path::Path;
 
-const DESIGN: &str = "\n[fleet.sendmeter.role.design]\nharness = \"hermes\"\nprofile = \"fleet-design\"\n";
+const DESIGN: &str = "\n[fleet.api.role.design]\nharness = \"hermes\"\nprofile = \"fleet-design\"\n";
 
 fn fake() -> Fake {
     Fake::default()
@@ -26,19 +27,19 @@ fn fake() -> Fake {
 /// Spawn one lane and return its brief, with the temp dir replaced by `<TMP>`.
 fn brief(name: &str, issue: &str, role: &str, fail: bool) -> String {
     let d = tmpdir(&format!("brief-{name}"));
-    let c = ctx(&d, &(CONFIG.to_string() + DESIGN));
+    let c = ctx(&d, &(CONFIG.replace("jirathip-dev/sendmeter", "acme/api").replace("sendmeter", "api") + DESIGN));
     if fail {
         let body = "FAIL\n\n1. **blocking**: src/x.rs:3 off by {one}.";
         let data = json!({"verdict": "FAIL", "sha": "a".repeat(40), "body": body});
-        append(&c.state, &Event::new(10, "sendmeter", Some(12), "verdict", data)).unwrap();
+        append(&c.state, &Event::new(10, "api", Some(12), "verdict", data)).unwrap();
     }
-    let (code, out) = run(&c, &fake(), &["spawn", "sendmeter", issue, role]);
+    let (code, out) = run(&c, &fake(), &["spawn", "api", issue, role]);
     assert!(code == 0 || code == 4, "{name}: {code} {out}");
     let path = match role {
-        "orch" => d.join("state/orch-sendmeter.md"),
-        "rev" => c.worktrees.join("sendmeter/rev-12-r1/.brief.md"),
-        "design" => c.worktrees.join("sendmeter/design-12/.brief.md"),
-        _ => c.worktrees.join("sendmeter/issue-12/.brief.md"),
+        "orch" => d.join("state/orch-api.md"),
+        "rev" => c.worktrees.join("api/rev-12-r1/.brief.md"),
+        "design" => c.worktrees.join("api/design-12/.brief.md"),
+        _ => c.worktrees.join("api/issue-12/.brief.md"),
     };
     std::fs::read_to_string(path).unwrap().replace(d.to_str().unwrap(), "<TMP>")
 }

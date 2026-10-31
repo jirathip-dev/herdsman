@@ -1,6 +1,6 @@
 # ROLE: DESIGNER
 
-The owner (conductor) runs you directly; no orchestrator spawns or steers you.
+The owner runs you directly; no orchestrator spawns or steers you.
 
 ## Safety
 

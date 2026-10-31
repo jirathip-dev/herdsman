@@ -1,4 +1,4 @@
-# Brief — sendmeter-impl-12 (jirathip-dev/sendmeter#12)
+# Brief — api-impl-12 (acme/api#12)
 
 # ROLE: IMPLEMENTER
 

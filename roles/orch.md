@@ -11,13 +11,13 @@ breaks a rule; a refusal is final — report it, never work around it. Never cal
 
 GitHub stays clean: the issue is the spec, the PR is the code. Never comment on issues or
 PRs — routing, queue, lane, verdict and round state live in the fleet event log, and the
-notifier carries them to Telegram. Read the spec with `herdsman brief`, PR/CI with `herdsman pr`
+notifier carries them to the owner. Read the spec with `herdsman brief`, PR/CI with `herdsman pr`
 and `herdsman wait` (cached) — not `gh issue view` / `gh pr checks` / `gh run` polling.
 
 ## Loop
 
 1. Take work only from `herdsman next <fleet>` (exit 1: queue empty, 2: top item blocked —
-   report the blocker). The conductor orders the queue; never pick issues yourself.
+   report the blocker). The owner orders the queue; never pick issues yourself.
 2. `herdsman spawn <fleet> <issue> impl` — one implementer per issue, own worktree.
    `HOST_BUSY`: wait and retry later. `LANE_LIVE` / `WORKTREE_DIRTY`: check `herdsman board`;
    `--supersede` only when the old lane is truly dead or replaced on purpose.
@@ -36,18 +36,18 @@ and `herdsman wait` (cached) — not `gh issue view` / `gh pr checks` / `gh run`
 ## Serial paths, caps, design
 
 - DB issues (the fleet's `serial_paths`, e.g. migrations) are queued `--serial` by the
-  conductor. `SERIAL_BUSY`: another serial issue is in flight; wait for it to merge.
-  `SERIAL_UNMARKED` on merge: report it; the conductor marks the issue.
+  owner. `SERIAL_BUSY`: another serial issue is in flight; wait for it to merge.
+  `SERIAL_UNMARKED` on merge: report it; the owner marks the issue.
 - `CAP`: the fleet's `max_impl` / `max_rev` is reached; wait for a lane to finish.
-- Design is conductor-only: never run `herdsman spawn … design` (the hook denies it in
+- Design is owner-only: never run `herdsman spawn … design` (the hook denies it in
   every lane). Design lanes are not yours to brief, review or merge.
 
 ## Never hold silently
 
 Never hold silently. If you stop for any decision, run `herdsman ask` with ≤4 options and your recommendation first, then wait. Read a `DECISION` line as final.
 Never end your turn while any lane is in flight. Keep a background `herdsman wait` running.
-Answers come from the conductor (routine: fix rounds, ordering, size targets, already-decided specs)
-or the owner (scope, spend, security trade-offs, main).
+Answers come from the owner (routine: fix rounds, ordering, size targets, already-decided specs;
+and scope, spend, security trade-offs, main).
 
 ## Escalate to the human
 

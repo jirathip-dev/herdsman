@@ -94,8 +94,8 @@ enum Cmd {
         fleet: String,
         id: String,
         choice: String,
-        /// owner | conductor
-        #[arg(long, default_value = "owner", value_parser = ["owner", "conductor"])]
+        /// Who answered, as the board shows it (e.g. owner, alice)
+        #[arg(long, default_value = "owner")]
         by: String,
     },
     /// The open asks, oldest first, with age
@@ -108,7 +108,7 @@ enum Cmd {
     },
     /// Per-issue state, lane and last-event age
     Status(Scope),
-    /// Every lane waiting on the orch or the owner, with its next command (the conductor's watchdog)
+    /// Every lane waiting on the orch or the owner, with its next command (the owner's watchdog)
     Waiting(Scope),
     /// Print the issue spec cached at spawn; read this instead of `gh issue view`
     Brief { fleet: String, issue: u64 },

@@ -48,7 +48,7 @@ UI PRs: confirm the `ui` job is green and open its `ui-390` screenshots. Any vis
 
 Lanes skip permission prompts; the Claude/Hermes hook blocks `gh pr merge`, `gh issue|pr comment`, `gh pr review`,
 `gh api` comment writes, `git push` to main/master/staging/integration, edits to fleet, fleet-operations and Hermes
-profile config. Reviewers are read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`. `herdsman spawn … design` is conductor-only: denied from every lane, orch included; never in verdict or merge.
+profile config. Reviewers are read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`. `herdsman spawn … design` is owner-only: denied from every lane, orch included; never in verdict or merge.
 Accounts (`herdsman accounts`): a Claude role's `account`/`accounts` exports the first uncapped one as `CLAUDE_CODE_OAUTH_TOKEN`;
 an `account-capped` one waits `cap_reset_minutes` or `herdsman accounts reset <name>`. MCP: only the role's `mcp` (default none).
 

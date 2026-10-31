@@ -16,7 +16,7 @@ paths and model ids pass.
 
 ```toml
 [accounts]
-accounts_env = "~/.config/claude-accounts/tokens.env"   # CLAUDE_CODE_OAUTH_TOKEN_A=… lines, mode 0600
+accounts_env = "~/.config/herdsman/accounts/tokens.env"   # CLAUDE_CODE_OAUTH_TOKEN_A=… lines, mode 0600
 A = "CLAUDE_CODE_OAUTH_TOKEN_A"                          # a variable name, never the token
 B = "CLAUDE_CODE_OAUTH_TOKEN_B"
 ```
@@ -35,12 +35,12 @@ or until `herdsman accounts reset <name>`.
 login in its own config folder:
 
 ```sh
-CLAUDE_CONFIG_DIR=~/.config/claude-accounts/A claude   # then /login as account A; repeat for B, C
+CLAUDE_CONFIG_DIR=~/.config/herdsman/accounts/A claude   # then /login as account A; repeat for B, C
 ```
 
 ```toml
 [accounts.usage]
-A = "~/.config/claude-accounts/A"   # no trailing slash: it must match CLAUDE_CONFIG_DIR exactly
+A = "~/.config/herdsman/accounts/A"   # no trailing slash: it must match CLAUDE_CONFIG_DIR exactly
 ```
 
 On macOS, Claude Code keeps that login in the Keychain as a generic password. **The service name
