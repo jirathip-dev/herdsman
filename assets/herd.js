@@ -92,9 +92,11 @@ const horses0 = $('#horses');
 if (horses0) horses0.remove();
 
 B.insertAdjacentHTML('beforeend', `<div id=herd hidden><div class=hpages></div><div class=hrain></div><div class=hflash></div>
-<button type=button class=hx aria-label="close herd mode">✕</button><p class=hcap></p><div class=hq hidden></div></div>`);
+<button type=button class=hx aria-label="close herd mode">×</button><p class=hcap></p><div class=hq hidden></div></div>`);
 const H = $('#herd'), PG = H.querySelector('.hpages'), cap = $('.hcap'), info = $('.hq'), rain = $('.hrain'), flash = $('.hflash');
-H.prepend(defs);
+B.prepend(defs);
+// #58: the header's Herd button is our horse (the default coat), not an emoji.
+$('#herd-on').innerHTML = '<svg viewBox="0 0 132 100" style="--c:#c89a56;--d:#a37a3c;--m:#e8dcc0;--b:#efe7dc" aria-hidden=true><use href="#hp2"/></svg>';
 const pages = new Map();
 const POSE = { working: 1, idle: 2, unknown: 2, done: 3, blocked: 4, dead: 4 };
 const MARK = { working: '○', idle: '◦', unknown: '?', done: '✓', blocked: '!', dead: '✗' };
@@ -269,4 +271,4 @@ H.addEventListener('click', e => {
   weather(Object.assign(h, { load: k * h.limit, pressure: p, swapouts: 0, gate: why.join('; ') || null }));
   $$('.hwx button').forEach(b => b.classList.toggle('on', b === w));
 });
-herd(get('herd') === '1');
+herd(get('herd') === '1' || DBG.get('herd') === '1');
