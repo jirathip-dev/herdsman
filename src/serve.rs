@@ -1,7 +1,7 @@
 //! `herdsman serve`, the phone page (docs/serve.md): std `TcpListener`, one request at a time;
 //! `/live` SSE clients get a thread each, fed by the 1 s watcher thread.
 use crate::config::{Config, Role};
-use crate::events::{age, append, fold, plain, read, Event, IssueState};
+use crate::events::{age, append, fold, plain, read, Event, IssueState, States};
 use crate::gate::{refused, Refusal};
 use crate::host::{self, Host};
 use crate::runner::{Out, Runner};
@@ -29,7 +29,6 @@ const FILES: [(&str, &str, &[u8]); 4] = [("manifest.webmanifest", "application/m
 /// FNV-1a over the assets at build time: their `/a/<hash8>/` path.
 const VER: u32 = { let (mut h, mut k, mut i) = (0x811c_9dc5u32, 0, 0); while k < 5 { let b = ASSETS[k].2; while i < b.len() { h = (h ^ b[i] as u32).wrapping_mul(0x0100_0193); i += 1; } (k, i) = (k + 1, 0); } h };
 
-type States = BTreeMap<(String, u64), IssueState>;
 type Clients = Arc<Mutex<Vec<(Sender<String>, Option<String>)>>>;
 type Cache = Arc<Mutex<BTreeMap<String, (u64, Option<String>)>>>;
 

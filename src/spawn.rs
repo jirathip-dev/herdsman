@@ -1,7 +1,7 @@
 //! `herdsman spawn`, `adopt` and `profiles sync` (docs/lanes.md); per-harness parts live in `harness`.
 use crate::access;
 use crate::config::{Config, Fleet, Role};
-use crate::events::{emit, fold, read, Event};
+use crate::events::{emit, fold, plain, read, Event};
 use crate::gate::refused;
 use crate::harness::{self, hook_command};
 use crate::herdr;
@@ -366,7 +366,8 @@ pub fn spawn(
             // A fix round's brief carries the findings of the latest verdict if it was FAIL.
             let last = events.iter().rev().find(|e| e.is("verdict", fleet, n));
             let fix = last.filter(|e| role == "impl" && e.str("verdict") == Some("FAIL")).and_then(|e| e.str("body"));
-            (created, brief(f, n, &p, title, body, fix))
+            let decided = events.iter().filter(|e| e.is("decision", fleet, n)).map(|e| format!("\n\n{}", plain(e)));
+            (created, brief(f, n, &p, title, &decided.fold(body.to_string(), |b, d| b + &d), fix))
         }
     };
     let ws = created["result"]["workspace"]["workspace_id"].as_str().context("herdr: no workspace_id")?;

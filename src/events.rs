@@ -167,6 +167,9 @@ pub struct IssueState {
     pub verdicts: Vec<(String, String)>,
 }
 
+/// Per-issue state, keyed by (fleet, issue).
+pub type States = BTreeMap<(String, u64), IssueState>;
+
 /// The newest `spawn` of `agent`.
 pub fn last_spawn<'a>(events: &'a [Event], agent: &str) -> Option<&'a Event> {
     events.iter().rev().find(|e| e.kind == "spawn" && e.str("agent") == Some(agent))
@@ -175,10 +178,18 @@ pub fn last_spawn<'a>(events: &'a [Event], agent: &str) -> Option<&'a Event> {
 /// Events `herdsman check` and notifiers write about an issue; they are not activity.
 pub const PASSIVE: [&str; 9] = ["stall", "lane-dead", "ready-unmerged", "notify-failed", "account-capped", "orch-holding", "ask-waiting", "orch-nudged", "orch-stuck"];
 
-/// `needs-decision` events with no `decision` yet, oldest first.
+/// Why ask `a` closed: answered, its issue merged, or its lane killed, cleaned or respawned; `None` while open.
+pub fn closed(events: &[Event], a: &Event) -> Option<&'static str> {
+    let later = || events.iter().skip_while(|e| !std::ptr::eq(*e, a)).filter(|e| e.fleet == a.fleet);
+    let on = |k: &str| a.issue.is_some() && later().any(|e| e.kind == k && e.issue == a.issue);
+    let gone = later().any(|e| matches!(e.kind.as_str(), "spawn" | "lane-killed") && e.str("agent") == a.str("agent"));
+    let answered = later().any(|e| e.kind == "decision" && e.str("id") == a.str("id")).then_some("answered");
+    answered.or(on("merged").then_some("closed: merged")).or((gone || on("clean")).then_some("closed: lane gone"))
+}
+
+/// `needs-decision` events not yet closed, oldest first.
 pub fn open_asks(events: &[Event]) -> Vec<&Event> {
-    let done = |a: &Event| events.iter().any(|e| e.kind == "decision" && e.fleet == a.fleet && e.str("id") == a.str("id"));
-    events.iter().filter(|a| a.kind == "needs-decision" && !done(a)).collect()
+    events.iter().filter(|a| a.kind == "needs-decision" && closed(events, a).is_none()).collect()
 }
 
 /// Current per-issue state (the states in `roles/usage-tail.md`).

@@ -282,6 +282,18 @@ fn fix_round_brief_carries_fail_findings() {
     assert!(brief.contains("Review findings to fix") && brief.contains("src/x.rs:3 off by one"), "{brief}");
 }
 
+#[test]
+fn a_new_lane_brief_carries_the_issue_decisions() {
+    let d = tmpdir("decision-brief");
+    let c = ctx(&d, CONFIG);
+    let dec = json!({"id": "q3", "choice": "per API key", "by": "owner"});
+    append(&c.state, &Event::new(10, "sendmeter", Some(12), "decision", dec)).unwrap();
+    let (exit, out) = spawn(&c, &happy(&c, NO_AGENTS), &[]);
+    assert_eq!(exit, 0, "{out}");
+    let brief = std::fs::read_to_string(wt(&c).join(".brief.md")).unwrap();
+    assert!(brief.contains("sendmeter #12 decision q3 by owner: per API key"), "{brief}");
+}
+
 // --- #13: herdr start timeout under load ---
 
 const TIMEOUT: &str = r#"{"error":{"code":"timeout","message":"timed out waiting for agent startup"}}"#;

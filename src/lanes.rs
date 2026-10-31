@@ -1,11 +1,9 @@
 //! The page's Lanes tab (docs/serve.md): herdr agents joined with the log, grouped, plus masked pane text.
 use crate::config::Config;
-use crate::events::{Event, IssueState};
+use crate::events::{Event, States};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-
-type States = BTreeMap<(String, u64), IssueState>;
 
 #[derive(Debug, Default, Clone)]
 pub struct Lane {

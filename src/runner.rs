@@ -26,9 +26,7 @@ pub struct Real;
 
 impl Runner for Real {
     fn run(&self, prog: &str, args: &[String]) -> Result<Out> {
-        let o = Command::new(prog).args(args).output().with_context(|| format!("cannot run {prog}"))?;
-        let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
-        Ok(Out { code: o.status.code().unwrap_or(-1), stdout: text(&o.stdout), stderr: text(&o.stderr) })
+        self.run_in(prog, args, "")
     }
     fn run_in(&self, prog: &str, args: &[String], input: &str) -> Result<Out> {
         use std::io::Write;
