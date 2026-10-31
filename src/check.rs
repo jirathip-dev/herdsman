@@ -79,18 +79,21 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
     }
     // #46: an item waiting > 5 min on an idle orch prompts it once per (issue, head, state); 10 min on, `orch-stuck`.
     let waits = crate::waiting::scan(ctx, cfg, r, &events, agents.as_deref().unwrap_or_default(), true);
-    for (s, w) in waits.iter().filter(|(_, w)| w.who == "orch" && ctx.now.saturating_sub(w.since) > 300 && agents.is_some()) {
+    for (s, w) in waits.iter().filter(|(s, w)| w.who == "orch" && s.lane.as_ref() == Some(&w.lane) && ctx.now.saturating_sub(w.since) > 300 && agents.is_some()) {
+        let Some(next) = &w.next_cmd else { continue };
         let (orch, key) = (format!("{}-orch", s.fleet), format!("{}:{}", s.last_ts, w.what));
-        let line = format!("#{} {} {} ago: run {}", s.issue, w.what, age(ctx.now - w.since), w.next_cmd.as_deref().unwrap_or("?"));
+        let line = format!("#{} {} {} ago: run {next}", s.issue, w.what, age(ctx.now - w.since));
         let at = (s.fleet.as_str(), Some(s.issue));
         match events.iter().find(|e| e.is("orch-nudged", &s.fleet, s.issue) && e.str("key") == Some(&key)) {
             Some(e) if ctx.now.saturating_sub(e.ts) > 600 => fire(ctx, cfg, out, &events, at, "orch-stuck", json!({"key": key, "reason": format!("still waiting: {line}")}))?,
             Some(_) => {}
             None => {
-                let idle = agents.iter().flatten().any(|a| a["name"] == orch.as_str() && matches!(a["agent_status"].as_str(), Some("idle" | "done")));
-                let Some(pane) = last_spawn(&events, &orch).and_then(|e| e.str("pane")).filter(|_| idle) else { continue };
-                if ok(r, "herdr", &["agent", "prompt", &orch, &line]).and_then(|_| ok(r, "herdr", &["pane", "send-keys", pane, "Enter"])).is_ok() {
+                // The pane as herdr shows it now; logged before the Enter, so a failed Enter never types the line twice.
+                let a = agents.iter().flatten().find(|a| a["name"] == orch.as_str() && matches!(a["agent_status"].as_str(), Some("idle" | "done")));
+                let Some(pane) = a.and_then(|a| a["pane_id"].as_str()).or_else(|| last_spawn(&events, &orch).and_then(|e| e.str("pane")).filter(|_| a.is_some())) else { continue };
+                if ok(r, "herdr", &["agent", "prompt", &orch, &line]).is_ok() {
                     fire(ctx, cfg, out, &events, at, "orch-nudged", json!({"key": key, "reason": line}))?;
+                    let _ = ok(r, "herdr", &["pane", "send-keys", pane, "Enter"]); // unsent: `orch-stuck` follows
                 }
             }
         }

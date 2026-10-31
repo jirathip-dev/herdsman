@@ -413,12 +413,12 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 Cmd::Check => check::check(ctx, &cfg, r, out)?,
                 Cmd::Waiting { fleet, json } => {
                     let all = crate::waiting::scan(ctx, &cfg, r, &read(&ctx.state)?, &crate::host::agents(r).unwrap_or_default(), true);
-                    let rows: Vec<_> = all.into_iter().map(|x| x.1).filter(|w| matches!(w.who, "orch" | "owner") && fleet.as_ref().is_none_or(|f| *f == w.fleet)).collect();
+                    let rows: Vec<_> = all.into_iter().filter(|(s, w)| s.lane.as_ref() == Some(&w.lane)).map(|x| x.1).filter(|w| matches!(w.who, "orch" | "owner") && fleet.as_ref().is_none_or(|f| *f == w.fleet)).collect();
                     if json {
                         writeln!(out, "{}", serde_json::to_string_pretty(&rows)?)?;
                     }
                     for w in rows.iter().filter(|_| !json) {
-                        writeln!(out, "{} #{} {}: {} ({}){}", w.fleet, w.issue, w.who, w.what, crate::events::age(ctx.now.saturating_sub(w.since)), w.next_cmd.as_ref().map_or(String::new(), |c| format!(" → {c}")))?;
+                        writeln!(out, "{} #{} {}: {} ({}){}", w.fleet, w.issue, w.who, w.what, crate::events::age(ctx.now.saturating_sub(w.since)), w.next_cmd.as_deref().or((w.who == "orch").then_some("?")).map_or(String::new(), |c| format!(" → {c}")))?;
                     }
                 }
                 Cmd::Accounts { cmd: None } => access::list(ctx, &cfg, r, out)?,

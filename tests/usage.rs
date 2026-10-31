@@ -6,7 +6,6 @@ use herdsman::runner::{Out, Runner};
 use herdsman::serve::Server;
 use herdsman::usage::{epoch, lane_secs, parse_balance, parse_usage};
 use serde_json::json;
-use std::cell::RefCell;
 use std::path::Path;
 
 const DS_KEY: &str = "sk-deepseekfixturekey0123456789";
@@ -15,7 +14,7 @@ const REFRESH: &str = "sk-ant-ort01-REFRESH-fixture-secret";
 const NEW_ACCESS: &str = "sk-ant-oat01-NEWACCESS-fixture-secret";
 
 /// `Fake` that also records what each `run_in` sent on stdin.
-struct Stdin(Fake, RefCell<Vec<String>>);
+struct Stdin(Fake, Shared<Vec<String>>);
 
 impl Runner for Stdin {
     fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<Out> {
@@ -28,7 +27,7 @@ impl Runner for Stdin {
 }
 
 fn stdin(f: Fake) -> Stdin {
-    Stdin(f, RefCell::default())
+    Stdin(f, Shared::default())
 }
 
 fn http(status: u32, head: &str, body: &str) -> String {

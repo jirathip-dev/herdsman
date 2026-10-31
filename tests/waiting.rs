@@ -23,6 +23,21 @@ fn spawn(c: &herdsman::Ctx, ts: u64, n: u64, role: &str, agent: &str) {
     ev(c, ts, Some(n), "spawn", json!({"role": role, "agent": agent, "pane": format!("w1:{agent}"), "worktree": format!("/wt/{agent}")}));
 }
 
+/// A rev lane in a real worktree; `verdict` = verdict.md's text (None: not written), `old` = mtime before the spawn.
+fn rev(c: &herdsman::Ctx, ts: u64, n: u64, verdict: Option<&str>, old: bool) -> String {
+    let (agent, wt) = (format!("sendmeter-rev-{n}-r1"), c.worktrees.join(format!("rev-{n}")));
+    std::fs::create_dir_all(&wt).unwrap();
+    ev(c, ts, Some(n), "spawn", json!({"role": "rev", "agent": agent, "pane": format!("w1:{agent}"), "worktree": wt}));
+    if let Some(v) = verdict {
+        let f = std::fs::File::create(wt.join("verdict.md")).unwrap();
+        std::io::Write::write_all(&mut &f, v.as_bytes()).unwrap();
+        if old {
+            f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(ts - 5)).unwrap();
+        }
+    }
+    wt.join("verdict.md").display().to_string()
+}
+
 fn verdict(c: &herdsman::Ctx, ts: u64, n: u64, v: &str, sha: &str) {
     ev(c, ts, Some(n), "verdict", json!({"verdict": v, "sha": sha}));
 }
@@ -43,13 +58,15 @@ fn fixture(name: &str) -> (herdsman::Ctx, Fake) {
     verdict(&c, t + 20, 42, "FAIL", &sha("1"));
     spawn(&c, t + 30, 42, "impl", "sendmeter-impl-42");
     spawn(&c, t, 31, "impl", "sendmeter-impl-31");
-    for (n, v) in [(3, "FAIL"), (4, "PASS"), (5, "PASS"), (6, "")] {
+    for (n, v) in [(3, "FAIL"), (4, "PASS"), (5, "PASS"), (6, ""), (9, ""), (12, ""), (14, "")] {
         spawn(&c, t, n, "impl", &format!("sendmeter-impl-{n}"));
-        spawn(&c, t + 10, n, "rev", &format!("sendmeter-rev-{n}-r1"));
+        let file = [(6, Some("PASS\nall good\n"), false), (12, Some("PASS\n"), true), (14, Some("LGTM\n"), false)].into_iter().find(|x| x.0 == n);
+        rev(&c, t + 10, n, file.and_then(|x| x.1), file.is_some_and(|x| x.2));
         if !v.is_empty() {
             verdict(&c, t + 20, n, v, &sha(&n.to_string()));
         }
     }
+    spawn(&c, t, 13, "impl", "sendmeter-impl-13");
     spawn(&c, t, 7, "impl", "sendmeter-impl-7");
     spawn(&c, t, 8, "impl", "sendmeter-impl-8");
     ev(&c, t + 20, Some(8), "merged", json!({"pr": "9"}));
@@ -64,14 +81,20 @@ fn fixture(name: &str) -> (herdsman::Ctx, Fake) {
         .reply("gh pr view issue-4 ", &pr(&sha("4"), "green"))
         .reply("gh pr view issue-5 ", &pr(&sha("5"), "pending"))
         .reply("gh pr view issue-6 ", &pr(&sha("6"), "pending"))
+        .reply("gh pr view issue-14 ", &pr(&sha("e"), "pending"))
+        .reply("gh pr view issue-13 ", &pr(&sha("d"), "pending").replace("OPEN", "CLOSED"))
         .reply("gh pr view issue-10 ", &pr(&sha("b"), "pending"))
         .reply("git -C /wt/sendmeter-impl-10 ", &format!("{} {}", sha("c"), NOW - 60));
     (c, r)
 }
 
+/// The issues' reasons: each one's latest lane only.
 fn waits(c: &herdsman::Ctx, r: &Fake, agents: &[serde_json::Value]) -> Vec<Waiting> {
-    let cfg = Config::load(&c.config).unwrap();
-    scan(c, &cfg, r, &read(&c.state).unwrap(), agents, true).into_iter().map(|x| x.1).collect()
+    lanes(c, r, agents).into_iter().filter(|(s, w)| s.lane.as_ref() == Some(&w.lane)).map(|x| x.1).collect()
+}
+
+fn lanes(c: &herdsman::Ctx, r: &Fake, agents: &[serde_json::Value]) -> Vec<(herdsman::events::IssueState, Waiting)> {
+    scan(c, &Config::load(&c.config).unwrap(), r, &read(&c.state).unwrap(), agents, true)
 }
 
 #[test]
@@ -80,23 +103,44 @@ fn every_case_has_its_who_what_and_next_command() {
     let all = waits(&c, &r, &[json!({"name": "sendmeter-impl-11", "agent_status": "working"})]);
     let t = NOW - 1500;
     let s = |n: &str| Some(format!("herdsman {n}"));
-    let want: [(u64, &str, &str, u64, Option<String>); 10] = [
+    let want: [(u64, &str, &str, u64, Option<String>); 14] = [
         (1, "owner", "waiting on your answer (q3)", NOW - 600, None),
         (3, "orch", "review FAIL, waiting for orch to start fix round", t + 20, s("spawn sendmeter 3 impl --supersede")),
         (4, "orch", "PASS + green, waiting for merge", t + 20, s("merge sendmeter 4")),
         (5, "ci", "waiting for CI", t + 20, None),
-        (6, "orch", "verdict written, waiting for orch to record it", t + 10, s(&format!("verdict sendmeter 6 PASS|FAIL --sha {} --file verdict.md", sha("6")))),
+        (6, "orch", "verdict written, waiting for orch to record it", t + 10, s(&format!("verdict sendmeter 6 PASS --sha {} --file {}", sha("6"), c.worktrees.join("rev-6/verdict.md").display()))),
         (7, "none", "idle without pushing (check the pane)", t, None),
         (8, "none", "nothing to do (merged): clean me", t + 20, None),
+        (9, "none", "rev idle without a verdict (check the pane)", t + 10, None),
         (10, "none", "idle without pushing (check the pane)", t, None),
+        (12, "none", "rev idle without a verdict (check the pane)", t + 10, None),
+        (13, "none", "nothing to do (closed): clean me", t, None),
+        (14, "orch", "verdict written, waiting for orch to record it", t + 10, None),
         (31, "orch", "pushed 70fe5a1, waiting for orch to spawn review", NOW - 180, s("spawn sendmeter 31 rev")),
         (42, "orch", "pushed fix 605297c, waiting for orch to spawn review", NOW - 480, s("spawn sendmeter 42 rev")),
     ];
     let got: Vec<_> = all.iter().map(|w| (w.issue, w.who, w.what.as_str(), w.since, w.next_cmd.clone())).collect();
     assert_eq!(got, want.to_vec(), "a working lane (#11) waits on nothing");
-    assert_eq!(orch(&all, "sendmeter").unwrap().what, "orch idle with 5 items waiting");
-    assert_eq!(all[0].tone(NOW), "r");
-    assert_eq!((all[8].tone(NOW), all[9].tone(NOW)), ("m", "a"), "orch amber only past 5 min");
+    assert_eq!(orch(&all, "sendmeter").unwrap().what, "orch idle with 6 items waiting");
+    assert_eq!((all[0].tone(NOW), all[7].tone(NOW)), ("r", "a"), "owner red, rev idle without a verdict amber");
+    assert_eq!((all[12].tone(NOW), all[13].tone(NOW)), ("m", "a"), "orch amber only past 5 min");
+    // Every next command is one pasteable herdsman invocation: no empty args, no `PASS|FAIL`, no `?`.
+    for cmd in all.iter().filter_map(|w| w.next_cmd.as_deref()) {
+        let args: Vec<&str> = cmd.split(' ').collect();
+        assert!(args[0] == "herdsman" && args.iter().all(|a| !a.is_empty() && !a.contains(['|', '?'])), "{cmd}");
+        assert!(!cmd.contains("--sha") || args[args.iter().position(|a| *a == "--sha").unwrap() + 1].len() == 40, "{cmd}");
+    }
+}
+
+#[test]
+fn every_idle_lane_of_an_issue_gets_a_reason() {
+    let (c, r) = fixture("waiting-lanes");
+    let all = lanes(&c, &r, &[json!({"name": "sendmeter-rev-9-r1", "agent_status": "working"})]);
+    let of = |lane: &str| all.iter().find(|x| x.1.lane == lane).map(|x| (x.1.who, x.1.what.as_str()));
+    assert_eq!(of("sendmeter-rev-42-r1"), Some(("orch", "pushed fix 605297c, waiting for orch to spawn review")), "an older lane shares the issue's reason");
+    assert_eq!(of("sendmeter-impl-3"), Some(("orch", "review FAIL, waiting for orch to start fix round")));
+    assert_eq!(of("sendmeter-impl-9"), Some(("reviewer", "waiting on sendmeter-rev-9-r1 (working)")));
+    assert_eq!(of("sendmeter-rev-9-r1"), None, "a working lane waits on nothing");
 }
 
 /// The orch lane plus one pushed impl lane, both idle unless `orch` says otherwise.
@@ -109,7 +153,7 @@ fn nudge_fixture(name: &str, orch: &str) -> (herdsman::Ctx, Fake) {
 
 fn pushed(orch: &str, head: &str, at: u64) -> Fake {
     Fake::default()
-        .reply("herdr agent list", &agents(&[(ORCH, orch, "/x", "w1:p1"), ("sendmeter-impl-42", "idle", "/wt", "w1:p2")]))
+        .reply("herdr agent list", &agents(&[(ORCH, orch, "/x", "w1:p9"), ("sendmeter-impl-42", "idle", "/wt", "w1:p2")]))
         .reply("gh pr view issue-42 ", &pr(&sha(head), "pending"))
         .reply("git -C /wt/sendmeter-impl-42 ", &format!("{} {at}", sha(head)))
         .reply("herdr agent prompt", "")
@@ -133,7 +177,7 @@ fn nudge_once_per_state_then_orch_stuck_once_then_renudge_on_a_new_head() {
     let out = check(&c, &r);
     assert!(out.contains(&format!("sendmeter #42 orch-nudged: {line}")), "{out}");
     assert_eq!(r.count(&format!("herdr agent prompt {ORCH} {line}")), 1);
-    assert_eq!(r.count("herdr pane send-keys w1:p1 Enter"), 1);
+    assert_eq!(r.count("herdr pane send-keys w1:p9 Enter"), 1, "the pane as herdr shows it, not the spawn's w1:p1");
     assert_eq!(check(&c, &r), "", "no repeat on the next check");
     assert_eq!(r.count("herdr agent prompt"), 1);
 
@@ -150,6 +194,15 @@ fn nudge_once_per_state_then_orch_stuck_once_then_renudge_on_a_new_head() {
     let r2 = pushed("idle", "abc1234", c.now - 400);
     assert!(check(&c, &r2).contains("orch-nudged: #42 pushed abc1234"));
     assert_eq!((r2.count("herdr agent prompt"), kinds(&c, "orch-nudged")), (1, 2));
+}
+
+#[test]
+fn a_failed_enter_is_still_logged_so_the_line_is_never_typed_twice() {
+    let (c, r) = nudge_fixture("nudge-enter", "idle");
+    let r = r.once("herdr pane send-keys", 1, "");
+    assert!(check(&c, &r).contains("orch-nudged"));
+    check(&c, &r);
+    assert_eq!((r.count("herdr agent prompt"), kinds(&c, "orch-nudged")), (1, 1));
 }
 
 #[test]
@@ -173,7 +226,8 @@ fn waiting_lists_orch_and_owner_items_with_their_next_command() {
     assert!(!out.contains("#5 ") && !out.contains("#7 "), "ci and none items are not listed: {out}");
     let (_, j) = run(&c, &r, &["waiting", "--json"]);
     let v: serde_json::Value = serde_json::from_str(&j).unwrap();
-    assert_eq!(v.as_array().unwrap().len(), 6);
+    assert_eq!(v.as_array().unwrap().len(), 7);
+    assert!(out.contains("sendmeter #14 orch: verdict written, waiting for orch to record it (24m) → ?\n"), "unclear verdict word: {out}");
     let (_, st) = run(&c, &r, &["status", "sendmeter"]);
     assert!(st.contains("WAITING") && st.contains("pushed fix 605297c, waiting for orch to spawn review"), "{st}");
 }
@@ -190,7 +244,7 @@ fn nine_idle_lanes_render_their_reason() {
     let s = Server::new(&c, &r, None);
     let page = String::from_utf8_lossy(&s.respond("GET /?tab=lanes HTTP/1.1\r\nHost: 127.0.0.1:7777\r\n\r\n", NOW)).into_owned();
     for (tone, label) in [
-        ("a", "idle · orch idle with 5 items waiting (24m)"),
+        ("a", "idle · orch idle with 6 items waiting (24m)"),
         ("r", "idle · waiting on your answer (q3) (10m)"),
         ("a", "idle · pushed fix 605297c, waiting for orch to spawn review (8m)"),
         ("m", "idle · pushed 70fe5a1, waiting for orch to spawn review (3m)"),
