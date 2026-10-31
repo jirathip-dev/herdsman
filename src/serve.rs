@@ -347,6 +347,18 @@ impl<'a> Server<'a> {
                 }
                 _ => ("403 Forbidden", "text/plain", text("wrong or expired code: run `herdsman serve pair` for a new one\n")),
             },
+            ("POST", "/push/subscribe" | "/push/unsubscribe") if self.device(ctx, head).is_none() => {
+                ("401 Unauthorized", "text/plain", text("pair this device first: `herdsman serve pair` on the Mac\n"))
+            }
+            ("POST", "/push/subscribe") => match crate::webpush::subscribe(&ctx.state, &form(body.trim()), kind(head), now) {
+                Ok(()) => ("200 OK", "text/plain", text("alerts on\n")),
+                Err(e) => ("400 Bad Request", "text/plain", format!("{}\n", shown(&e)).into_bytes()),
+            },
+            ("POST", "/push/unsubscribe") => {
+                let id = form(body.trim()).get("id").cloned().unwrap_or_default();
+                let msg = crate::webpush::remove(&ctx.state, &[id]).map_or_else(|e| shown(&e), |n| format!("{n} alert device removed"));
+                return format!("HTTP/1.1 303 See Other\r\nLocation: /?msg={}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", enc(&msg)).into_bytes();
+            }
             ("POST", p @ ("/send" | "/answer")) => {
                 let (status, msg) = self.send(ctx, head, &form(body.trim()), p == "/answer");
                 (status, "text/plain", format!("{msg}\n").into_bytes())
@@ -804,6 +816,17 @@ impl<'a> Server<'a> {
                     hidden("unpair", "", &mt),
                     esc(&d.hash),
                     esc(&d.label)
+                );
+            }
+            // #18: the button shows only in the Home Screen app (serve.js); endpoints and keys stay on the Mac.
+            let key = crate::webpush::vapid(&ctx.state).map(|k| crate::webpush::public(&k)).unwrap_or_default();
+            h += &format!("<h2>Alerts</h2><button id=push type=button hidden data-key={}>Enable alerts</button>", base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, key));
+            for s in crate::webpush::load(&ctx.state) {
+                h += &format!(
+                    "<form method=post action=/push/unsubscribe class=role><input type=hidden name=id value={}><span>{} <span class=m>alerts on {} ago</span></span><button>Remove</button></form>",
+                    s.id(),
+                    esc(&s.label),
+                    age(ctx.now.saturating_sub(s.created))
                 );
             }
         }

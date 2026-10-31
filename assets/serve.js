@@ -10,8 +10,10 @@ function tab(t) {
   put('tab', t);
 }
 $$('nav a').forEach(a => a.onclick = e => { e.preventDefault(); tab(a.hash.slice(1)); });
-const t0 = get('tab');
+// A tapped alert opens `/?issue=N#tab`: that tab, the issue's row open.
+const t0 = location.hash.slice(1) || get('tab'), want = new URLSearchParams(location.search).get('issue');
 tab(t0 && document.getElementById(t0) ? t0 : 'queue');
+$$('details.q').forEach(d => { if (want && d.querySelector('summary>span').textContent === '#' + want) { d.open = true; d.scrollIntoView(); } });
 const MODES = ['horse', 'ascii', 'glyph'];
 function mode(m) { B.dataset.mode = m; $('#mode').textContent = m; put('mode', m); }
 mode(MODES.includes(get('mode')) ? get('mode') : 'horse');
@@ -44,7 +46,25 @@ function frag(id, html) {
     if (!o || sig(o) !== sig(r)) r.classList.add('fl');
   });
   last = Date.now();
+  alerts();
 }
+// Enable alerts: Home Screen app only (iOS allows push there alone); subscribe with the VAPID key, POST it.
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+function alerts() { const b = $('#push'); if (b) b.hidden = !standalone || !('PushManager' in window); }
+alerts();
+document.addEventListener('click', async e => {
+  const b = e.target;
+  if (b.id !== 'push') return;
+  try {
+    if (await Notification.requestPermission() !== 'granted') throw new Error('notifications are off for this app');
+    const key = Uint8Array.from(atob(b.dataset.key.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+    const reg = await navigator.serviceWorker.ready;
+    const s = (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key })).toJSON();
+    const r = await fetch('/push/subscribe', { method: 'POST', body: new URLSearchParams({ endpoint: s.endpoint, p256dh: s.keys.p256dh, auth: s.keys.auth }) });
+    b.textContent = (await r.text()).trim();
+    if (r.ok) refresh();
+  } catch (err) { b.textContent = 'alerts failed: ' + err.message; }
+});
 // Network only (the SW passes `?frag=all` through); spins ↻ until done.
 async function refresh() {
   busy = true;

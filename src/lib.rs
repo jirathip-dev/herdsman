@@ -18,6 +18,7 @@ pub mod serve;
 pub mod spawn;
 pub mod usage;
 pub mod waiting;
+pub mod webpush;
 
 pub use cli::{main_with, usage_doc};
 use anyhow::{bail, Context, Result};
