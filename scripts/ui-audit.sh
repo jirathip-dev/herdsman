@@ -18,7 +18,7 @@ run() { # url, extra args
   rm -rf "$prof"
 }
 fail=0
-for v in queue queue-open lanes sheet host events herd1 herd2; do
+for v in queue queue-open lanes sheet host events herd1 herd2 frags; do
   url="http://127.0.0.1:$port/index.html?audit=$v"
   run "$url" --screenshot="$shots/$v.png" >/dev/null
   run "$url&check=1" --dump-dom > "$shots/$v.html"

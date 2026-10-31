@@ -479,3 +479,27 @@ fn page_never_samples_the_host_and_links_immutable_assets() {
     assert!(get(&s, "/icon-192.png").contains("Cache-Control: public, max-age=86400\r\n") && get(&s, "/sw.js").contains("Cache-Control: no-store\r\n"));
     assert_eq!(r.count("vm_stat"), 0);
 }
+
+/// #67: the fetch-only reads answer `fetch()` (no Sec-Fetch headers) with UTF-8 JSON; a navigation to any of
+/// them is sent to the board, so a restored or typed fetch URL never becomes the page.
+#[test]
+fn fetch_only_reads_redirect_navigations_to_the_board() {
+    let (c, r) = (ctx(&tmpdir("frags-nav"), &config()), Fake::default());
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    let send = |path: &str, extra: &str| String::from_utf8_lossy(&s.respond(&format!("GET {path} HTTP/1.1\r\nHost: {ADDR}\r\n{extra}\r\n"), 1_000_000)).into_owned();
+    for path in ["/frags", "/?frag=all", "/herd.json"] {
+        let res = send(path, "");
+        assert!(res.starts_with("HTTP/1.1 200 OK") && res.contains("Content-Type: application/json; charset=utf-8\r\n"), "{path}: {res}");
+        let j: serde_json::Value = serde_json::from_str(&res[res.find("\r\n\r\n").unwrap() + 4..]).unwrap();
+        assert!(j.is_object(), "{path}");
+    }
+    assert!(send("/frags", "").contains("\"queue\""), "frags by element id");
+    for path in ["/frags", "/?frag=all", "/herd.json", "/lane?agent=sendmeter-impl-12"] {
+        for nav in ["Sec-Fetch-Mode: navigate\r\n", "Sec-Fetch-Dest: document\r\n", "Accept: text/html,application/xhtml+xml\r\n"] {
+            let res = send(path, nav);
+            assert!(res.starts_with("HTTP/1.1 303 See Other\r\nLocation: /\r\n"), "{path} {nav}: {res}");
+        }
+        assert!(!send(path, "Sec-Fetch-Mode: cors\r\nAccept: */*\r\n").starts_with("HTTP/1.1 303"), "{path}: fetch() is not redirected");
+    }
+    assert!(send("/", "Sec-Fetch-Mode: navigate\r\n").starts_with("HTTP/1.1 200 OK"), "the board itself");
+}

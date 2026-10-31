@@ -47,7 +47,7 @@ jobs:
         run: cargo build --release --locked
       - name: demo export
         run: HERDSMAN_HOME=demo FLEET_CONFIG=demo/fleet.toml FLEET_STATE=demo/events.jsonl ./target/release/herdsman serve --export site --demo
-      - name: ui audit at 390 px (8 views)
+      - name: ui audit at 390 px (9 views)
         run: scripts/ui-audit.sh site ui-390
       - uses: actions/upload-artifact@v4
         if: always()

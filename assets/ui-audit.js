@@ -14,7 +14,10 @@
     events: () => tab('events'),
     herd1: () => herd(true),
     herd2: () => herd(true),
+    // #67: the window navigated to the fetch-only `frags` lands on the board (the SW answers with the page).
+    frags: () => landed() ? tab('queue') : navigator.serviceWorker.ready.then(() => navigator.serviceWorker.controller || new Promise(r => navigator.serviceWorker.addEventListener('controllerchange', r, { once: true }))).then(() => location.replace('frags' + location.search)),
   };
+  const landed = () => location.pathname.endsWith('/frags');
   const ROOTS = { sheet: () => [$('#sheet')], herd1: () => [hp(0), $('.hx'), $('.hwx')], herd2: () => [hp(1), $('.hx'), $('.hwx')] };
   const CTL = 'button:not(.lr,.hh,.hqh), .pk, [role=button]', ROW = 'summary, .lr, .hh, .hqh', NAME = '.nw, .hl b';
   const CHOICE = '.ask button[name=choice], .ask .pick'; // amendment A: wraps, ≤ 4 lines, instead of 28 px
@@ -32,6 +35,7 @@
   function measure() {
     $$('[inert]').forEach(e => { e.inert = false; });
     const roots = (ROOTS[V] || (() => [B]))(), bad = [];
+    if (V === 'frags' && !(landed() && $('#queue'))) bad.push('navigating to frags did not land on the board');
     const all = sel => roots.flatMap(r => [...(r.matches(sel) ? [r] : []), ...r.querySelectorAll(sel)]).filter(seen);
     const ctl = all(CTL), rows = all(ROW);
     for (const e of ctl) {

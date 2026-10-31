@@ -347,9 +347,15 @@ impl<'a> Server<'a> {
         let ctx = &Ctx { now, ..self.ctx.clone() };
         let text = |s: &str| s.as_bytes().to_vec();
         let (mut extra, mut cache) = (String::new(), "no-store");
+        // #67: a fetch-only read never becomes the page; `fetch()` sends neither header.
+        let nav = header(head, "sec-fetch-mode") == Some("navigate") || header(head, "sec-fetch-dest") == Some("document") || header(head, "accept").is_some_and(|a| a.starts_with("text/html"));
+        let frags = path == "/frags" || path == "/" && query == "frag=all"; // `?frag=all`: old cached JS, one release
+        if method == "GET" && nav && (frags || ["/herd.json", "/lane"].contains(&path)) {
+            return b"HTTP/1.1 303 See Other\r\nLocation: /\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec();
+        }
         let (status, ctype, body) = match (method, path) {
-            ("GET", "/") if query == "frag=all" => match self.frags(ctx, false, self.device(ctx, head).is_some()) {
-                Ok(f) => ("200 OK", "application/json", serde_json::to_vec(&f.into_iter().collect::<BTreeMap<_, _>>()).unwrap_or_default()),
+            ("GET", _) if frags => match self.frags(ctx, false, self.device(ctx, head).is_some()) {
+                Ok(f) => ("200 OK", "application/json; charset=utf-8", serde_json::to_vec(&f.into_iter().collect::<BTreeMap<_, _>>()).unwrap_or_default()),
                 Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
             },
             ("GET", "/live") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
@@ -361,14 +367,14 @@ impl<'a> Server<'a> {
             ("GET", "/lane") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("GET", "/lane") if self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("pair this device to read transcripts\n")),
             ("GET", "/lane") => match self.transcript(ctx, &form(query)) {
-                Some(j) => ("200 OK", "application/json", j.into_bytes()),
+                Some(j) => ("200 OK", "application/json; charset=utf-8", j.into_bytes()),
                 None => ("404 Not Found", "text/plain", text("no such agent pane\n")),
             },
             ("GET", "/herd.json") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("GET", "/herd.json") => {
                 let loopback = header(head, "host").is_some_and(|h| ["127.0.0.1", "localhost", "[::1]"].iter().any(|l| names(l, h)));
                 match self.herd(ctx, form(query).get("weather").filter(|_| loopback).map(String::as_str)) {
-                    Ok(j) => ("200 OK", "application/json", j.to_string().into_bytes()),
+                    Ok(j) => ("200 OK", "application/json; charset=utf-8", j.to_string().into_bytes()),
                     Err(e) => ("500 Internal Server Error", "text/plain", format!("{e:#}\n").into_bytes()),
                 }
             }

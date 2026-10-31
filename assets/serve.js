@@ -73,13 +73,13 @@ document.addEventListener('click', async e => {
     if (r.ok) refresh();
   } catch (err) { b.textContent = 'alerts failed: ' + err.message; }
 });
-// Network only (the SW passes `?frag=all` through); spins ↻ until done.
+// Network only (the SW passes `frags` through); spins ↻ until done.
 async function refresh() {
   if (DEMO) return herdPull();
   busy = true;
   sync('a');
   try {
-    const j = await (await fetch(R + '?frag=all', { cache: 'no-store' })).json();
+    const j = await (await fetch(R + 'frags', { cache: 'no-store' })).json();
     for (const id in j) frag(id, j[id]);
     herdPull();
     busy = false;
@@ -87,12 +87,12 @@ async function refresh() {
     pulse();
   } catch (e) { busy = false; sync('r'); }
 }
-// Backoff 1, 2, 5, 10 s; after 30 s down, poll `?frag=all` every 10 s until SSE is back.
+// Backoff 1, 2, 5, 10 s; after 30 s down, poll `frags` every 10 s until SSE is back.
 function connect() {
   if (DEMO) return;
   if (es) es.close();
   try { es = new EventSource('live'); } catch (e) { es = null; return sync('r'); }
-  // After a gap (the first open included: a cached page may have painted) the dot is refresh()'s: amber until `?frag=all` lands.
+  // After a gap (the first open included: a cached page may have painted) the dot is refresh()'s: amber until `frags` lands.
   es.onopen = () => { if (down) refresh(); else sync('g'); down = 0; tries = 0; clearInterval(poller); poller = 0; };
   es.addEventListener('frag', e => { const j = JSON.parse(e.data); frag(j.id, j.html); sync('g'); pulse(); });
   es.addEventListener('herd', e => herdData(JSON.parse(e.data)));
