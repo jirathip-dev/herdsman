@@ -38,7 +38,8 @@ impl Harness for Dsh {
         let f = patch_file(ctx, profile);
         std::fs::create_dir_all(f.parent().context("patch dir")?)?;
         std::fs::write(&f, patch(role))?;
-        Ok(writeln!(out, "synced {} ({role})", f.display())?)
+        writeln!(out, "synced {} ({role})", f.display())?;
+        Ok(())
     }
 
     fn ready(&self, ctx: &Ctx, r: &dyn Runner, p: &Plan) -> Result<()> {

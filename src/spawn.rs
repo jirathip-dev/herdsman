@@ -173,9 +173,25 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
         Some(_) => worktree.join(".mcp.lane.json"),
     };
     let title = lane_title(&head, &issue.and_then(|n| crate::gh::cached_title(ctx, fleet, n)).unwrap_or_default());
-    let (harness, profile, model, effort) = (r.harness.clone(), r.profile_or(role), r.model.clone(), r.effort_or(&cfg.limits));
-    let (role, mcp) = (role.into(), access::mcp_servers(cfg, f, r)?);
-    Ok(Plan { agent, role, harness, profile, model, effort, branch, base, worktree, brief, kick, lane, account, mcp, mcp_file, head, title })
+    Ok(Plan {
+        agent,
+        role: role.into(),
+        harness: r.harness.clone(),
+        profile: r.profile_or(role),
+        model: r.model.clone(),
+        effort: r.effort_or(&cfg.limits),
+        branch,
+        base,
+        worktree,
+        brief,
+        kick,
+        lane,
+        account,
+        mcp: access::mcp_servers(cfg, f, r)?,
+        mcp_file,
+        head,
+        title,
+    })
 }
 
 /// The issue lane's `.brief.md` (`roles/brief*.md` templates).
@@ -421,7 +437,8 @@ pub fn adopt(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, (flee
     let mut d = lane_data(&p, pane, ws);
     d["adopted"] = json!(true);
     emit(&ctx.state, cfg, Event::new(ctx.now, fleet, issue, "spawn", d))?;
-    Ok(writeln!(out, "adopted {pane} as {} ({} @ {})", p.agent, p.branch, p.worktree.display())?)
+    writeln!(out, "adopted {pane} as {} ({} @ {})", p.agent, p.branch, p.worktree.display())?;
+    Ok(())
 }
 
 fn print_plan(out: &mut dyn Write, pj: &Value, as_json: bool) -> Result<()> {

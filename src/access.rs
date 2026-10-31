@@ -93,11 +93,13 @@ pub fn reset(ctx: &Ctx, cfg: &Config, out: &mut dyn Write, name: &str) -> Result
     anyhow::ensure!(cfg.accounts.names.contains_key(name), "unknown account '{name}'");
     let events = read(&ctx.state)?;
     if capped_until(cfg, &events, name, ctx.now).is_none() {
-        return Ok(writeln!(out, "{name} is not capped")?);
+        writeln!(out, "{name} is not capped")?;
+        return Ok(());
     }
     let cap = events.iter().rev().find(|e| e.kind == "account-capped" && e.str("account") == Some(name)).unwrap();
     emit(&ctx.state, cfg, Event::new(ctx.now, &cap.fleet, None, "account-reset", json!({"account": name})))?;
-    Ok(writeln!(out, "{name}: reset; spawns use it again")?)
+    writeln!(out, "{name}: reset; spawns use it again")?;
+    Ok(())
 }
 
 /// `capped 02:10 · resets 07:10` while the account's latest cap holds, else `ok`.

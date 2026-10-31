@@ -183,13 +183,15 @@ pub fn pause(ctx: &Ctx, out: &mut dyn Write, fleet: &str, paused: bool, via: Opt
     let cfg = Config::parse(&text)?;
     let word = if paused { "paused" } else { "resumed" };
     if cfg.fleet(fleet)?.paused == paused {
-        return Ok(writeln!(out, "{fleet}: already {word}")?);
+        writeln!(out, "{fleet}: already {word}")?;
+        return Ok(());
     }
     let new = set_in(&text, &format!("[fleet.{fleet}]"), "paused", &paused.to_string())?;
     let new_cfg = Config::parse(&new)?;
     write_atomic(&ctx.config, &new)?;
     emit(&ctx.state, &new_cfg, Event::new(ctx.now, fleet, None, if paused { "pause" } else { "resume" }, with_via(json!({}), via)))?;
-    Ok(writeln!(out, "{fleet}: {word}")?)
+    writeln!(out, "{fleet}: {word}")?;
+    Ok(())
 }
 
 /// `herdsman ask`: log a `needs-decision` for the asking lane (`HERDSMAN_LANE`, else the orch), notify, print its id.
