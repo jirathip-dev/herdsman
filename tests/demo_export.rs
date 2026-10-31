@@ -49,7 +49,11 @@ fn demo_export_writes_the_file_set_without_running_anything() {
 #[test]
 fn demo_page_is_inert_and_relative() {
     let (site, _) = export();
-    let page = std::fs::read_to_string(site.join("index.html")).unwrap();
+    let html = std::fs::read_to_string(site.join("index.html")).unwrap();
+    // #57: the scripts and styles sit under a/<hash>/, linked relatively; checked with the page.
+    let v = std::fs::read_dir(site.join("a")).unwrap().next().unwrap().unwrap().path();
+    let page = ["serve.css", "herd.css", "serve.js", "herd.js", "horses.svg"].iter().fold(html.clone(), |p, f| p + &std::fs::read_to_string(v.join(f)).unwrap());
+    assert!(html.contains(&format!("<script src=a/{}/serve.js>", v.file_name().unwrap().to_string_lossy())));
     assert!(page.contains("data-demo=1") && page.contains("id=demo>demo</span>"), "demo badge");
     assert!(page.contains("Demo with fake data. Install herdsman to run your own."));
     assert_eq!(page.matches("<span class=g>merged</span>").count(), 4, "4 merges today");
@@ -57,7 +61,7 @@ fn demo_page_is_inert_and_relative() {
     for abs in ["href=/", "href=\"/", "src=/", "src=\"/", "action=/", "fetch('/", "register('/", "EventSource('/"] {
         assert!(!page.contains(abs), "absolute URL `{abs}`");
     }
-    assert!(page.contains("rel=manifest href=manifest.webmanifest") && page.contains("serviceWorker.register('sw.js')"));
+    assert!(page.contains("rel=manifest href=manifest.webmanifest") && page.contains("serviceWorker.register(R + 'sw.js')"));
     // No pairing list, no "Enable alerts", no live stream, no POST, the transcript from lane/<agent>.json.
     assert!(!page.contains("Paired devices") && !page.contains("id=push"));
     for guard in ["function connect() {\n  if (DEMO) return;", "if (DEMO) return herdPull();", "o.method === 'POST' ? Promise.reject", "DEMO ? 'lane/' + encodeURIComponent(agent) + '.json'", "!B.dataset.ro && !DEMO) cleanable()"] {
@@ -67,4 +71,5 @@ fn demo_page_is_inert_and_relative() {
     assert!(!m.contains("\"/"), "manifest URLs relative: {m}");
     let sw = std::fs::read_to_string(site.join("sw.js")).unwrap();
     assert!(sw.contains("self.registration.scope") && !sw.contains("'/lane'"), "sw paths under its scope");
+    assert!(sw.contains(&format!("P + 'a/{}/'", v.file_name().unwrap().to_string_lossy())), "sw precaches this build's assets");
 }

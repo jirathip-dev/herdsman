@@ -154,3 +154,26 @@ pub fn run(ctx: &Ctx, r: &dyn Runner, args: &[&str]) -> (i32, String) {
     let code = herdsman::main_with(argv, ctx, r, &mut out, &mut std::io::empty());
     (code, String::from_utf8(out).unwrap())
 }
+
+/// `swift` for tests/support/webview.swift, its page based at a local server of serve's `/a/<hash>/`
+/// assets (#57: the page links them; a same-origin base lets herd.js fetch horses.svg).
+pub fn swift() -> std::process::Command {
+    static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let base = BASE.get_or_init(|| {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/", l.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (c, r) = (ctx(&tmpdir("assets"), CONFIG), Fake::default());
+            let s = herdsman::serve::Server::new(&c, &r, None);
+            for mut st in l.incoming().flatten() {
+                let mut buf = [0u8; 4096];
+                let n = std::io::Read::read(&mut st, &mut buf).unwrap_or(0);
+                let _ = std::io::Write::write_all(&mut st, &s.respond(&String::from_utf8_lossy(&buf[..n]), 1));
+            }
+        });
+        base
+    });
+    let mut c = std::process::Command::new("swift");
+    c.env("HERDSMAN_BASE", base);
+    c
+}

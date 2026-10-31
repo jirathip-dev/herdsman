@@ -40,6 +40,6 @@ final class Nav: NSObject, WKNavigationDelegate {
 }
 let nav = Nav()
 web.navigationDelegate = nav
-web.loadHTMLString(html, baseURL: nil)
+web.loadHTMLString(html, baseURL: ProcessInfo.processInfo.environment["HERDSMAN_BASE"].flatMap(URL.init(string:)))
 DispatchQueue.main.asyncAfter(deadline: .now() + 30) { print("timeout"); exit(3) }
 app.run()

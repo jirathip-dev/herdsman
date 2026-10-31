@@ -220,7 +220,7 @@ fn page_has_no_dash_placeholders() {
     run(&c, &Fake::default(), &["queue", "sendmeter", "add", "18", "12"]);
     let page = req(&Server::new(&c, &r, Some(ADDR.into())), "GET", "/", "", "", T);
     let mut html = page[page.find("<body").unwrap()..].to_string();
-    html.truncate(html.find("<script>").unwrap());
+    html.truncate(html.find("<script").unwrap());
     assert!(!html.contains(" - ") && !html.contains(">-<") && !html.contains(" · -") && !html.contains('—'), "{html}");
     assert!(html.contains("<p>#18 queued</p>"), "{html}");
     assert!(html.contains("<option value=\"\" selected>default (profile)</option>"), "unset model");
@@ -248,7 +248,9 @@ fn ascii_horse_snapshots() {
 fn vector_horses_keep_a_coat_per_name() {
     use herdsman::serve::avatar;
     let w = avatar("sendmeter-impl-12", "working");
-    assert!(w.contains("class=\"av g working\"") && w.contains("class=\"leg leg-nf\" style=\"--a:28deg\"") && w.contains("fill=\"var(--c)\""));
+    assert!(w.contains("class=\"av g working\"") && w.contains("<use href=#hp1 />"), "{w}");
+    let horses = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/horses.svg")).unwrap();
+    assert!(horses.lines().nth(1).unwrap().contains("class=\"leg leg-nf\" style=\"--a:28deg\"") && horses.contains("fill=\"var(--c)\""));
     assert!(avatar("a", "blocked").contains("class=\"av r blocked\"") && avatar("a", "done").contains("av g done"));
     let coat = |n: &str| {
         let a = avatar(n, "idle");
@@ -313,7 +315,7 @@ fn lanes_and_sheet_fit_390px() {
     ];
     for (name, mode, js) in scenes {
         let png = dir.as_ref().map_or(d.join(format!("{name}.png")), |p| std::path::Path::new(p).join(format!("{name}.png")));
-        let o = std::process::Command::new("swift").args([script, file.to_str().unwrap(), "390", "lanes", mode, png.to_str().unwrap(), &js]).output().unwrap();
+        let o = swift().args([script, file.to_str().unwrap(), "390", "lanes", mode, png.to_str().unwrap(), &js]).output().unwrap();
         let out = String::from_utf8_lossy(&o.stdout);
         let w: Vec<u32> = out.split_whitespace().filter_map(|n| n.parse().ok()).collect();
         assert!(o.status.success() && w.len() == 2, "{name}: {out} {}", String::from_utf8_lossy(&o.stderr));

@@ -71,12 +71,15 @@ function scene() {
   return `<svg class=rs viewBox="0 0 390 320" preserveAspectRatio="xMidYMax slice" aria-hidden=true>${s}</svg>`;
 }
 
-// Corral's horses (#30's port, `#horses` in the page) as <use> symbols: legs rotate by the inherited
-// `--g` (gait), manes skew by `--mane` (storm), so instances need no per-leaf DOM.
+// Corral's horses (#30's port, horses.svg next to this script) as <use> symbols, shared with the Lanes
+// avatars: legs rotate by the inherited `--g` (gait), manes skew by `--mane` (storm), so instances need no per-leaf DOM.
 const defs = document.createElementNS(NS, 'svg');
 defs.setAttribute('class', 'hdefs');
 defs.innerHTML = '<defs><linearGradient id=hgr gradientUnits=userSpaceOnUse x1=0 y1=250 x2=0 y2=640><stop offset=0 stop-color="#bcc17b"/><stop offset=".5" stop-color="#8e9c58"/><stop offset=1 stop-color="#485e3b"/></linearGradient></defs>';
-document.querySelectorAll('#horses > g.horse').forEach((g, k) => {
+fetch(document.currentScript.src.replace(/herd\.js$/, 'horses.svg')).then(r => r.text()).then(t => {
+const src = document.createElementNS(NS, 'svg');
+src.innerHTML = t;
+src.querySelectorAll('g.horse').forEach((g, k) => {
   const s = document.createElementNS(NS, 'symbol');
   s.id = 'hp' + (k + 1);
   s.setAttribute('viewBox', '0 0 132 100');
@@ -88,8 +91,7 @@ document.querySelectorAll('#horses > g.horse').forEach((g, k) => {
   s.querySelectorAll('[fill="var(--m)"],[stroke="var(--m)"]').forEach(m => m.setAttribute('style', 'transform-box:fill-box;transform-origin:100% 100%;transform:skewX(var(--mane, 0deg))'));
   defs.append(s);
 });
-const horses0 = $('#horses');
-if (horses0) horses0.remove();
+}).catch(() => {});
 
 B.insertAdjacentHTML('beforeend', `<div id=herd hidden><div class=hpages></div><div class=hrain></div><div class=hflash></div>
 <button type=button class=hx aria-label="close herd mode">×</button><p class=hcap></p><div class=hq hidden></div></div>`);

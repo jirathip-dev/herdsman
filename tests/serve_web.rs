@@ -255,7 +255,7 @@ fn page_reads_only_cached_pr_data_and_serves_pwa_assets() {
         assert!(png.starts_with(b"\x89PNG\r\n\x1a\n") && (dim(16), dim(20)) == (n, n), "icon-{n}.png dimensions");
     }
     assert!(get(&s, "/manifest.webmanifest").contains("\"display\": \"standalone\""));
-    assert!(page.contains("rel=manifest href=/manifest.webmanifest") && page.contains("serviceWorker.register('/sw.js')"));
+    assert!(page.contains("rel=manifest href=/manifest.webmanifest") && std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/serve.js")).unwrap().contains("serviceWorker.register(R + 'sw.js')"));
     assert!(page.contains("data-ts=1000000"), "render time for the stale badge");
 }
 
@@ -376,7 +376,7 @@ fn page_fits_390px_without_horizontal_scroll() {
     let page = get(&Server::new(&c, &r, Some(ADDR.into())), "/");
     let html = &page[page.find("<!doctype").unwrap()..];
     assert!(!html.contains("<table") && !html.contains("<pre"), "no wide blocks");
-    assert!(html.contains("width=device-width") && html.contains("overflow-wrap:anywhere"));
+    assert!(html.contains("width=device-width") && std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/serve.css")).unwrap().contains("overflow-wrap:anywhere"));
     assert!(html.contains("<details class=\"q\"><summary><span>#12</span>"), "rows are details");
     assert!(html.contains("class=tl>Queue rows show issue and PR titles from the …"), "title line");
     for t in ["queue", "lanes", "host", "events"] {
@@ -391,7 +391,7 @@ fn page_fits_390px_without_horizontal_scroll() {
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/webview.swift");
     for tab in ["queue", "lanes", "host", "events"] {
         for mode in ["horse", "ascii", "glyph"] {
-            let o = std::process::Command::new("swift").args([script, file.to_str().unwrap(), "390", tab, mode]).output().unwrap();
+            let o = swift().args([script, file.to_str().unwrap(), "390", tab, mode]).output().unwrap();
             let out = String::from_utf8_lossy(&o.stdout);
             let w: Vec<u32> = out.split_whitespace().filter_map(|n| n.parse().ok()).collect();
             assert!(o.status.success() && w.len() == 2, "{tab}/{mode}: {out} {}", String::from_utf8_lossy(&o.stderr));
@@ -453,4 +453,28 @@ fn queue_shows_open_work_only_and_folds_paused_retired_and_noise() {
     assert!(section("events").contains("4 × clean / notify-failed"));
     let all = get(&s, "/?all=1");
     assert!(!all.contains("× clean") && all.matches("<p class=ev>").count() > 50);
+}
+
+/// #57: a request never samples the host (serve's 10 s thread does); the page links its scripts,
+/// styles and horses under `/a/<hash8>/` (immutable, the SW's precache list) and stays `no-store`.
+#[test]
+fn page_never_samples_the_host_and_links_immutable_assets() {
+    let c = ctx(&tmpdir("assets"), &config());
+    let r = Fake::default().reply("vm_stat", "Swapouts: 100.\n").reply("sysctl", "1\n");
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    let page = get(&s, "/");
+    assert_eq!(r.count("vm_stat"), 0, "{:?}", r.calls.borrow());
+    assert!(!r.called("sysctl") && page.contains("Cache-Control: no-store") && !page.contains("<style>") && !page.contains("<script>"));
+    let i = page.find("<script src=/a/").unwrap() + 15;
+    let v = &page[i..i + 8];
+    assert!(v.chars().all(|c| c.is_ascii_hexdigit()), "{v}");
+    let sw = get(&s, "/sw.js");
+    for (f, ctype) in [("serve.css", "text/css"), ("herd.css", "text/css"), ("serve.js", "text/javascript"), ("herd.js", "text/javascript"), ("horses.svg", "image/svg+xml")] {
+        let res = get(&s, &format!("/a/{v}/{f}"));
+        assert!(res.starts_with("HTTP/1.1 200 OK") && res.contains(ctype) && res.contains("Cache-Control: public, max-age=31536000, immutable\r\n"), "{f}");
+        assert!(page.contains(&format!("/a/{v}/{f}")) || f == "horses.svg", "{f} linked");
+        assert!(sw.contains(&format!("'{f}'")) && sw.contains(&format!("P + 'a/{v}/'")), "{f} precached");
+    }
+    assert!(get(&s, "/a/00000000/serve.js").starts_with("HTTP/1.1 404 "), "another build's hash");
+    assert_eq!(r.count("vm_stat"), 0);
 }

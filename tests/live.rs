@@ -268,7 +268,7 @@ fn live_board_fits_390px() {
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/webview.swift");
     for (name, tab, js) in scenes {
         let png = dir.as_ref().map_or(d.join(format!("{name}.png")), |p| std::path::Path::new(p).join(format!("{name}.png")));
-        let o = std::process::Command::new("swift").args([script, file.to_str().unwrap(), "390", tab, "horse", png.to_str().unwrap(), &js]).output().unwrap();
+        let o = swift().args([script, file.to_str().unwrap(), "390", tab, "horse", png.to_str().unwrap(), &js]).output().unwrap();
         let out = String::from_utf8_lossy(&o.stdout);
         let w: Vec<u32> = out.split_whitespace().filter_map(|n| n.parse().ok()).collect();
         assert!(o.status.success() && w.len() == 2, "{name}: {out} {}", String::from_utf8_lossy(&o.stderr));

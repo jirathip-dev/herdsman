@@ -1,23 +1,27 @@
-// herdsman service worker: network-first for the page (offline: the last copy, which
-// shows its own "last update" time), cache-first for the static assets; the live /lane
-// transcript, the /live stream, /herd.json and `?…` reads (`?frag=all`) are never cached.
+// herdsman service worker: the page stale-while-revalidate (the cached copy paints first, the network
+// refresh replaces it on a 200; no copy yet: the network answer as is), the `a/@V/` assets precached at
+// install (immutable), other static files cache-first; the live /lane transcript, the /live stream,
+// /herd.json and `?…` reads (`?frag=all`) are never cached.
 // Paths are under the registration's scope (`/` live, e.g. `/herdsman/` for the Pages demo); one cache per scope.
-const P = self.registration ? new URL(self.registration.scope).pathname : '/', C = 'herdsman-v5:' + P;
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+const P = self.registration ? new URL(self.registration.scope).pathname : '/', C = 'herdsman-v6:' + P;
+const A = ['serve.css', 'herd.css', 'serve.js', 'herd.js', 'horses.svg'].map(f => P + 'a/@V/' + f);
+self.addEventListener('install', e => { self.skipWaiting(); e.waitUntil(caches.open(C).then(c => c.addAll(A)).catch(() => {})); });
+self.addEventListener('activate', e => e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.endsWith(':' + P) && k !== C).map(k => caches.delete(k)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', e => {
   const u = new URL(e.request.url);
   if (e.request.method !== 'GET' || u.origin !== location.origin || [P + 'lane', P + 'live', P + 'herd.json'].includes(u.pathname) || u.search) return;
   if (u.pathname === P) {
-    e.respondWith(fetch(e.request).then(r => {
+    const net = fetch(e.request).then(r => {
       const copy = r.clone();
       if (r.ok) caches.open(C).then(c => c.put(P, copy));
       return r;
-    }).catch(() => caches.match(P)));
+    });
+    e.respondWith(caches.match(P).then(m => m || net).catch(() => net));
+    e.waitUntil(net.catch(() => {}));
   } else {
     e.respondWith(caches.match(e.request).then(m => m || fetch(e.request).then(r => {
       const copy = r.clone();
-      caches.open(C).then(c => c.put(e.request, copy));
+      if (r.ok) caches.open(C).then(c => c.put(e.request, copy));
       return r;
     })));
   }
