@@ -25,8 +25,26 @@ fleet.toml changed since the page was rendered.
 Lanes are grouped like Corral: state sections blocked → working → idle → done → dead, each
 split into fleet subgroups (alphabetical, Others last), newest-changed first. Tapping a lane
 opens a bottom sheet (78 % high, drag up for full, swipe down / backdrop / Esc to close) with
-its details card and a transcript of the last ~40 masked pane lines, refreshed every 5 s
-(paired devices only, same Host/Origin checks; otherwise just the row's activity line).
+its details card and a transcript: `/lane?agent=&lines=200&before=<n>` returns up to 200 masked
+pane lines (the cap is server-side) grouped per turn (a typed prompt opens one); tool calls
+(Claude `⏺ Bash(…)`/`Read(…)` plus their indented output, Hermes `┊` runs) collapse to one line
+that taps open, long lines wrap. Refreshed every 5 s; **Load more** at the top reads older lines
+(`herdr pane read --source recent --lines <before+200>`; herdr 0.9 has no scrollback source, only
+visible|recent|recent-unwrapped|detection, so history ends where herdr's recent window does, at most
+2,000 lines back: once a read comes back short the reply says `more: false` and the button goes).
+Paired devices only, same Host/Origin checks; an unpaired phone sees "Pair this phone to see the
+conversation" with the code entry.
+
+The sheet header has **Stop** (`herdsman stop`: Esc, the agent pauses), **Kill** (a confirm shows
+`herdsman kill`'s dry-run line, e.g. `impl-42 · impl · 3 unpushed commit(s), 0 dirty file(s) →
+wip/… · pane closes, worktree kept`) and **Clean** (`herdsman clean <fleet> --lane <agent>`;
+disabled with the reason, e.g. "not merged", "live agent"). Each POSTs `/act {agent, op, confirm}`:
+a paired device, the Host/Origin checks and the 10-a-minute limit, logged
+`{"type":"act","via":"web","agent","device","op"}` (dry runs are not logged). Typing `/` first in
+the reply box lists `/stop`, `/kill`, `/clean` (the actions) and `/compact`, `/clear`, `/status`
+(sent to the agent as text), filtered as you type; tap or Enter picks. Inputs are 16 px (iOS
+never zooms), the page under the sheet is scroll-locked and the sheet follows `visualViewport`,
+so the composer stays above the keyboard and is still there when it closes.
 
 The sheet's reply box sends text to that agent (`herdr agent prompt` + Enter; dsh lanes:
 `herdr pane send-text` + Enter). A device must be paired once: `herdsman serve pair` prints a

@@ -67,7 +67,7 @@ main{transition:transform .2s}
 @media (prefers-reduced-motion:reduce){.run b,.px .leg{animation:none!important}.run b:last-child{visibility:hidden}}
 #sheet{position:fixed;inset:0;z-index:2}
 .bd{position:absolute;inset:0;background:#000a}
-.sh{position:absolute;left:0;right:0;bottom:0;height:78vh;height:78dvh;display:flex;flex-direction:column;background:var(--bg);border-top:1px solid #30363d;border-radius:14px 14px 0 0;padding:0 12px env(safe-area-inset-bottom);transition:height .2s}
+.sh{position:absolute;left:0;right:0;bottom:0;height:78vh;height:78dvh;max-height:100%;display:flex;flex-direction:column;background:var(--bg);border-top:1px solid #30363d;border-radius:14px 14px 0 0;padding:0 12px env(safe-area-inset-bottom);transition:height .2s}
 .sh.full{height:100vh;height:100dvh;border-radius:0}
 .grip{flex:none;height:24px;touch-action:none;cursor:grab}
 .grip::after{content:"";display:block;width:40px;height:5px;margin:9px auto;border-radius:3px;background:#30363d}
@@ -77,9 +77,24 @@ main{transition:transform .2s}
 .b{margin:0;padding:6px 8px;border-radius:10px;background:#161b22;white-space:pre-wrap;font-size:11px;max-width:92%}
 .b.me{align-self:flex-end;background:#1f3a5f}
 .reply,.pairf{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;flex:none}
-.reply textarea,.pairf input{flex:1;min-width:0;font:inherit;color:var(--fg);background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px;min-height:44px;resize:none}
+.reply textarea,.pairf input{flex:1;min-width:0;font:inherit;color:var(--fg);background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px;min-height:44px;resize:none;font-size:16px}
 .pairf p{flex-basis:100%;margin:0;font-size:12px}
 .st{flex:none;margin:0;font-size:12px;min-height:1.5em}
 .ask{border:1px solid var(--r);background:color-mix(in srgb,var(--r) 15%,transparent);border-radius:8px;padding:8px;margin:8px 0}
 .ask b{color:var(--r)}.ask form{display:flex;flex-wrap:wrap;gap:6px}.ask input[name=text]{flex:1;min-width:8em;font:inherit}
 .ask form button[name]{order:-1}
+/* #43: sheet actions, kill/clean confirm, `/` menu, per-turn transcript, tool calls collapsed; the page locked under the sheet. */
+.lock,.lock body{overflow:hidden;overscroll-behavior:none}
+.lock body{position:fixed;left:0;right:0}
+.acts,.cf{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 0}
+.acts button{min-height:36px;font-size:12px}
+.acts [data-op=kill],.cf .yes{color:var(--r)}
+.cf{border:1px solid var(--r);border-radius:8px;padding:6px 8px}.cf p{flex-basis:100%;margin:0;font-size:12px}
+.cmds{flex:none;list-style:none;margin:0;padding:0;border:1px solid #30363d;border-radius:6px}
+.cmds li{padding:10px;min-height:44px;border-bottom:1px solid var(--line);cursor:pointer}
+.turn{display:flex;flex-direction:column;gap:4px}
+.tool{border:0;font-size:11px}.tool summary{display:block;min-height:0;padding:4px 8px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tool summary::before{content:"▸ "}.tool[open] summary::before{content:"▾ "}
+.tool pre{margin:0;padding:0 8px 4px;white-space:pre-wrap;color:var(--mute)}
+.more{align-self:center;min-height:36px;font-size:12px}
+.unp{margin:auto;padding:12px;text-align:center;border:1px solid var(--a);border-radius:8px;color:var(--a)}

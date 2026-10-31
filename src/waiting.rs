@@ -70,6 +70,7 @@ pub fn waiting_on(events: &[Event], s: &IssueState, head: Option<(&str, u64)>, p
             let what = format!("pushed {}{}, waiting for orch to spawn review", if s.rounds > 0 { "fix " } else { "" }, &pushed[..7.min(pushed.len())]);
             w("orch", &what, head.map_or(s.last_ts, |h| h.1.max(s.last_ts)), cmd("spawn", " rev"))
         }
+        "impl" | "fix" if s.last_event == "lane-killed" => w("orch", "lane killed, waiting for orch to respawn impl", s.last_ts, cmd("spawn", " impl")),
         "impl" | "fix" => w("none", "idle without pushing (check the pane)", s.last_ts, None),
         st => w("none", &format!("nothing to do ({st})"), s.last_ts, None),
     }
@@ -81,7 +82,9 @@ pub fn scan(ctx: &Ctx, cfg: &Config, r: &dyn Runner, events: &[Event], agents: &
     let mut out = vec![];
     let busy = |l: &str| agents.iter().any(|a| a["name"] == l && a["agent_status"] == "working");
     for s in fold(events).into_values().filter(|s| cfg.fleet.contains_key(&s.fleet)) {
-        let Some(lane) = s.lane.clone() else { continue };
+        // #43: after a `lane-killed`, the issue's surviving lane carries its reason (a killed rev: spawn rev again).
+        let Some(lane) = s.lane.clone().or_else(|| s.lanes.get("impl").or(s.lanes.get("rev")).cloned()) else { continue };
+        let s = IssueState { lane: Some(lane.clone()), ..s };
         if busy(&lane) {
             let who = if s.lanes.get("rev") == Some(&lane) { "reviewer" } else { "none" };
             let w = Waiting { fleet: s.fleet.clone(), issue: s.issue, lane: lane.clone(), who, what: format!("waiting on {lane} (working)"), since: s.last_ts, next_cmd: None };

@@ -101,8 +101,10 @@ fn sheet_transcript_is_the_masked_pane_tail() {
     assert!(res.starts_with("HTTP/1.1 200 OK") && res.contains("application/json"), "{res}");
     let v: serde_json::Value = serde_json::from_str(&res[res.find("\r\n\r\n").unwrap() + 4..]).unwrap();
     assert_eq!(v["harness"], "claude");
-    assert_eq!(v["lines"].as_array().unwrap().len(), 5);
-    assert!(r.called("herdr pane read w1:p2 --source recent --lines 80"));
+    let tool = |head: &str, body: &str| json!({"tool": head, "body": body});
+    let turns = json!([{"me": null, "items": [tool("⏺ Read(src/serve.rs)", "  ⎿ Read 120 lines")]}, {"me": "> fix the test", "items": [tool("⏺ Bash(cargo test)", "  ⎿ ok")]}]);
+    assert_eq!((&v["turns"], &v["before"], &v["more"]), (&turns, &json!(5), &json!(false)));
+    assert!(r.called("herdr pane read w1:p2 --source recent --lines 200"));
     assert!(req(&s, "GET", "/lane?agent=nobody", "", &cookie, T).starts_with("HTTP/1.1 404 "));
 }
 
@@ -277,13 +279,18 @@ fn lanes_and_sheet_fit_390px() {
     let cookie = paired(&s, &c);
     let lane = body(req(&s, "GET", "/lane?agent=sendmeter-impl-12", "", &cookie, T));
     let (pair, sent) = (body(req(&s, "POST", "/send", "agent=sendmeter-impl-12&text=x", "", T)), body(req(&s, "POST", "/send", "agent=sendmeter-impl-12&text=rerun+the+tests", &cookie, T)));
-    // fetch() answered with this server's own responses.
-    let stub = |send: (u16, &str)| {
+    // fetch() answered with this server's own responses (`/act`: clean refused, kill's dry-run line with a wip ref).
+    let mut more: serde_json::Value = serde_json::from_str(&lane).unwrap();
+    more["more"] = json!(true);
+    let kill = "sendmeter-impl-12 · impl · 3 unpushed commit(s), 0 dirty file(s) → wip/sendmeter-impl-12-20261031-1200 · pane closes, worktree kept; dry run: nothing changed; pass --yes to kill";
+    let fake = |lane: (u16, &str), send: (u16, &str)| {
         format!(
-            "window.fetch = async u => u.startsWith('/lane') ? new Response({}, {{status: 200}}) : new Response({}, {{status: {}}});",
-            json!(lane), json!(send.1), send.0
+            "window.fetch = async (u, o) => u.startsWith('/lane') ? new Response({}, {{status: {}}}) : u === '/act' ? \
+             (o.body.get('op') === 'clean' ? new Response('REFUSED UNSAFE_CLEAN: sendmeter-impl-12: not merged', {{status: 409}}) : new Response({}, {{status: 200}})) : new Response({}, {{status: {}}});",
+            json!(lane.1), lane.0, json!(kill), json!(send.1), send.0
         )
     };
+    let stub = |send: (u16, &str)| fake((200, &lane), send);
     let open = "open(document.querySelector('.lane[data-agent=\"sendmeter-impl-12\"]'))";
     let submit = "document.querySelector('.reply textarea').value = 'rerun the tests'; document.querySelector('.reply').requestSubmit()";
     let dir = std::env::var("HERDSMAN_SNAPSHOTS").ok();
@@ -299,6 +306,10 @@ fn lanes_and_sheet_fit_390px() {
         ("sheet-full", "horse", format!("{}; {open}; sh.classList.add('full')", stub((200, &sent)))),
         ("pairing-prompt", "horse", format!("{}; {open}; {submit}", stub((401, &pair)))),
         ("reply-sent", "horse", format!("{}; {open}; {submit}", stub((200, &sent)))),
+        ("transcript-more", "horse", format!("{}; {open}; sh.classList.add('full'); setTimeout(() => document.querySelector('.tool').open = true, 100)", fake((200, &more.to_string()), (200, &sent)))),
+        ("slash-menu", "horse", format!("{}; {open}; ta.value = '/c'; ta.dispatchEvent(new Event('input'))", stub((200, &sent)))),
+        ("kill-confirm", "horse", format!("{}; {open}; run('kill')", stub((200, &sent)))),
+        ("sheet-unpaired", "horse", format!("{}; {open}", fake((401, "pair this device to read transcripts"), (401, &pair)))),
     ];
     for (name, mode, js) in scenes {
         let png = dir.as_ref().map_or(d.join(format!("{name}.png")), |p| std::path::Path::new(p).join(format!("{name}.png")));

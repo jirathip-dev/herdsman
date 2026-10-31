@@ -320,7 +320,7 @@ impl<'a> Server<'a> {
             },
             ("GET", "/lane") if !self.allowed(ctx, head) => ("403 Forbidden", "text/plain", text("forbidden: foreign Host or Origin\n")),
             ("GET", "/lane") if self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("pair this device to read transcripts\n")),
-            ("GET", "/lane") => match self.transcript(ctx, form(query).get("agent").map_or("", String::as_str)) {
+            ("GET", "/lane") => match self.transcript(ctx, &form(query)) {
                 Some(j) => ("200 OK", "application/json", j.into_bytes()),
                 None => ("404 Not Found", "text/plain", text("no such agent pane\n")),
             },
@@ -359,8 +359,8 @@ impl<'a> Server<'a> {
                 let msg = crate::webpush::remove(&ctx.state, &[id]).map_or_else(|e| shown(&e), |n| format!("{n} alert device removed"));
                 return format!("HTTP/1.1 303 See Other\r\nLocation: /?msg={}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", enc(&msg)).into_bytes();
             }
-            ("POST", p @ ("/send" | "/answer")) => {
-                let (status, msg) = self.send(ctx, head, &form(body.trim()), p == "/answer");
+            ("POST", p @ ("/send" | "/answer" | "/act")) => {
+                let (status, msg) = self.send(ctx, head, &form(body.trim()), p);
                 (status, "text/plain", format!("{msg}\n").into_bytes())
             }
             ("POST", _) => ("404 Not Found", "text/plain", text("not found\n")),
@@ -390,8 +390,8 @@ impl<'a> Server<'a> {
         devices::find(ctx, header(head, "cookie").unwrap_or_default())
     }
 
-    /// The reply box (or a blocked menu's option): a paired device (cookie) prompts one agent, at most 10 sends a minute.
-    fn send(&self, ctx: &Ctx, head: &str, f: &BTreeMap<String, String>, pick: bool) -> (&'static str, String) {
+    /// The reply box (or a blocked menu's option, or a sheet action): a paired device (cookie) prompts one agent, at most 10 sends a minute.
+    fn send(&self, ctx: &Ctx, head: &str, f: &BTreeMap<String, String>, path: &str) -> (&'static str, String) {
         let Some(dev) = self.device(ctx, head) else {
             return ("401 Unauthorized", "pair this device: run `herdsman serve pair` on the Mac".into());
         };
@@ -402,8 +402,9 @@ impl<'a> Server<'a> {
             return ("429 Too Many Requests", "10 sends a minute: wait a moment".into());
         }
         times.push(ctx.now);
-        let res = if pick { self.pick(ctx, &dev, f) } else { self.prompt(ctx, &dev, f) };
-        if pick { self.purge(); self.kick.store(true, Relaxed); }
+        let (pick, act) = (path == "/answer", path == "/act");
+        let res = if pick { self.pick(ctx, &dev, f) } else if act { self.act(ctx, &dev, f) } else { self.prompt(ctx, &dev, f) };
+        if pick || act { self.purge(); self.kick.store(true, Relaxed); }
         match res {
             Ok(msg) => ("200 OK", msg),
             Err(e) => ("409 Conflict", shown(&e)),
@@ -477,12 +478,38 @@ impl<'a> Server<'a> {
         Ok(format!("sent to {agent}"))
     }
 
-    /// The sheet's transcript: the agent's last 40 pane lines, masked, as JSON.
-    fn transcript(&self, ctx: &Ctx, agent: &str) -> Option<String> {
+    /// A sheet action (`herdsman stop|kill|clean --lane`; kill and clean dry-run without `confirm=1`); logs `act` unless a dry run.
+    fn act(&self, ctx: &Ctx, dev: &devices::Device, f: &BTreeMap<String, String>) -> Result<String> {
+        let (g, mut out, cfg) = (|k: &str| f.get(k).map_or("", String::as_str), vec![], Config::load(&ctx.config)?);
+        let (agent, yes) = (g("agent"), g("confirm") == "1");
+        let sp = crate::events::last_spawn(&read(&ctx.state)?, agent).map(|e| (e.fleet.clone(), e.issue));
+        let Some((fleet, issue)) = sp else { return refused("NO_SUCH_AGENT", format!("no lane `{agent}` in the log")) };
+        match g("op") {
+            "stop" => crate::check::stop(ctx, &cfg, self.r, &mut out, agent)?,
+            "kill" => crate::check::kill(ctx, &cfg, self.r, &mut out, agent, yes)?,
+            "clean" => crate::check::clean(ctx, &cfg, self.r, &mut out, Some(&fleet), (None, Some(agent)), yes)?,
+            op => return refused("BAD_VALUE", format!("op is stop, kill or clean, not `{op}`")),
+        }
+        if yes || g("op") == "stop" {
+            let d = serde_json::json!({"via": "web", "agent": agent, "device": dev.label, "op": g("op")});
+            append(&ctx.state, &Event::new(ctx.now, &fleet, issue, "act", d))?;
+        }
+        Ok(String::from_utf8_lossy(&out).trim().replace('\n', "; "))
+    }
+
+    /// The sheet's transcript: up to 200 masked lines `before` the newest (load more), grouped per turn, as JSON.
+    fn transcript(&self, ctx: &Ctx, q: &BTreeMap<String, String>) -> Option<String> {
+        let n = |k: &str, d: usize| q.get(k).and_then(|v| v.parse().ok()).unwrap_or(d);
+        let (lines, before) = (n("lines", 200).min(200), n("before", 0).min(2000));
         let (cfg, events) = (Config::load(&ctx.config).ok()?, read(&ctx.state).ok()?);
-        let l = self.lanes(ctx.now, &cfg, &events, &fold(&events))?.into_iter().find(|l| l.name == agent)?;
-        let screen = self.cached(ctx.now, 5, "herdr", &["pane", "read", l.pane.as_deref()?, "--source", "recent", "--lines", "80"])?;
-        Some(serde_json::json!({"harness": l.harness, "lines": lanes::tail(&screen, 40)}).to_string())
+        let l = self.lanes(ctx.now, &cfg, &events, &fold(&events))?.into_iter().find(|l| Some(&l.name) == q.get("agent"))?;
+        let want = (before + lines).to_string();
+        let screen = self.cached(ctx.now, 5, "herdr", &["pane", "read", l.pane.as_deref()?, "--source", "recent", "--lines", &want])?;
+        let all = lanes::tail(&screen, before + lines);
+        let page = &all[..all.len().saturating_sub(before)];
+        // `recent` is herdr's whole window: a short read (or the 2000 clamp) means nothing older.
+        let more = all.len() == before + lines && before + lines <= 2000;
+        Some(serde_json::json!({"harness": l.harness, "turns": lanes::turns(page), "before": before + page.len(), "more": more}).to_string())
     }
 
     /// Run one form write; the line shown on the page (CLI output, or `REFUSED <CODE>: …` via `shown`).

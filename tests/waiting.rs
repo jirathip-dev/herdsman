@@ -257,4 +257,32 @@ fn nine_idle_lanes_render_their_reason() {
         assert!(page.contains(&format!("<span class={tone}>{label}</span>")), "{label}:\n{page}");
     }
     assert!(!page.contains("<span class=a>idle</span>"), "no bare idle row");
+    // #43: the sheet header is the row's card (reason included) above the Stop / Kill / Clean actions.
+    assert!(page.contains("<div class=card hidden><p>#42</p><p>idle · pushed fix 605297c"), "{page}");
+    assert!(page.contains("<div class=top></div><div class=acts><button type=button data-op=stop>Stop</button>"));
+}
+
+/// #43: a killed lane falls back to its prior state; the issue's surviving lane tells the orch what to respawn.
+#[test]
+fn a_killed_lane_waits_on_the_orch_to_respawn_it() {
+    let c = ctx(&tmpdir("waiting-killed"), CONFIG);
+    let t = NOW - 1500;
+    spawn(&c, t, 42, "impl", "sendmeter-impl-42");
+    spawn(&c, t + 10, 42, "rev", "sendmeter-rev-42-r1");
+    ev(&c, t + 20, Some(42), "lane-killed", json!({"role": "rev", "agent": "sendmeter-rev-42-r1"}));
+    spawn(&c, t, 3, "impl", "sendmeter-impl-3");
+    spawn(&c, t + 10, 3, "rev", "sendmeter-rev-3-r1");
+    verdict(&c, t + 20, 3, "FAIL", &sha("3"));
+    spawn(&c, t + 30, 3, "impl", "sendmeter-impl-3");
+    ev(&c, t + 40, Some(3), "lane-killed", json!({"role": "impl", "agent": "sendmeter-impl-3"}));
+    let r = Fake::default()
+        .reply("gh pr view issue-42 ", &pr(&sha("605297c"), "pending"))
+        .reply("git -C /wt/sendmeter-impl-42 ", &format!("{} {}", sha("605297c"), NOW - 480))
+        .reply("gh pr view issue-3 ", &pr(&sha("3"), "pending"));
+    let got: Vec<_> = waits(&c, &r, &[]).into_iter().map(|w| (w.issue, w.lane, w.who, w.what, w.next_cmd)).collect();
+    let s = |n: &str| Some(format!("herdsman {n}"));
+    assert_eq!(got, vec![
+        (3, "sendmeter-rev-3-r1".into(), "orch", "lane killed, waiting for orch to respawn impl".into(), s("spawn sendmeter 3 impl")),
+        (42, "sendmeter-impl-42".into(), "orch", "pushed 605297c, waiting for orch to spawn review".into(), s("spawn sendmeter 42 rev")),
+    ]);
 }

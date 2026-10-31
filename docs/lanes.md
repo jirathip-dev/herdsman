@@ -25,6 +25,15 @@ herdsman clean --yes                  # reclaim merged or closed-issue lanes
 - `WORKTREE_DIRTY`: unpushed or uncommitted work from no known lane.
 - `SERIAL_BUSY`, `CAP`, `MCP_FORBIDDEN`, `MERGED`: see `herdsman help --agent`.
 
+`herdsman stop <agent>` sends Esc (logs `stop`). `herdsman kill <agent>` prints what is lost
+(state, unpushed commits, dirty files, open PR); with `--yes` it commits dirty files as `wip: kill
+snapshot`, pushes the branch to `wip/<agent>-<yyyymmdd-hhmm>` (never main/staging, never force;
+refused `SECRET_IN_WIP` when the diff has a secret-looking value), closes the pane and logs
+`lane-killed`. The worktree stays (an orch's checkout is never snapshotted); a killed impl goes back
+to `queued` (or `fix(n)`), a killed review to the state before it, both re-spawnable.
+`herdsman clean <fleet> --lane <agent>` applies `clean`'s safety to one lane and refuses
+`UNSAFE_CLEAN` with the reason.
+
 `--supersede` kills the old agent and logs it. If `herdr agent start` times out but the
 harness came up in the pane, spawn names the agent and logs the lane anyway; if nothing
 came up it closes the pane and logs nothing. `herdsman adopt` records a lane by hand.

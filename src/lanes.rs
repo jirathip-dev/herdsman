@@ -196,3 +196,34 @@ pub fn pending(screen: &str) -> Option<(String, Vec<String>)> {
         false => Some((question(&lines)?, vec![])),
     }
 }
+
+/// Transcript lines per turn (a typed `❯`/`>`/`›` prompt opens one, as `me`): text runs, and tool calls
+/// (Claude `⏺ Name(…)` plus its indented/`⎿` output, Hermes `┊` runs) as `{"tool": head, "body": …}`.
+pub fn turns(lines: &[String]) -> Vec<Value> {
+    let mut out: Vec<Value> = vec![];
+    for l in lines {
+        let t = l.trim_start();
+        let typed = t.starts_with(['❯', '>', '›']);
+        if out.is_empty() || typed {
+            out.push(serde_json::json!({"me": typed.then_some(t), "items": []}));
+            if typed {
+                continue;
+            }
+        }
+        let items = out.last_mut().and_then(|t| t["items"].as_array_mut()).expect("a turn");
+        let head = t.strip_prefix("⏺ ").and_then(|r| r.split_once('(')).is_some_and(|(n, _)| !n.is_empty() && n.chars().all(char::is_alphanumeric));
+        let tool = items.last().is_some_and(|i| i.get("tool").is_some());
+        let (k, v) = match items.last_mut() {
+            Some(i) if tool && !head && (l.starts_with(' ') || t.starts_with(['⎿', '┊'])) => ("body", i),
+            Some(i) if !tool && !head && !t.starts_with('┊') => ("text", i),
+            _ => {
+                let k = if head || t.starts_with('┊') { "tool" } else { "text" };
+                items.push(serde_json::json!({k: t}));
+                continue;
+            }
+        };
+        let s = v[k].as_str().unwrap_or_default();
+        v[k] = Value::from(if s.is_empty() { l.clone() } else { format!("{s}\n{l}") });
+    }
+    out
+}
