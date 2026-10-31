@@ -15,9 +15,10 @@ const t0 = location.hash.slice(1) || get('tab'), want = new URLSearchParams(loca
 tab(t0 && document.getElementById(t0) ? t0 : 'queue');
 $$('details.q').forEach(d => { if (want && d.querySelector('summary>span').textContent === '#' + want) { d.open = true; d.scrollIntoView(); } });
 const MODES = ['horse', 'ascii', 'glyph'];
-function mode(m) { B.dataset.mode = m; $('#mode').textContent = m; put('mode', m); }
+// The mode button sits in the Lanes tab (swapped with it): delegated, relabelled after each swap.
+function mode(m) { B.dataset.mode = m; const b = $('#mode'); if (b) b.textContent = m; put('mode', m); }
 mode(MODES.includes(get('mode')) ? get('mode') : 'horse');
-$('#mode').onclick = () => mode(MODES[(MODES.indexOf(B.dataset.mode) + 1) % MODES.length]);
+document.addEventListener('click', e => { if (e.target.id === 'mode') mode(MODES[(MODES.indexOf(B.dataset.mode) + 1) % MODES.length]); });
 // Sync dot: g = live and up to date (pulses on an update), a = reconnecting (↻ spins), r = offline.
 const dot = $('#dot'), rf = $('#rf');
 let last = Number(B.dataset.ts) * 1000, es = null, down = Date.now(), tries = 0, poller = 0, busy = false;
@@ -47,6 +48,7 @@ function frag(id, html) {
   });
   last = Date.now();
   alerts();
+  if (id === 'lanes') mode(B.dataset.mode);
 }
 // Enable alerts: Home Screen app only (iOS allows push there alone); subscribe with the VAPID key, POST it.
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;

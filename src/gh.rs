@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const PR_FIELDS: &str = "number,state,baseRefName,headRefOid,mergeable,statusCheckRollup";
+pub const PR_FIELDS: &str = "number,title,state,baseRefName,headRefOid,mergeable,statusCheckRollup";
 pub const PR_TTL: u64 = 60;
 
 fn cache_path(ctx: &Ctx, kind: &str, fleet: &str, issue: u64) -> PathBuf {
