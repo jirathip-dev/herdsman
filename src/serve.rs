@@ -45,7 +45,7 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
     let (h, w) = (s.host.clone(), Server { fresh: true, cache: s.cache.clone(), clients: s.clients.clone(), kick: s.kick.clone(), host: s.host.clone(), ..Server::new(ctx, r, s.addr.clone()) });
     std::thread::scope(|sc| {
         // #57: the host every 10 s (its 2 s vm_stat delta included) here, never on a request.
-        sc.spawn(move || loop { *h.lock().unwrap_or_else(|e| e.into_inner()) = host::sample(r); std::thread::sleep(Duration::from_secs(10)) });
+        sc.spawn(move || loop { *lock(&h) = host::sample(r); std::thread::sleep(Duration::from_secs(10)) });
         sc.spawn(move || loop {
             w.tick();
             std::thread::sleep(Duration::from_secs(1));
@@ -59,12 +59,17 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
 struct Memo<'a>(&'a dyn Runner, &'a Cache, u64, u64);
 impl Runner for Memo<'_> {
     fn run(&self, prog: &str, args: &[String]) -> Result<Out> {
-        let (key, cache) = (format!("{prog} {}", args.join(" ")), || self.1.lock().unwrap_or_else(|e| e.into_inner()));
+        let (key, cache) = (format!("{prog} {}", args.join(" ")), || lock(self.1));
         let hit = cache().get(&key).filter(|(t, _)| self.2 >= *t && self.2 - t < self.3).cloned();
         let (t, out) = hit.unwrap_or_else(|| (self.2, self.0.run(prog, args).ok().filter(|o| o.code == 0).map(|o| o.stdout)));
         cache().insert(key, (t, out.clone()));
         Ok(out.map_or(Out { code: 1, ..Out::default() }, |stdout| Out { stdout, ..Out::default() }))
     }
+}
+
+/// The mutex's data, even after a thread panicked holding it.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn hash(s: &impl Hash) -> u64 {
@@ -261,7 +266,7 @@ impl<'a> Server<'a> {
             }
         }
         let req = String::from_utf8_lossy(&buf).replacen("\r\n", &format!("\r\nX-Peer: {}\r\n", s.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default()), 1);
-        let mut clients = self.clients.lock().unwrap_or_else(|e| e.into_inner());
+        let mut clients = lock(&self.clients);
         clients.retain(|c| c.0.send(String::new()).is_ok());
         if req.starts_with("GET /live ") && self.allowed(self.ctx, &req) && clients.len() < 8 {
             s.set_write_timeout(Some(Duration::from_secs(10)))?;
@@ -297,7 +302,7 @@ impl<'a> Server<'a> {
         let mut w = self.watch.borrow_mut();
         let now = crate::now();
         let known: Vec<String> = devices::load(self.ctx).into_iter().map(|d| d.hash).collect();
-        self.clients.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.1.as_ref().is_none_or(|h| known.contains(h)));
+        lock(&self.clients).retain(|c| c.1.as_ref().is_none_or(|h| known.contains(h)));
         let log = std::fs::metadata(&self.ctx.state).ok().map(|m| (m.len(), m.modified().ok()));
         let kicked = self.kick.swap(false, Relaxed);
         if kicked { self.purge() }
@@ -307,14 +312,14 @@ impl<'a> Server<'a> {
             let out = herdr::agent_list(self.r);
             changed |= hash(&out) != w.herdr.1;
             w.herdr = (now, hash(&out));
-            self.cache.lock().unwrap_or_else(|e| e.into_inner()).insert("herdr agent list".into(), (now, out));
+            lock(&self.cache).insert("herdr agent list".into(), (now, out));
         }
         // #37: Herd's data rides the same stream, re-read every 10 s (host weather) while anyone listens;
         // like a frag, pushed only on a change (the page reads `/herd.json` when Herd opens).
-        if (changed || now >= w.herd.0 + 10) && !self.clients.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
+        if (changed || now >= w.herd.0 + 10) && !lock(&self.clients).is_empty() {
             let j = self.herd(&Ctx { now, ..self.ctx.clone() }, None).map(|v| v.to_string()).unwrap_or_default();
             if w.herd.0 > 0 && hash(&j) != w.herd.1 && !j.is_empty() {
-                self.clients.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.0.send(format!("event: herd\ndata: {j}\n\n")).is_ok());
+                lock(&self.clients).retain(|c| c.0.send(format!("event: herd\ndata: {j}\n\n")).is_ok());
             }
             w.herd = (now, hash(&j));
         }
@@ -326,7 +331,7 @@ impl<'a> Server<'a> {
             for (id, html) in self.frags(&Ctx { now, ..self.ctx.clone() }, false, paired).unwrap_or_default() {
                 if w.frags.insert((paired, id), hash(&html)).is_some_and(|h| h != hash(&html)) {
                     let msg = format!("event: frag\ndata: {}\n\n", serde_json::json!({"id": id, "html": html}));
-                    self.clients.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.1.is_some() != paired || c.0.send(msg.clone()).is_ok());
+                    lock(&self.clients).retain(|c| c.1.is_some() != paired || c.0.send(msg.clone()).is_ok());
                 }
             }
         }
@@ -334,7 +339,7 @@ impl<'a> Server<'a> {
 
     /// Forget cached pane reads: the next render reads each pane afresh.
     fn purge(&self) {
-        self.cache.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| !k.starts_with("herdr pane read"));
+        lock(&self.cache).retain(|k, _| !k.starts_with("herdr pane read"));
     }
 
     /// The runner whose reads that ran OK within the last `ttl` seconds come from the cache (else run now).
@@ -897,7 +902,7 @@ impl<'a> Server<'a> {
     }
 
     fn sample(&self) -> Host {
-        self.host.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        lock(&self.host).clone()
     }
 
     fn host_tab(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event]) -> String {
