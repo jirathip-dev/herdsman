@@ -80,6 +80,9 @@ fn live_caps_clients_and_checks_host() {
     let mut ninth = subscribe(addr, &addr.to_string());
     assert!(drain(&mut ninth, 500).starts_with("HTTP/1.1 503 "), "the 9th client");
     drop(held);
+    std::thread::sleep(Duration::from_millis(1_500));
+    let mut again = subscribe(addr, &addr.to_string());
+    assert!(drain(&mut again, 300).starts_with("HTTP/1.1 200 OK"), "closed clients free their slots");
     let all = TcpStream::connect(addr).and_then(|mut s| {
         s.write_all(format!("GET /?frag=all HTTP/1.1\r\nHost: {addr}\r\n\r\n").as_bytes())?;
         let mut b = String::new();
@@ -143,14 +146,14 @@ fn cookie(s: &Server, c: &herdsman::Ctx) -> String {
 fn answer_sends_the_digit_and_logs_no_question() {
     let (c, r) = blocked("answer", &[]);
     let s = Server::new(&c, &r, Some(ADDR.into()));
-    let page = req(&s, "GET", "/", "", "");
+    let ck = cookie(&s, &c);
+    let page = req(&s, "GET", "/", "", &ck);
     let needs = &page[page.find("<div id=needs>").unwrap()..page.find("<main>").unwrap()];
     assert!(needs.contains("Do you want to proceed?") && needs.contains("<button type=button class=pick value=2>2. Yes, and don"), "{needs}");
     assert!(needs.contains("data-ask=\"sendmeter-impl-12\""), "{needs}");
     let res = req(&s, "POST", "/answer", "agent=sendmeter-impl-12&choice=2", "");
     assert!(res.starts_with("HTTP/1.1 401 "), "no device cookie: {res}");
     assert!(!r.called("herdr pane send-keys"));
-    let ck = cookie(&s, &c);
     let foreign = req(&s, "POST", "/answer", "agent=sendmeter-impl-12&choice=2", &format!("{ck}Origin: https://evil.example\r\n"));
     assert!(foreign.starts_with("HTTP/1.1 403 "), "{foreign}");
     for bad in ["0", "4", "12", "2%0A", "Enter"] {
@@ -191,7 +194,8 @@ fn answer_refuses_reviewer_menus_and_unparsed_panes() {
 fn unparsed_blocked_pane_shows_masked_tail_and_reply() {
     let (c, r) = blocked("tail", &["l1\nl2\nl3\nl4\nl5\nl6\nl7 token=ghp_abcdefghijklmnopqrstuvwxyz0123456789\nl8"]);
     let s = Server::new(&c, &r, Some(ADDR.into()));
-    let page = req(&s, "GET", "/", "", "");
+    let ck = cookie(&s, &c);
+    let page = req(&s, "GET", "/", "", &ck);
     let needs = &page[page.find("<div id=needs>").unwrap()..page.find("<main>").unwrap()];
     assert!(needs.contains("<pre>l3\nl4") && needs.contains("class=rp>Reply") && !needs.contains("l2\n"), "{needs}");
     assert!(!needs.contains("ghp_abcdefghijklmnopqrstuvwxyz0123456789"), "masked: {needs}");
@@ -209,7 +213,8 @@ fn live_board_fits_390px() {
     }
     let (c, r) = blocked("live-shots", &[]);
     let s = Server::new(&c, &r, Some(ADDR.into()));
-    let page = req(&s, "GET", "/", "", "");
+    let ck = cookie(&s, &c);
+    let page = req(&s, "GET", "/", "", &ck);
     let d = tmpdir("live-png");
     let file = d.join("page.html");
     std::fs::write(&file, &page[page.find("<!doctype").unwrap()..]).unwrap();
@@ -233,4 +238,35 @@ fn live_board_fits_390px() {
         assert!(o.status.success() && w.len() == 2, "{name}: {out} {}", String::from_utf8_lossy(&o.stderr));
         assert!(w[0] <= 390 && w[1] == 390, "{name}: scrollWidth {} at {}", w[0], w[1]);
     }
+}
+
+/// Pane text (the question, its options, the tail) only reaches a paired device: GET /,
+/// `?frag=all` and `/live` show an unpaired viewer who is blocked, the activity and a pairing hint.
+#[test]
+fn unpaired_viewers_see_no_pane_text() {
+    let (c, r) = blocked("unpaired", &[]);
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    let ck = cookie(&s, &c);
+    let pane = ["proceed", "class=pick", "class=rp", "cargo test --all", "don&#39;t ask", "don't ask"];
+    for path in ["/", "/?frag=all"] {
+        let res = req(&s, "GET", path, "", "");
+        assert!(pane.iter().all(|p| !res.contains(p)) && res.contains("pair this phone to answer"), "{path}: {res}");
+        assert!(req(&s, "GET", path, "", &ck).contains("Do you want to proceed?"), "{path} paired");
+    }
+    // /live: the blocked lane appears after the watcher's first look; each audience gets its own render.
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let c2 = c.clone();
+    std::thread::spawn(move || herdsman::serve::serve_on(&c2, &r.once("herdr agent list", 0, NO_AGENTS), l, false));
+    let sub = |extra: &str| {
+        let mut s = TcpStream::connect(addr).unwrap();
+        s.write_all(format!("GET /live HTTP/1.1\r\nHost: {addr}\r\n{extra}\r\n").as_bytes()).unwrap();
+        s.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        s
+    };
+    let (mut anon, mut dev) = (sub(""), sub(&ck));
+    let (a, d) = (drain(&mut anon, 4_000), drain(&mut dev, 500));
+    assert!(a.contains("\"id\":\"needs\"") && a.contains("pair this phone to answer"), "{a}");
+    assert!(pane.iter().all(|p| !a.contains(p)), "unpaired stream: {a}");
+    assert!(d.contains("Do you want to proceed?") && d.contains("class=pick"), "paired stream: {d}");
 }

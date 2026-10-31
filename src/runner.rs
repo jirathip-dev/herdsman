@@ -10,7 +10,7 @@ pub struct Out {
     pub stderr: String,
 }
 
-pub trait Runner {
+pub trait Runner: Sync {
     fn run(&self, prog: &str, args: &[String]) -> Result<Out>;
     /// Pause between polls/retries; fakes skip it.
     fn sleep(&self, secs: u64) {
