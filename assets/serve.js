@@ -214,7 +214,9 @@ async function cleanable() {
 }
 function open(e) {
   agent = e.dataset.agent;
-  $('.top').innerHTML = '<p><b></b></p>' + e.querySelector('.card').innerHTML;
+  const top = $('.top');
+  top.innerHTML = '<p><b></b></p>' + e.querySelector('.card').innerHTML;
+  top.scrollTop = 0;
   $('.top b').textContent = agent;
   const rev = e.dataset.role === 'rev';
   $('.reply').hidden = !!B.dataset.ro || rev;
@@ -281,17 +283,16 @@ document.addEventListener('click', async e => {
 });
 $('.bd').onclick = close;
 addEventListener('keydown', e => { if (e.key === 'Escape' && !S.hidden) close(); });
-// Drag the handle (or card): up = full height, down = back to 78 %, then closed.
+// Drag the handle: up = full height, down = back to 78 %, then closed (#63 q8: the card scrolls, it no longer drags).
 let y0 = null;
-[$('.grip'), $('.top')].forEach(h => {
-  h.onpointerdown = e => { y0 = e.clientY; };
-  h.onpointerup = e => {
-    const dy = y0 === null ? 0 : e.clientY - y0;
-    y0 = null;
-    if (dy < -40) sh.classList.add('full');
-    else if (dy > 60) sh.classList.contains('full') ? sh.classList.remove('full') : close();
-  };
-});
+const grip = $('.grip');
+grip.onpointerdown = e => { y0 = e.clientY; };
+grip.onpointerup = e => {
+  const dy = y0 === null ? 0 : e.clientY - y0;
+  y0 = null;
+  if (dy < -40) sh.classList.add('full');
+  else if (dy > 60) sh.classList.contains('full') ? sh.classList.remove('full') : close();
+};
 $('.reply').onsubmit = async e => {
   e.preventDefault();
   const r = await fetch(R + 'send', { method: 'POST', body: new URLSearchParams({ agent, text: e.target.text.value }) });

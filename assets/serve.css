@@ -89,7 +89,8 @@ main{transition:transform .2s}
 .sh.full{height:100vh;height:100dvh;border-radius:0}
 .grip{flex:none;height:calc(2 * var(--s3));touch-action:none;cursor:grab}
 .grip::after{content:"";display:block;width:40px;height:var(--s1);margin:var(--s3) auto var(--s2);border-radius:3px;background:#30363d}
-.top{flex:none;touch-action:none;border-bottom:1px solid var(--line);padding-bottom:var(--s2)}
+/* #63 q8: the card takes at most 40 % of the sheet and scrolls inside; dragging is the grip's alone. */
+.top{flex:none;max-height:40%;overflow:hidden auto;overscroll-behavior:contain;touch-action:pan-y;border-bottom:1px solid var(--line);padding-bottom:var(--s2)}
 .top p{margin:var(--s1) 0}
 .chat{flex:1;overflow:hidden auto;display:flex;flex-direction:column;gap:var(--s2);padding:var(--s2) 0}
 .b{margin:0;padding:var(--s1) var(--s2);border-radius:10px;background:#161b22;white-space:pre-wrap;font-size:var(--fs-meta);max-width:92%}
