@@ -177,3 +177,18 @@ pub fn swift() -> std::process::Command {
     c.env("HERDSMAN_BASE", base);
     c
 }
+
+/// #59: pair a browser at `now` as the page does (Pair → `serve approve <code>` → claim): its `Cookie:` line.
+pub fn pair(s: &herdsman::serve::Server, c: &Ctx, ua: &str, now: u64) -> String {
+    let post = |path: &str, extra: &str| String::from_utf8_lossy(&s.respond(&format!("POST {path} HTTP/1.1\r\nHost: 127.0.0.1:7777\r\n{extra}Content-Length: 0\r\n\r\n"), now)).into_owned();
+    let res = post("/pair/request", &format!("User-Agent: {ua}\r\n"));
+    assert!(res.starts_with("HTTP/1.1 200 OK"), "{res}");
+    let code = res.rsplit("\r\n\r\n").next().unwrap().trim().to_string();
+    let set = res.lines().find_map(|l| l.strip_prefix("Set-Cookie: ")).unwrap();
+    let cookie = format!("Cookie: {}\r\n", &set[..set.find(';').unwrap()]);
+    let (rc, out) = run(&Ctx { now, ..c.clone() }, &Fake::default(), &["serve", "approve", &code]);
+    assert_eq!(rc, 0, "{out}");
+    let res = post("/pair/claim", &cookie);
+    assert!(res.starts_with("HTTP/1.1 200 OK") && res.contains("Max-Age=31536000"), "{res}");
+    cookie
+}

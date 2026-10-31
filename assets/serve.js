@@ -1,6 +1,6 @@
 // Tabs, lane display mode (both kept in localStorage), the live board (SSE `/live`, sync dot, ↻,
 // pull to refresh), SW, the Lanes bottom sheet: card, Stop/Kill/Clean (`/act`), transcript per turn
-// (5 s poll, load more), reply box with a `/` menu and one-time pairing, and blocked agents' menu buttons.
+// (5 s poll, load more), reply box with a `/` menu, Pair this phone, and blocked agents' menu buttons.
 const B = document.body, $ = s => document.querySelector(s), $$ = s => document.querySelectorAll(s);
 const get = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const put = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
@@ -110,6 +110,7 @@ document.addEventListener('click', async e => {
 // Network only (the SW passes `frags` through); spins ↻ until done.
 async function refresh() {
   if (DEMO) return herdPull();
+  claim();
   busy = true;
   sync('a');
   try {
@@ -128,7 +129,7 @@ function connect() {
   try { es = new EventSource('live'); } catch (e) { es = null; return sync('r'); }
   // After a gap (the first open included: a cached page may have painted) the dot is refresh()'s: amber until `frags` lands.
   es.onopen = () => { if (down) refresh(); else sync('g'); down = 0; tries = 0; clearInterval(poller); poller = 0; };
-  es.addEventListener('frag', e => { const j = JSON.parse(e.data); frag(j.id, j.html); sync('g'); pulse(); });
+  es.addEventListener('frag', e => { const j = JSON.parse(e.data); frag(j.id, j.html); sync('g'); pulse(); claim(); });
   es.addEventListener('herd', e => herdData(JSON.parse(e.data)));
   es.onerror = () => {
     es.close();
@@ -173,8 +174,7 @@ B.insertAdjacentHTML('beforeend', `<div id=sheet hidden><div class=bd></div><div
 <div class=hd><p><b></b></p></div><div class=top></div><div class=acts><button type=button data-op=stop>Stop</button><button type=button data-op=kill>Kill</button><button type=button data-op=clean>Clean</button></div>
 <div class=cf hidden><p></p><button type=button class=yes>Kill</button><button type=button class=no>Cancel</button></div>
 <div class=chat><button type=button class=more hidden>Load more</button><div class=old></div><div class=now></div></div>
-<form class=pairf hidden><input name=code inputmode=numeric autocomplete=one-time-code maxlength=6 placeholder="6-digit code" aria-label="pairing code"><button>Pair</button>
-<p class=m>Run <b>herdsman serve pair</b> on the Mac and enter its code.</p></form>
+<p class=pairf hidden><button type=button class=pairb>Pair this phone</button></p>
 <ul class=cmds hidden></ul>
 <form class=reply><textarea name=text rows=1 maxlength=2000 placeholder="Message, or / for commands" aria-label=message></textarea><button>Send</button></form>
 <p class=st></p></div></div>`);
@@ -224,7 +224,7 @@ const lane = q => fetch(DEMO ? 'lane/' + encodeURIComponent(agent) + '.json' : R
 async function poll() {
   try {
     const r = await lane('');
-    // Unpaired (401): say so, with the code entry; never a silent one-liner.
+    // Unpaired (401): say so, with the Pair button; never a silent one-liner.
     if (r.status === 401) {
       unpaired();
       $('.pairf').hidden = false;
@@ -452,13 +452,35 @@ $('.reply').onsubmit = async e => {
   say(msg, r.ok);
   if (r.ok) { e.target.text.value = ''; setTimeout(poll, 1500); }
 };
-$('.pairf').onsubmit = async e => {
-  e.preventDefault();
-  const r = await fetch(R + 'pair', { method: 'POST', body: new URLSearchParams({ code: e.target.code.value }) });
-  say((await r.text()).trim(), r.ok);
-  e.target.code.value = '';
-  if (r.ok) { e.target.hidden = true; poll(); if (ta.value.trim()) $('.reply').requestSubmit(); }
-};
+// #59: Pair this phone (header, blocked cards, the sheet): POST `pair/request` shows a code; its 10 min HttpOnly cookie is this
+// browser's alone. The Mac approves it (`serve approve`, logged: the live Events frag arrives, or ↻), then `pair/claim` keeps it a year.
+B.insertAdjacentHTML('beforeend', '<div id=pairp class=pairp hidden></div>');
+const pp = $('#pairp');
+let pairing = false;
+async function claim() {
+  if (!pairing) return;
+  pairing = false;
+  const r = await fetch(R + 'pair/claim', { method: 'POST' }).catch(() => null);
+  if (!r || !r.ok) { pairing = true; return; }
+  nopair = false;
+  pp.className = 'pairp g';
+  pp.replaceChildren(el('p', '', (await r.text()).trim()));
+  $$('.pairb').forEach(b => b.hidden = true);
+  setTimeout(() => { pp.hidden = true; }, 4000);
+  connect();
+  refresh();
+  if (agent) poll();
+}
+document.addEventListener('click', async e => {
+  if (e.target.closest('#pairp')) { if (!pairing) pp.hidden = true; return; }
+  if (!e.target.closest('.pairb')) return;
+  const r = await fetch(R + 'pair/request', { method: 'POST' }).catch(err => ({ ok: false, text: () => 'error: ' + err.message })), t = (await r.text()).trim();
+  pairing = r.ok;
+  pp.className = 'pairp' + (r.ok ? '' : ' r');
+  pp.hidden = false;
+  if (!r.ok) return pp.replaceChildren(el('p', '', t));
+  pp.replaceChildren(el('p', 'code', t), el('p', 'm', `Approve on the Mac: herdsman serve approve ${t} · or tell the conductor 'pair ${t}'`));
+});
 // Pull to refresh from the top (×0.5 resistance, past 70 px); never with the sheet open or a field
 // focused; the axis locks after 10 px so a sideways swipe never pulls. In Herd mode: the current page.
 const M = $('main'), ptr = $('#ptr'), still = matchMedia('(prefers-reduced-motion: reduce)');

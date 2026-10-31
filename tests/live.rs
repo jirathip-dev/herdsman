@@ -140,12 +140,7 @@ fn shown_h(page: &str) -> String {
 }
 
 fn cookie(s: &Server, c: &herdsman::Ctx) -> String {
-    let (rc, out) = run(c, &Fake::default(), &["serve", "pair"]);
-    assert_eq!(rc, 0, "{out}");
-    let code: String = out.chars().filter(char::is_ascii_digit).take(6).collect();
-    let res = req(s, "POST", "/pair", &format!("code={code}"), "");
-    let set = res.lines().find_map(|l| l.strip_prefix("Set-Cookie: ")).unwrap();
-    format!("Cookie: {}\r\n", &set[..set.find(';').unwrap()])
+    pair(s, c, "", T)
 }
 
 #[test]

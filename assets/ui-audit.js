@@ -9,7 +9,7 @@
   // a send error); measured after each step (`mid`), then with the rest at the end.
   const F = window.fetch, early = [], wait = () => new Promise(r => setTimeout(r, 300));
   const LONG = {
-    pair: 'pair this device first: `herdsman serve pair` on the Mac',
+    pair: 'pair this device: tap Pair this phone, then `herdsman serve approve <code>` on the Mac',
     sub: 'push subscribe refused: the endpoint https://web.push.apple.com/QGx2c3Rlc3Qtc3Vic2NyaXB0aW9uLWVuZHBvaW50LWlk is not https or not a known push service',
     kill: 'REFUSED UNSAFE_CLEAN: acme-web-impl-48-contrast-audit-for-every-settings-pane-abxx has 3 unpushed commits and a dirty tree; push them first',
     dry: 'dry run; would push 3 commits and 2 dirty files to wip/acme-web-impl-48-contrast-audit-for-every-settings-pane-abxx-20261031-1943, then close pane w1:p5',

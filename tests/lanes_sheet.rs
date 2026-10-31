@@ -108,24 +108,76 @@ fn sheet_transcript_is_the_masked_pane_tail() {
     assert!(req(&s, "GET", "/lane?agent=nobody", "", &cookie, T).starts_with("HTTP/1.1 404 "));
 }
 
-/// The pairing code `herdsman serve pair` printed.
-fn code(c: &herdsman::Ctx) -> String {
-    let (rc, out) = run(c, &Fake::default(), &["serve", "pair"]);
-    assert_eq!(rc, 0, "{out}");
-    let code: String = out.chars().filter(char::is_ascii_digit).take(6).collect();
-    assert!(out.starts_with(&format!("pairing code {code} (5 min")), "{out}");
-    code
+/// Pair at `T` as an iPhone (Pair, `serve approve`, claim) and return the `Cookie:` header line.
+fn paired(s: &Server, c: &herdsman::Ctx) -> String {
+    let cookie = pair(s, c, "Mozilla/5.0 (iPhone) Safari/604.1", T);
+    assert_eq!(cookie.len() - "Cookie: hd=\r\n".len(), 64, "32 random bytes, hex");
+    cookie
 }
 
-/// Pair at `now` and return the `Cookie:` header line.
-fn paired(s: &Server, c: &herdsman::Ctx) -> String {
-    let res = req(s, "POST", "/pair", &format!("code={}", code(c)), "User-Agent: Mozilla/5.0 (iPhone)\r\n", T);
-    assert!(res.starts_with("HTTP/1.1 200 OK"), "{res}");
-    let set = res.lines().find_map(|l| l.strip_prefix("Set-Cookie: ")).unwrap();
-    assert!(set.contains("; HttpOnly; Secure; SameSite=Strict"), "{set}");
-    let tok = &set[3..set.find(';').unwrap()];
-    assert_eq!(tok.len(), 64, "32 random bytes, hex");
-    format!("Cookie: hd={tok}\r\n")
+/// `POST /pair/request` at `now` from `ip`: (status line, code, `Cookie:` line).
+fn ask_pair(s: &Server, ip: &str, now: u64) -> (String, String, String) {
+    let res = req(s, "POST", "/pair/request", "", &format!("X-Peer: {ip}\r\nUser-Agent: Mozilla/5.0 (iPhone) Safari/604.1\r\n"), now);
+    let set = res.lines().find_map(|l| l.strip_prefix("Set-Cookie: ")).unwrap_or_default();
+    let cookie = format!("Cookie: {}\r\n", &set[..set.find(';').unwrap_or(0)]);
+    (res.lines().next().unwrap().into(), res.rsplit("\r\n\r\n").next().unwrap().trim().into(), cookie)
+}
+
+#[test]
+fn pairing_is_a_phone_request_approved_on_the_mac() {
+    let (c, r) = fixture("pair-req");
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    let at = |now: u64| herdsman::Ctx { now, ..c.clone() };
+    // The old code-entry endpoint is gone; `serve pair` prints the new way.
+    assert!(req(&s, "POST", "/pair", "code=123456", "", T).starts_with("HTTP/1.1 404 "));
+    let (rc, out) = run(&c, &Fake::default(), &["serve", "pair"]);
+    assert_eq!((rc, out.as_str()), (0, "now: open the page, tap Pair, then run serve approve <code>\n"));
+    // An unpaired page has the Pair button; a request sets a short-lived HttpOnly cookie and shows a 6-digit code.
+    assert!(req(&s, "GET", "/", "", "", T).contains("<button type=button class=pairb>Pair this phone</button></header>"));
+    let res = req(&s, "POST", "/pair/request", "", "X-Peer: 10.0.0.1\r\nUser-Agent: Mozilla/5.0 (iPhone) Safari/604.1\r\n", T);
+    assert!(res.contains("Set-Cookie: hd=") && res.contains("; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Strict\r\n"), "{res}");
+    let (st, code, mine) = ask_pair(&s, "10.0.0.2", T);
+    assert!(st.contains("200 OK") && code.len() == 6 && code.chars().all(|ch| ch.is_ascii_digit()), "{st} {code}");
+    // Before approval the cookie is no device; `serve pending` lists the request.
+    assert!(req(&s, "POST", "/pair/claim", "", &mine, T).starts_with("HTTP/1.1 403 "));
+    assert!(req(&s, "POST", "/send", "agent=sendmeter-impl-12&text=hi", &mine, T).starts_with("HTTP/1.1 401 "));
+    let (_, out) = run(&at(T + 60), &Fake::default(), &["serve", "pending"]);
+    assert!(out.contains(&format!("{code} iPhone Safari ")) && out.contains(" 9m left") && out.lines().count() == 2, "{out}");
+    // Approve (a wrong code is NO_SUCH_CODE); only the requesting browser gets a device: no cookie, or another request's, gets nothing.
+    let (rc, out) = run(&at(T + 60), &Fake::default(), &["serve", "approve", "abcdef"]);
+    assert!(rc == 3 && out.contains("REFUSED NO_SUCH_CODE"), "{out}");
+    let (rc, out) = run(&at(T + 60), &Fake::default(), &["serve", "approve", &code]);
+    assert!(rc == 0 && out.starts_with("paired iPhone Safari ") && out.len() == 26, "{out}");
+    // The live stream's unpaired Events frag carries the approval: the waiting page claims on it.
+    assert!(req(&s, "GET", "/frags", "", "", T + 60).contains("pair-approve"), "the Events tab shows the approval");
+    let (_, _, other) = ask_pair(&s, "10.0.0.3", T + 60);
+    for cookie in ["", other.as_str()] {
+        let res = req(&s, "POST", "/pair/claim", "", cookie, T + 61);
+        assert!(res.starts_with("HTTP/1.1 403 ") && !res.contains("Set-Cookie"), "{res}");
+    }
+    let res = req(&s, "POST", "/pair/claim", "", &mine, T + 61);
+    assert!(res.starts_with("HTTP/1.1 200 OK") && res.contains("\r\n\r\npaired as iPhone Safari "), "{res}");
+    assert!(res.contains(&format!("Set-Cookie: {}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict\r\n", mine.trim().strip_prefix("Cookie: ").unwrap())), "{res}");
+    assert!(!req(&s, "GET", "/", "", &mine, T + 61).contains("class=pairb"), "paired: no Pair button");
+    // Single use: the same code again is NO_SUCH_CODE.
+    let (rc, out) = run(&at(T + 62), &Fake::default(), &["serve", "approve", &code]);
+    assert!(rc == 3 && out.contains("REFUSED NO_SUCH_CODE"), "{out}");
+    // An expired code is refused and its cookie never pairs.
+    let (_, late, cookie) = ask_pair(&s, "10.0.0.4", T + 100);
+    let (rc, out) = run(&at(T + 700), &Fake::default(), &["serve", "approve", &late]);
+    assert!(rc == 3 && out.contains("REFUSED EXPIRED"), "{out}");
+    assert!(req(&s, "POST", "/pair/claim", "", &cookie, T + 700).starts_with("HTTP/1.1 403 "));
+    // At most 3 open, at most 2 per address.
+    assert!(ask_pair(&s, "10.0.0.5", T + 700).0.contains("200 OK") && ask_pair(&s, "10.0.0.5", T + 700).0.contains("200 OK"));
+    assert!(ask_pair(&s, "10.0.0.5", T + 700).0.contains("429 "), "2 per address");
+    assert!(ask_pair(&s, "10.0.0.6", T + 700).0.contains("200 OK"));
+    assert!(ask_pair(&s, "10.0.0.7", T + 700).0.contains("429 "), "3 open");
+    // The log names the device only: never a code or token.
+    let ev: Vec<_> = read(&c.state).unwrap().into_iter().filter(|e| e.kind.starts_with("pair")).collect();
+    let n = |k: &str| ev.iter().filter(|e| e.kind == k).count();
+    assert_eq!((n("pair-request"), n("pair-approve"), n("paired")), (7, 1, 0));
+    assert!(ev.iter().all(|e| e.data.len() == 1 && e.str("device").is_some_and(|d| d.starts_with("iPhone Safari"))), "{ev:?}");
+    assert!(!std::fs::read_to_string(&c.state).unwrap().contains(&mine[11..mine.len() - 2]), "no token in the log");
 }
 
 #[test]
@@ -135,18 +187,10 @@ fn pairing_codes_devices_and_prompt_events() {
     let send = |cookie: &str, text: &str| req(&s, "POST", "/send", &format!("agent=sendmeter-impl-12&text={text}"), cookie, T + 10);
     // No cookie: 401, nothing sent.
     let res = send("", "hi");
-    assert!(res.starts_with("HTTP/1.1 401 ") && res.contains("herdsman serve pair"), "{res}");
-    // A wrong code is refused (and burns the code).
-    let good = code(&c);
-    let wrong = if good == "000000" { "111111" } else { "000000" };
-    assert!(req(&s, "POST", "/pair", &format!("code={wrong}"), "", T).starts_with("HTTP/1.1 403 "));
-    assert!(req(&s, "POST", "/pair", &format!("code={good}"), "", T).starts_with("HTTP/1.1 403 "), "one attempt per code");
-    // An expired code is refused.
-    let late = code(&c);
-    assert!(req(&s, "POST", "/pair", &format!("code={late}"), "", T + 301).starts_with("HTTP/1.1 403 "));
+    assert!(res.starts_with("HTTP/1.1 401 ") && res.contains("tap Pair this phone"), "{res}");
     // A foreign Origin never reaches pairing or sending.
-    assert!(req(&s, "POST", "/pair", "code=1", "Origin: https://evil.example\r\n", T).starts_with("HTTP/1.1 403 "));
-    let evil = "POST /pair HTTP/1.1\r\nHost: evil.example\r\nContent-Length: 6\r\n\r\ncode=1";
+    assert!(req(&s, "POST", "/pair/request", "", "Origin: https://evil.example\r\n", T).starts_with("HTTP/1.1 403 "));
+    let evil = "POST /pair/claim HTTP/1.1\r\nHost: evil.example\r\nContent-Length: 0\r\n\r\n";
     assert!(String::from_utf8_lossy(&s.respond(evil, T)).starts_with("HTTP/1.1 403 "));
     // A valid code sets the cookie; only the token's hash is stored, 0600.
     let cookie = paired(&s, &c);

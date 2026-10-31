@@ -204,6 +204,24 @@ Check it worked: on your phone, with Tailscale on, open
 Add it to the Home Screen: Safari's Share → Add to Home Screen (iOS), or Chrome's menu →
 Add to Home screen (Android). To pick up a new icon, remove it and add it again.
 
+### Pair the phone
+
+Replies, answers and lane actions need a paired phone. You never type on the phone:
+
+1. On the page (or the Home Screen app), tap **Pair this phone** in the header. It shows a
+   6-digit code, e.g. `482913`.
+2. On the Mac run `herdsman serve approve 482913`, or ask the conductor to (it runs the
+   same command). `herdsman serve pending` lists the open requests.
+3. The phone flips to "paired as iPhone Safari" by itself.
+
+A code works once, for 10 minutes. At most 3 requests are open at a time, 2 per address
+(behind `tailscale serve` every phone comes from `127.0.0.1`, so they share that limit). The
+device cookie only goes to the browser that tapped Pair, so someone else who sees the code
+can't use it. The log records `pair-request` and `pair-approve` with the device label, never
+the code or the token. `herdsman serve pair` now only prints these steps.
+
+Check it worked: the Host tab lists the phone under Paired devices.
+
 ## 7. Web push
 
 Not merged yet; see [#18](https://github.com/jirathip-dev/herdsman/issues/18). Once it

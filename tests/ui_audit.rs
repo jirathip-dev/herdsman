@@ -31,12 +31,7 @@ fn every_control_passes_the_audit_at_390px() {
     let list = json!({"result": {"agents": [a("sendmeter-impl-12", "working", "w1:p1"), a("sendmeter-impl-13", "blocked", "w1:p2")]}});
     let r = Fake::default().reply("herdr agent list", &list.to_string()).reply("herdr pane read", MENU);
     let s = Server::new(&c, &r, Some(ADDR.into()));
-    let (rc, out) = run(&c, &Fake::default(), &["serve", "pair"]);
-    assert_eq!(rc, 0, "{out}");
-    let code: String = out.chars().filter(char::is_ascii_digit).take(6).collect();
-    let res = req(&s, "POST", "/pair", &format!("code={code}"), "User-Agent: Mozilla/5.0 (iPhone)\r\n");
-    let tok = res.lines().find_map(|l| l.strip_prefix("Set-Cookie: hd=")).unwrap();
-    let page = req(&s, "GET", "/", "", &format!("Cookie: hd={}\r\n", &tok[..tok.find(';').unwrap()]));
+    let page = req(&s, "GET", "/", "", &pair(&s, &c, "Mozilla/5.0 (iPhone)", T));
     let html = &page[page.find("<!doctype").unwrap()..];
     assert!(html.contains("▲ up") && html.contains("class=pick") && html.contains("<select name=model"), "fixture has arrows, a menu and pickers");
     let herd = req(&s, "GET", "/herd.json?weather=calm", "", "");

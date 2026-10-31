@@ -59,10 +59,14 @@ never zooms), the page under the sheet is scroll-locked and the sheet follows `v
 so the composer stays above the keyboard and is still there when it closes.
 
 The sheet's reply box sends text to that agent (`herdr agent prompt` + Enter; dsh lanes:
-`herdr pane send-text` + Enter). A device must be paired once: `herdsman serve pair` prints a
-6-digit code (5 minutes, one attempt); the first send asks for it and sets an HttpOnly,
-Secure, SameSite=Strict cookie with a random token. Only the token's SHA-256 is kept, in
-`<state>/serve/devices.json` (0600); the Host tab lists paired devices with a Remove button.
+`herdr pane send-text` + Enter). A device must be paired once (#59, docs/setup.md): **Pair this
+phone** (header, blocked cards, the sheet) POSTs `/pair/request`, which shows a 6-digit code and sets
+an HttpOnly, Secure, SameSite=Strict `hd=` cookie with a random token for 10 minutes. The token pairs
+nothing until `herdsman serve approve <code>` on the Mac (`NO_SUCH_CODE` / `EXPIRED` otherwise, single
+use; `serve pending` lists requests). The approval is logged, so the waiting page's live Events frag
+changes and the page POSTs `/pair/claim`, which keeps the same cookie for a year. At most 3 requests
+are open, 2 per peer address. Only the token's SHA-256 is kept, in `<state>/serve/devices.json`
+(0600); the Host tab lists paired devices with a Remove button.
 Sends pass the same Host/Origin checks, are limited to 10 a minute per device, and are refused
 `PAUSED` (paused fleet), `REV_READONLY` (reviewer lanes) or `BAD_VALUE` (empty, over 2,000
 chars, or a control character other than newline). Removing a device also needs a paired cookie. Each send logs `{"type":"prompt","via":"web","agent","device","chars"}`, never the

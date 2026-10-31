@@ -12,6 +12,7 @@ The first `:root` block of `assets/serve.css` is the only place a raw px length 
 | `--fs` | 13px | all text |
 | `--fs-meta` | 11px | secondary text: ages, reasons, captions |
 | `--fs-input` | 16px | inputs, textareas, selects (iOS zooms below 16 px) |
+| `--fs-code` | 32px | the pairing code's digits (#59) |
 | `--ctl` | 28px | the visible height of every control, the Herd strip and `[×]` |
 | `--hit` | 44px | the minimum tap area |
 | `--s1` … `--s4` | 4 / 8 / 12 / 16px | margins, paddings, gaps, offsets |
@@ -35,7 +36,7 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
 - **Labels, not sentences (#68):** a button holds its label (in a span that ellipsises, so `[`/`]` never
   overlap text). A control's runtime result or error (alerts, pair, stop/kill/clean, send, answer) is an 11 px
   `p.st` under it that wraps, red on error; #66's toast is for page actions. Unpaired, `[enable alerts]` dims
-  with "pair this phone first" under it.
+  with "pair this phone first" under it, and a Pair this phone button opens the pairing panel (#59).
 - **No text past the screen (#68):** every text box shrinks (`min-width:0`) and wraps anywhere (paths, shas,
   URLs, `code`); one-line cells (`.nw`, `.el`, `.tl`) ellipsise.
 - Names never wrap vertically (`.nw` cells stay on one line, horse labels clamp at 2 lines);

@@ -1,4 +1,6 @@
 //! Paired phones for the page's reply box (docs/serve.md): only each token's SHA-256 is kept.
+use crate::events::{append, Event};
+use crate::gate::refused;
 use crate::Ctx;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -7,12 +9,15 @@ use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+/// #59: a `code` is a phone's open pairing request (from `ip`, 10 min from `created`): its cookie works once `serve approve` clears it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(default)]
 pub struct Device {
     pub hash: String,
     pub label: String,
     pub created: u64,
     pub used: u64,
+    pub code: Option<String>, pub ip: String,
 }
 
 fn dir(ctx: &Ctx) -> PathBuf {
@@ -46,39 +51,48 @@ pub fn store(ctx: &Ctx, d: &[Device]) -> Result<()> {
     save(&dir(ctx).join("devices.json"), &d)
 }
 
-/// A fresh pairing code; replaces any earlier one.
-pub fn new_code(ctx: &Ctx) -> Result<String> {
-    let b = random(4)?;
-    let code = format!("{:06}", u32::from_be_bytes([b[0], b[1], b[2], b[3]]) % 1_000_000);
-    save(&dir(ctx).join("pair.json"), &json!({"hash": sha256(code.as_bytes()), "expires": ctx.now + 300}))?;
-    Ok(code)
+/// The open (unexpired) pairing requests.
+pub fn pending(ctx: &Ctx) -> Vec<Device> {
+    load(ctx).into_iter().filter(|d| d.code.is_some() && d.created + 600 > ctx.now).collect()
 }
 
-/// Spend the pending code (any attempt burns it): the new device's cookie token if it matched in time.
-pub fn redeem(ctx: &Ctx, code: &str, label: &str) -> Result<Option<String>> {
-    let p = dir(ctx).join("pair.json");
-    let v: serde_json::Value = std::fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    let _ = std::fs::remove_file(&p);
-    if v["hash"].as_str() != Some(&sha256(code.trim().as_bytes())) || v["expires"].as_u64().unwrap_or(0) < ctx.now {
-        return Ok(None);
-    }
-    let token: String = random(32)?.iter().map(|b| format!("{b:02x}")).collect();
-    let mut all = load(ctx);
-    let hash = sha256(token.as_bytes());
-    all.push(Device { label: format!("{label} {}", &hash[..4]), hash, created: ctx.now, used: ctx.now });
+/// A pairing request: (its code, the `hd=` token for the asking browser alone); None while 3 are open, or 2 from `ip`.
+pub fn request(ctx: &Ctx, label: &str, ip: &str) -> Result<Option<(String, String)>> {
+    let (mut all, b, token) = (load(ctx), random(4)?, random(32)?.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    all.retain(|d| d.code.is_none() || d.created + 3600 > ctx.now);
+    let open = pending(ctx);
+    if open.len() >= 3 || open.iter().filter(|d| d.ip == ip).count() >= 2 { return Ok(None) }
+    let (code, hash) = (format!("{:06}", u32::from_be_bytes([b[0], b[1], b[2], b[3]]) % 1_000_000), sha256(token.as_bytes()));
+    all.push(Device { label: format!("{label} {}", &hash[..4]), hash, created: ctx.now, used: ctx.now, code: Some(code.clone()), ip: ip.into() });
     store(ctx, &all)?;
-    Ok(Some(token))
+    append(&ctx.state, &Event::new(ctx.now, "herdsman", None, "pair-request", json!({"device": label})))?;
+    Ok(Some((code, token)))
 }
 
-/// The paired device whose token the `Cookie` header carries (`hd=`); marks it used.
-pub fn find(ctx: &Ctx, cookie: &str) -> Option<Device> {
-    let tok = cookie.split(';').find_map(|c| c.trim().strip_prefix("hd="))?;
+/// `serve approve <code>`: pair the request's browser (single use); its device label. Logged without code or token.
+pub fn approve(ctx: &Ctx, code: &str) -> Result<String> {
     let mut all = load(ctx);
-    let d = all.iter_mut().find(|d| d.hash == sha256(tok.as_bytes()))?;
+    let Some(d) = all.iter_mut().find(|d| d.code.as_deref().is_some_and(|c| same(c, code.trim()))) else { return refused("NO_SUCH_CODE", "no pairing request with that code: tap Pair on the phone") };
+    if d.created + 600 <= ctx.now { return refused("EXPIRED", "that pairing code expired: tap Pair on the phone again") }
+    let label = { (d.code, d.created, d.used) = (None, ctx.now, ctx.now); d.label.clone() };
+    store(ctx, &all)?;
+    append(&ctx.state, &Event::new(ctx.now, "herdsman", None, "pair-approve", json!({"device": label})))?;
+    Ok(label)
+}
+
+/// Constant-time string equality (codes, token hashes).
+fn same(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0, |d, (x, y)| d | (x ^ y)) == 0
+}
+
+/// The paired (approved) device whose token the `Cookie` header carries (`hd=`); marks it used.
+pub fn find(ctx: &Ctx, cookie: &str) -> Option<Device> {
+    let tok = sha256(cookie.split(';').find_map(|c| c.trim().strip_prefix("hd="))?.as_bytes());
+    let mut all = load(ctx);
+    let d = all.iter_mut().find(|d| d.code.is_none() && same(&d.hash, &tok))?;
     d.used = ctx.now;
     let d = d.clone();
-    store(ctx, &all).ok()?;
-    Some(d)
+    store(ctx, &all).ok().map(|_| d)
 }
 
 /// SHA-256, lowercase hex.

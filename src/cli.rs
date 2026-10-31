@@ -274,8 +274,12 @@ enum QueueCmd {
 
 #[derive(Subcommand)]
 enum ServeCmd {
-    /// Print a one-time 6-digit code (5 min) that pairs a phone's reply box
+    /// Now an alias: prints how to pair (tap Pair on the page, then `serve approve <code>`)
     Pair,
+    /// Pair the phone showing this 6-digit code (single use, 10 min; NO_SUCH_CODE / EXPIRED otherwise)
+    Approve { code: String },
+    /// The open pairing requests: code, device, minutes left
+    Pending,
 }
 
 #[derive(Subcommand)]
@@ -402,7 +406,9 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
             write!(out, "{}", boards.join("\n"))?;
         }
         Cmd::Asks { fleet, json } => crate::asks(ctx, out, fleet.as_deref(), json)?,
-        Cmd::Serve { cmd: Some(ServeCmd::Pair), .. } => writeln!(out, "pairing code {} (5 min, one use)", devices::new_code(ctx)?)?,
+        Cmd::Serve { cmd: Some(ServeCmd::Pair), .. } => writeln!(out, "now: open the page, tap Pair, then run serve approve <code>")?,
+        Cmd::Serve { cmd: Some(ServeCmd::Approve { code }), .. } => writeln!(out, "paired {}", devices::approve(ctx, &code)?)?,
+        Cmd::Serve { cmd: Some(ServeCmd::Pending), .. } => devices::pending(ctx).iter().try_for_each(|d| writeln!(out, "{} {} {}m left", d.code.as_deref().unwrap_or_default(), d.label, (d.created + 600 - ctx.now).div_ceil(60)))?,
         Cmd::Serve { export: Some(dir), demo, .. } => serve::export(ctx, r, &dir, demo)?,
         Cmd::Serve { addr, read_only, .. } => serve::serve(ctx, r, &addr, read_only)?,
         Cmd::Push { cmd: PushCmd::Test } => {

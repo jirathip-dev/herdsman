@@ -1,5 +1,5 @@
 :root{--bg:#0d1117;--fg:#c9d1d9;--mute:#8b949e;--line:#21262d;--g:#3fb950;--a:#d29922;--r:#f85149;--l:#58a6ff;color-scheme:dark;
-  --fs:13px;--fs-meta:11px;--fs-input:16px;--ctl:28px;--hit:44px;--s1:4px;--s2:8px;--s3:12px;--s4:16px}
+  --fs:13px;--fs-meta:11px;--fs-input:16px;--fs-code:32px;--ctl:28px;--hit:44px;--s1:4px;--s2:8px;--s3:12px;--s4:16px}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html,body{overflow-x:hidden;overscroll-behavior-y:contain}
@@ -109,8 +109,12 @@ main{transition:transform .2s}
 .b{margin:0;padding:var(--s1) var(--s2);border-radius:10px;background:#161b22;white-space:pre-wrap;font-size:var(--fs-meta);max-width:92%}
 .b.me{align-self:flex-end;background:#1f3a5f}
 .reply,.pairf{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s4);padding:var(--s2) 0;flex:none}
-.reply textarea,.pairf input{flex:1;min-width:0;font:inherit;color:var(--fg);background:#161b22;border:1px solid #30363d;border-radius:6px;padding:var(--s2);min-height:var(--hit);resize:none;font-size:var(--fs-input)}
-.pairf p{flex-basis:100%;margin:0;font-size:var(--fs-meta)}
+.reply textarea{flex:1;min-width:0;font:inherit;color:var(--fg);background:#161b22;border:1px solid #30363d;border-radius:6px;padding:var(--s2);min-height:var(--hit);resize:none;font-size:var(--fs-input)}
+/* #59: the pairing panel under the header (above the sheet): the code large, how to approve it under it. */
+.pairp{position:fixed;z-index:4;top:calc(var(--hit) + var(--s2));left:var(--s3);right:var(--s3);padding:var(--s3);background:var(--bg);border:1px solid var(--a);border-radius:8px}
+/* Green as --g's hex: `@property --g` (the gait angle below) voids the colour token. */
+.pairp.g{border-color:#3fb950;color:#3fb950}.pairp.r{border-color:var(--r)}.pairp p{margin:0}
+.pairp .code{font-size:var(--fs-code);letter-spacing:.2em;text-align:center}
 .st{flex:none;margin:0;font-size:var(--fs-meta);min-height:1.5em}
 .ask{border:1px solid var(--r);background:color-mix(in srgb,var(--r) 15%,transparent);border-radius:8px;padding:var(--s2);margin:var(--s2) 0}
 .ask b{color:var(--r)}.ask form{display:flex;flex-wrap:wrap;gap:var(--s4)}.ask input[name=text]{flex:1;min-width:8em;font:inherit;font-size:var(--fs-input)}

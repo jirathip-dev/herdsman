@@ -93,10 +93,7 @@ fn subscribe_needs_a_paired_device_and_unsubscribe_removes_it() {
     let form = sub_form(&ua, "https://web.push.apple.com/secret-endpoint");
     assert!(post(&s, "/push/subscribe", &form, "").starts_with("HTTP/1.1 401"), "unpaired");
     assert!(post(&s, "/push/subscribe", &form, "Origin: https://evil.example\r\n").starts_with("HTTP/1.1 403"), "foreign Origin");
-    let code = herdsman::devices::new_code(&c).unwrap();
-    let res = post(&s, "/pair", &format!("code={code}"), "User-Agent: Mozilla (iPhone)\r\n");
-    let set = res.lines().find_map(|l| l.strip_prefix("Set-Cookie: ")).expect(&res);
-    let cookie = format!("Cookie: {}\r\nUser-Agent: Mozilla (iPhone)\r\n", &set[..set.find(';').unwrap()]);
+    let cookie = pair(&s, &c, "Mozilla (iPhone)", c.now) + "User-Agent: Mozilla (iPhone)\r\n";
     assert!(post(&s, "/push/subscribe", "endpoint=http://x&p256dh=AA&auth=AA", &cookie).starts_with("HTTP/1.1 400"));
     assert!(post(&s, "/push/subscribe", &form, &cookie).starts_with("HTTP/1.1 200"));
     let subs = webpush::load(&c.state);
