@@ -32,13 +32,13 @@ fn demo_export_writes_the_file_set_without_running_anything() {
     }
     let dsh: Value = serde_json::from_str(&std::fs::read_to_string(site.join("lane/acme-api-impl-17.json")).unwrap()).unwrap();
     assert_eq!(dsh["harness"], "dsh");
-    // Herd: 3 repos plus Others, every lane state, a 6-item queue with one blocked.
+    // Herd: 3 repos plus Others, every lane state (#83: parked too), a 6-item queue with one blocked.
     let h: Value = serde_json::from_str(&std::fs::read_to_string(site.join("herd.json")).unwrap()).unwrap();
     let fleets = h["fleets"].as_array().unwrap();
     assert_eq!(fleets.iter().map(|f| f["name"].as_str().unwrap()).collect::<Vec<_>>(), ["acme-api", "acme-web", "docs"]);
     let all: Vec<&Value> = fleets.iter().flat_map(|f| f["lanes"].as_array().unwrap()).chain(h["others"].as_array().unwrap()).collect();
-    assert_eq!(all.len(), 13);
-    for st in ["working", "idle", "done", "blocked", "dead"] {
+    assert_eq!(all.len(), 14);
+    for st in ["working", "idle", "done", "blocked", "parked", "dead"] {
         assert!(all.iter().any(|l| l["state"] == st), "no {st} lane");
     }
     assert!(h["others"].as_array().unwrap().iter().any(|l| l["role"] == "other"));

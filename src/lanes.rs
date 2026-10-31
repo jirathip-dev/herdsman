@@ -1,6 +1,7 @@
 //! The page's Lanes tab (docs/serve.md): herdr agents joined with the log, grouped, plus masked pane text.
 use crate::config::Config;
 use crate::events::{Event, States};
+use crate::runner::{ok, Runner};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -18,17 +19,18 @@ pub struct Lane {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub account: Option<String>,
-    /// herdr's live state (idle | working | done | blocked | unknown), or `dead`.
+    /// herdr's live state (idle | working | done | blocked | unknown), or `dead` | `parked` (log only, no pane).
     pub state: String,
     /// When herdsman spawned it (0: unknown).
     pub since: u64,
     pub pane: Option<String>,
-    /// The log has an open lane that herdr shows no pane for.
-    pub mismatch: bool,
+    /// #83: a log-only lane whose worktree is clean and pushed: its short head sha.
+    pub parked: Option<String>,
 }
 
 /// Join `herdr agent list` rows with the log. `ws` maps workspace id -> label.
-pub fn join(cfg: &Config, worktrees: &Path, events: &[Event], st: &States, agents: &[Value], ws: &BTreeMap<String, String>) -> Vec<Lane> {
+pub fn join(cfg: &Config, r: &dyn Runner, worktrees: &Path, events: &[Event], st: &States, agents: &[Value],
+            ws: &BTreeMap<String, String>) -> Vec<Lane> {
     let spawns: Vec<&Event> = events.iter().rev().filter(|e| e.kind == "spawn").collect();
     let (mut out, mut seen) = (vec![], BTreeSet::new());
     for a in agents {
@@ -58,8 +60,10 @@ pub fn join(cfg: &Config, worktrees: &Path, events: &[Event], st: &States, agent
     for s in st.values().filter(|s| cfg.fleet.contains_key(&s.fleet)) {
         let Some((_, agent)) = s.active_lane().filter(|(_, a)| !seen.contains(*a)) else { continue };
         if let Some(e) = spawns.iter().find(|e| e.str("agent") == Some(agent)) {
-            let dead = Lane { state: "dead".into(), mismatch: true, ..Lane::default() };
-            out.push(Lane { name: agent.into(), ..from_spawn(e, dead) });
+            let wt = e.str("worktree").filter(|wt| crate::spawn::dirty(r, Path::new(wt)).is_none());
+            let head = wt.map(|wt| ok(r, "git", &["-C", wt, "rev-parse", "--short=7", "HEAD"]).unwrap_or_default());
+            let state = if head.is_some() { "parked" } else { "dead" }.into();
+            out.push(Lane { name: agent.into(), ..from_spawn(e, Lane { state, parked: head, ..Lane::default() }) });
         }
     }
     out
@@ -81,7 +85,7 @@ fn from_spawn(e: &Event, l: Lane) -> Lane {
 }
 
 /// Section order on the page; any other herdr state (unknown) counts as idle.
-pub const SECTIONS: [&str; 5] = ["blocked", "working", "idle", "done", "dead"];
+pub const SECTIONS: [&str; 6] = ["blocked", "working", "idle", "done", "parked", "dead"];
 
 pub type Groups<'a> = Vec<(&'static str, Vec<(String, Vec<&'a Lane>)>)>;
 

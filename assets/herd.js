@@ -122,9 +122,9 @@ B.prepend(defs);
 // #58: the header's Herd button is our horse (the default coat), not an emoji.
 $('#herd-on').innerHTML = '<svg viewBox="0 0 132 100" style="--c:#c89a56;--d:#a37a3c;--m:#e8dcc0;--b:#efe7dc" aria-hidden=true><use href="#hp2"/></svg>';
 const pages = new Map();
-const POSE = { working: 1, idle: 2, unknown: 2, done: 3, blocked: 4, dead: 4 };
-const MARK = { working: '○', idle: '◦', unknown: '?', done: '✓', blocked: '!', dead: '✗' };
-const BANDS = [['working', ['working']], ['idle', ['idle', 'unknown']], ['done', ['done']], ['blocked/dead', ['blocked', 'dead']]];
+const POSE = { working: 1, idle: 2, unknown: 2, parked: 2, done: 3, blocked: 4, dead: 4 };
+const MARK = { working: '○', idle: '◦', unknown: '?', parked: '◦', done: '✓', blocked: '!', dead: '✗' };
+const BANDS = [['working', ['working']], ['idle', ['idle', 'unknown', 'parked']], ['done', ['done']], ['blocked/dead', ['blocked', 'dead']]];
 let data = null, wind = 0, storm = false, saved = get('herdp'), placed = false;
 
 // #65: Corral's label card, 2 lines: the name, then state mark + word + age (the issue title is the tooltip).
@@ -208,7 +208,7 @@ function draw() {
     const count = states => lanes.filter(l => states.includes(l.state)).length;
     // #65 A: queued first, zero counts left out, a bare `·` (a full mono cell) between, so the line fits the 28 px strip at 390 px without an ellipsis.
     p.querySelector('.sum').textContent = [[queue.length, 'queued'], [count(['blocked', 'dead']), 'blocked'], [count(['working']), 'working'],
-      [count(['idle', 'unknown']), 'idle'], [count(['done']), 'done']].filter(c => c[0]).map(c => c.join(' ')).join('·');
+      [count(['idle', 'unknown', 'parked']), 'idle'], [count(['done']), 'done']].filter(c => c[0]).map(c => c.join(' ')).join('·');
     // Queued horses get their own row above the working band; a band with no horses is not drawn.
     const top = p.scrollTop;
     patch(p.querySelector('.hb'), lanes, queue);

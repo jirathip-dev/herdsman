@@ -308,6 +308,8 @@ function open(e) {
   const rev = e.dataset.role === 'rev';
   $('.reply').hidden = !!B.dataset.ro || rev;
   $('.acts').hidden = !!B.dataset.ro;
+  // #83: a lane with no pane has nothing to stop or kill.
+  $$('[data-op=stop], [data-op=kill]').forEach(b => b.hidden = 'gone' in e.dataset);
   $$('.pairf, .cf, .cmds').forEach(x => x.hidden = true);
   now.replaceChildren();
   old.replaceChildren();

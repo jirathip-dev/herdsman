@@ -17,6 +17,7 @@
 {"ts":1793415488,"fleet":"acme-api","issue":15,"type":"spawn","role":"impl","agent":"acme-api-impl-15","harness":"dsh","branch":"issue-15"}
 {"ts":1793417488,"fleet":"docs","issue":6,"type":"spawn","role":"impl","agent":"docs-impl-6","harness":"claude","model":"sonnet","effort":"high","branch":"issue-6"}
 {"ts":1793418488,"fleet":"acme-web","issue":38,"type":"spawn","role":"impl","agent":"acme-web-impl-38","harness":"claude","model":"opus","effort":"xhigh","branch":"issue-38"}
+{"ts":1793419000,"fleet":"docs","issue":7,"type":"spawn","role":"impl","agent":"docs-impl-7","harness":"claude","model":"sonnet","effort":"high","branch":"issue-7","worktree":"/srv/acme/worktrees/docs-impl-7"}
 {"ts":1793420488,"fleet":"acme-api","issue":19,"type":"spawn","role":"impl","agent":"acme-api-impl-19","harness":"dsh","branch":"issue-19"}
 {"ts":1793421488,"fleet":"docs","issue":6,"type":"spawn","role":"rev","agent":"docs-rev-6","harness":"claude"}
 {"ts":1793421488,"fleet":"acme-web","issue":38,"type":"spawn","role":"rev","agent":"acme-web-rev-38","harness":"hermes"}
