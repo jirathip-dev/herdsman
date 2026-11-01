@@ -2,7 +2,7 @@
 use crate::config::Config;
 use crate::events::{Event, States};
 use crate::runner::{ok, Runner};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -342,6 +342,32 @@ pub fn pending(screen: &str) -> Option<(String, Vec<String>)> {
     } else {
         Some((question(&lines)?, vec![]))
     }
+}
+
+/// #127: a menu's card from its block (after the last divider above the question): `title` its first line, `command`
+/// the `│` lines but those opening with a word (`Dangerous rm …`), `countdown` from `in M:SS`, the rest `reason`.
+pub fn prompt(screen: &str) -> Option<Value> {
+    let (question, options) = pending(screen).filter(|p| !p.1.is_empty())?;
+    let lines: Vec<&str> = screen.lines().map(str::trim).collect();
+    let q = lines.iter().rposition(|l| l.contains(question.as_str()))?;
+    let rule = |l: &&str| l.split(|c| !GLYPHS[0].contains(c)).any(|r| r.chars().count() >= 20);
+    let bare = |l: &&str| mask(l.trim_matches(|c: char| c.is_whitespace() || c == '│'));
+    let top = lines[..q].iter().rposition(rule).map_or(0, |i| i + 1);
+    let mut block = lines[top..q].iter().filter(|l| !bare(l).is_empty());
+    let (title, mut cmd, mut why, mut cd) = (bare(block.next()?), vec![], vec![], None);
+    let mm_ss = |(m, s): (&str, &str)| Some(m.parse::<u64>().ok()? * 60 + s.get(..2)?.parse::<u64>().ok()?);
+    let prose = |l: &str| l.starts_with(char::is_uppercase) && l.chars().nth(1).is_some_and(char::is_lowercase);
+    for l in block {
+        match l.split(" in ").skip(1).find_map(|s| mm_ss(s.split_once(':')?)) {
+            Some(s) if cd.is_none() => cd = Some(s),
+            _ if l.starts_with('│') && !prose(&bare(l)) => cmd.push(bare(l)),
+            _ => why.push(bare(l)),
+        }
+    }
+    why.truncate(2);
+    let card = json!({"title": title, "reason": why.join(" "), "command": cmd.join("\n"), "countdown": cd,
+        "question": mask(&question), "options": options, "push": cd.is_none_or(|s| s == 0)});
+    Some(card)
 }
 
 /// Transcript lines per turn (a typed `❯`/`>`/`›` prompt opens one, as `me`): text runs, and tool calls
