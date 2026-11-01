@@ -299,14 +299,16 @@ fn answer_form(ctx: &Ctx, a: &Event, send: &str) -> String {
     const REC: &str = " <small>(recommended)</small>";
     let rec = a.data["recommend"].as_u64();
     let btn = |(o, n): (&serde_json::Value, u64)| {
-        let (o, mark) = (esc(o.as_str().unwrap_or("?")), if Some(n) == rec { REC } else { "" });
+        let o = esc(o.as_str().unwrap_or("?"));
+        let mark = if Some(n) == rec { REC } else { "" };
         format!("<button name=choice value={n}>{n}. {o}{mark}</button>")
     };
     let mut opts: Vec<_> = a.data["options"].as_array().into_iter().flatten().zip(1..).collect();
     opts.sort_by_key(|o| Some(o.1) != rec);
     let btns: String = opts.into_iter().map(btn).collect();
     let id = esc(a.str("id").unwrap_or_default());
-    format!("<form method=post>{}<input type=hidden name=id value=\"{id}\"><input name=text aria-label=answer placeholder=\"or type an answer\"><button>{send}</button>{btns}</form>", hidden("answer", &a.fleet, &mtime(ctx)))
+    let op = hidden("answer", &a.fleet, &mtime(ctx));
+    format!("<form method=post>{op}<input type=hidden name=id value=\"{id}\"><input name=text aria-label=answer placeholder=\"or type an answer\"><button>{send}</button>{btns}</form>")
 }
 
 fn hidden(op: &str, fleet: &str, mt: &str) -> String {
@@ -1034,7 +1036,10 @@ impl<'a> Server<'a> {
             let rec = a.data["recommend"].as_u64().filter(|_| s("kind") == "routine");
             let left = age((a.ts + 60 * mins).saturating_sub(ctx.now));
             let kind = rec.map_or("owner · waits for you".into(), |n| format!("routine · defaults to {n} in {left}"));
-            format!("<div class=ask><p><b>needs you</b> <span class=m>{}</span> <span class=m>· {kind}</span></p><p>{}</p>{}</div>", esc(&who), esc(s("question")), if self.addr.is_some() { answer_form(ctx, a, "Send") } else { String::new() })
+            let who = esc(&who);
+            let question = esc(s("question"));
+            let form = self.addr.as_ref().map_or(String::new(), |_| answer_form(ctx, a, "Send"));
+            format!("<div class=ask><p><b>needs you</b> <span class=m>{who}</span> <span class=m>· {kind}</span></p><p>{question}</p>{form}</div>")
         }).collect::<String>() + &blocked
     }
 

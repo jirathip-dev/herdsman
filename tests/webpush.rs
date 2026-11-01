@@ -270,6 +270,59 @@ fn delivery_201_sent_410_pruned_500_notify_failed() {
     );
 }
 
+/// #99: the phone hears of an owner ask and of a default taken, never of a routine ask merely waiting
+/// nor of an owner's own answer; a cmd notifier still hears every ask.
+#[test]
+fn phones_hear_owner_asks_and_defaults_never_a_waiting_routine_ask() {
+    let dir = tmpdir("wp-asks");
+    let _path = fake_curl(&dir);
+    std::fs::write(dir.join("code"), "201").unwrap();
+    let c = ctx(&dir, CONFIG);
+    let sink = dir.join("sink.txt");
+    let toml = format!(
+        "[[notify]]\ntype = \"webpush\"\nsub = \"mailto:owner@example.com\"\n\n\
+         [[notify]]\ncmd = \"cat >> {}\"\non = [\"needs-decision\"]\n",
+        sink.display()
+    );
+    let cfg = Config::parse(&toml).unwrap();
+    let ua = SecretKey::from_slice(&d(UA_PRIVATE)).unwrap();
+    let f: std::collections::BTreeMap<String, String> = sub_form(&ua, "https://push.example/ep")
+        .split('&')
+        .map(|kv| kv.split_once('=').unwrap())
+        .map(|(k, v)| (k.into(), v.into()))
+        .collect();
+    webpush::subscribe(&c.state, &f, "Mac", 1, None).unwrap();
+    let pushes = || {
+        std::fs::read_to_string(dir.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .count()
+    };
+    let ev = |kind: &str, d: serde_json::Value| Event::new(1, "sendmeter", Some(36), kind, d);
+    let ask = |kind: &str| {
+        ev(
+            "needs-decision",
+            serde_json::json!({"id": "q1", "question": "Split?", "options": ["split", "keep"], "recommend": 2, "kind": kind}),
+        )
+    };
+    let decision = |by: &str| ev("decision", serde_json::json!({"id": "q1", "choice": "keep", "by": by}));
+
+    emit(&c.state, &cfg, ask("routine")).unwrap();
+    assert_eq!(pushes(), 0, "a routine ask merely waiting: no push");
+    emit(&c.state, &cfg, ask("owner")).unwrap();
+    assert_eq!(pushes(), 1, "an owner ask pushes");
+    emit(&c.state, &cfg, decision("owner")).unwrap();
+    assert_eq!(pushes(), 1, "the owner's own answer: no push");
+    emit(&c.state, &cfg, decision("default")).unwrap();
+    assert_eq!(pushes(), 2, "a default taken pushes");
+    let got = std::fs::read_to_string(&sink).unwrap();
+    assert_eq!(
+        got.matches("Split?").count(),
+        2,
+        "the cmd notifier hears both asks: {got}"
+    );
+}
+
 #[test]
 fn webpush_notifier_needs_sub() {
     assert!(Config::parse("[[notify]]\ntype = \"webpush\"\n").is_err());
