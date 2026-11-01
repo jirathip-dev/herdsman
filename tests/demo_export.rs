@@ -105,11 +105,20 @@ fn demo_page_is_inert_and_relative() {
     );
     assert!(page.contains("Demo with fake data. Install herdsman to run your own."));
     assert_eq!(page.matches("<span class=g>merged</span>").count(), 4, "4 merges today");
-    // #81: #39 merged with q1 unanswered; its ask is closed, so the only needs-you card is #21's.
-    assert_eq!(html.matches("<div class=ask>").count(), 1, "one needs-you card");
+    // #81: #39 merged with q1 unanswered; its ask is closed. #99: #21's owner ask waits, #44's routine one counts down.
+    assert_eq!(html.matches("<div class=ask>").count(), 2, "two needs-you cards");
     let card = &html[html.find("<div class=ask>").unwrap()..];
     assert!(
         card.starts_with("<div class=ask><p><b>needs you</b> <span class=m>acme-api · #21 · acme-api-orch"),
+        "{card:.300}"
+    );
+    assert!(
+        card.contains("<span class=m>owner · waits for you</span>"),
+        "{card:.300}"
+    );
+    let card = &card[card[1..].find("<div class=ask>").unwrap() + 1..];
+    assert!(
+        card.starts_with("<div class=ask><p><b>needs you</b> <span class=m>acme-web · #44 · acme-web-impl-44 · 6m</span> <span class=m>routine · defaults to 2 in 24m</span>"),
         "{card:.300}"
     );
     assert!(

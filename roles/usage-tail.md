@@ -1,7 +1,7 @@
 
 ## Decisions
 
-Never hold silently. If you stop for any decision, run `herdsman ask` with ≤4 options and your recommendation first, then wait. Read a `DECISION` line as final.
+Never hold silently. If you stop for any decision, run `herdsman ask` with ≤4 options and your recommendation first, then wait. Read a `DECISION` line as final. `--kind routine` (needs `--recommend`; unanswered for 30 min it takes your recommendation, `by: default`, still changeable): fix rounds, ordering, size or cap targets an issue already set, already-decided specs, test or tooling choices inside the issue's scope. `--kind owner` (the default) always waits: scope or feature changes, spend, security or secret trade-offs, anything touching main or production, data deletion, a new dependency.
 
 ## Issue states
 
@@ -28,7 +28,7 @@ queued → impl → review(n) → fix(n) → ready → merged; plus blocked, nee
 - CAP: spawn: the fleet's optional max_impl / max_rev lane cap is reached (unset = no cap)
 - PAUSED: spawn: the fleet is paused (`herdsman resume <fleet>`); impl/rev lanes wait, live lanes are untouched
 - BAD_VALUE: set: a value is empty or has a quote/backslash/control char, or the model is not in `models`; ask: an empty question, over 4 options
-- NO_SUCH_ASK / ALREADY_ANSWERED: answer: the fleet has no such ask id, or it was answered already
+- NO_SUCH_ASK / ALREADY_ANSWERED / NO_RECOMMENDATION / OWNER_TOPIC: answer: the fleet has no such ask id, or it was answered already (a `by: default` decision can be changed once); ask: `--kind routine` without `--recommend`, or with an owner word (main, prod, secret, token, delete, spend, cost, $, dependency, scope)
 - STALE: serve: fleet.toml changed since the page was rendered; reload and retry
 - NO_SUCH_AGENT / SECRET_IN_WIP / SNAPSHOT_FAILED / UNSAFE_CLEAN: stop/kill: no such live lane; kill: a secret-looking value in the wip diff, or the wip snapshot failed (index restored, nothing pushed, pane stays); clean --lane: not merged/closed, dirty, unpushed or live
 - MCP_FORBIDDEN: spawn/profiles sync: a role's `mcp` names a server matching `mcp_deny` (default `*prod*`)
@@ -55,7 +55,7 @@ an `account-capped` one waits `cap_reset_minutes` or `herdsman accounts reset <n
 ## Events
 
 `herdsman check` emits `stall`, `lane-dead`, `ready-unmerged`, `account-capped` (limit banner), `orch-holding` (orch idle >15 min,
-startable work, no open ask), `ask-waiting` (an ask open >30 min), `orphan-lane` (a herdr agent named like a lane with no spawn event; `spawn` adopts it) and `alerts-off` (page alerts, no webpush notifier) once per state; `orch-nudged` (an item waiting on an idle
+startable work, no open ask), `ask-waiting` (an owner ask open >30 min), a `by: default` decision for each routine ask open `ask_default_minutes` (30), `orphan-lane` (a herdr agent named like a lane with no spawn event; `spawn` adopts it) and `alerts-off` (page alerts, no webpush notifier) once per state; `orch-nudged` (an item waiting on an idle
 orch >5 min: its pane gets the exact next command, once per issue, head and state), then `orch-stuck` 10 min later; `herdsman merge` emits
 `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain line, or raw event JSON with `format = "json"`. A fleet's own `[[fleet.<name>.notify]]` (same fields)
 replaces the global `[[notify]]` for its events; `notify_global = true` in `[fleet.<name>]` sends to both.

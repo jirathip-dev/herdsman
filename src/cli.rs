@@ -96,6 +96,9 @@ enum Cmd {
         /// The recommended option's number
         #[arg(long, value_name = "N")]
         recommend: Option<usize>,
+        /// routine (defaults to --recommend after [limits].ask_default_minutes) | owner (always waits)
+        #[arg(long, default_value = "owner", value_parser = ["routine", "owner"])]
+        kind: String,
     },
     /// Answer an open ask (option number or free text); prompts the asking agent `DECISION <id>: <text>`
     Answer {
@@ -582,8 +585,9 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     issue,
                     question,
                     options,
-                    recommend,
-                } => crate::ask(ctx, &cfg, out, (&fleet, lane(&issue)?), &question, &options, recommend)?,
+                    recommend: n,
+                    kind,
+                } => crate::ask(ctx, &cfg, out, (&fleet, lane(&issue)?), &question, &options, (n, &kind))?,
                 Cmd::Answer { fleet, id, choice, by } => {
                     crate::answer(ctx, &cfg, r, out, (&fleet, &id), &choice, (&by, None))?;
                 }

@@ -96,7 +96,14 @@ pub fn read(path: &Path) -> Result<Vec<Event>> {
 #[allow(clippy::needless_pass_by_value)] // public API: callers and tests hand the event over
 pub fn emit(state: &Path, cfg: &Config, ev: Event) -> Result<()> {
     append(state, &ev)?;
-    for n in cfg.notifiers(&ev.fleet).into_iter().filter(|n| n.wants(&ev.kind)) {
+    // #99: phones hear of owner asks and of each default taken, never of a routine ask merely waiting.
+    let push = match ev.kind.as_str() {
+        "needs-decision" if ev.str("kind") == Some("routine") => "",
+        "decision" if ev.str("by") == Some("default") => "needs-decision",
+        k => k,
+    };
+    let wanted = |n: &&crate::config::Notify| n.wants(if n.webpush() { push } else { &ev.kind });
+    for n in cfg.notifiers(&ev.fleet).into_iter().filter(wanted) {
         let payload = if n.format.as_deref() == Some("json") {
             serde_json::to_string(&ev)?
         } else {

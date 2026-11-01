@@ -294,6 +294,21 @@ fn join(parts: &[&str]) -> String {
         .join(" · ")
 }
 
+const REC: &str = " <small>(recommended)</small>";
+
+/// Ask `a`'s answer form: option buttons (recommended first) and a free-text box.
+fn answer_form(ctx: &Ctx, a: &Event, send: &str) -> String {
+    let rec = a.data["recommend"].as_u64();
+    let btn = |(o, n): (&serde_json::Value, u64)| {
+        let (o, mark) = (esc(o.as_str().unwrap_or("?")), if Some(n) == rec { REC } else { "" });
+        format!("<button name=choice value={n}>{n}. {o}{mark}</button>")
+    };
+    let opts = a.data["options"].as_array().into_iter().flatten();
+    let mut btns: Vec<String> = opts.zip(1..).map(btn).collect();
+    btns.sort_by_key(|b| !b.contains(REC));
+    format!("<form method=post>{}<input type=hidden name=id value=\"{}\"><input name=text aria-label=answer placeholder=\"or type an answer\"><button>{send}</button>{}</form>", hidden("answer", &a.fleet, &mtime(ctx)), esc(a.str("id").unwrap_or_default()), btns.concat())
+}
+
 fn hidden(op: &str, fleet: &str, mt: &str) -> String {
     format!("<input type=hidden name=op value={op}><input type=hidden name=fleet value=\"{}\"><input type=hidden name=mtime value={mt}>", esc(fleet))
 }
@@ -1013,13 +1028,10 @@ impl<'a> Server<'a> {
             .collect();
         crate::events::open_asks(events).into_iter().map(|a| {
             let s = |k| a.str(k).unwrap_or_default();
-            let mut opts: Vec<(u64, &str)> = a.data["options"].as_array().into_iter().flatten().zip(1..).map(|(o, n)| (n, o.as_str().unwrap_or("?"))).collect();
-            opts.sort_by_key(|o| Some(o.0) != a.data["recommend"].as_u64());
-            let rec = |n: &u64| if Some(*n) == a.data["recommend"].as_u64() { " <small>(recommended)</small>" } else { "" };
-            let btns: String = opts.iter().map(|(n, o)| format!("<button name=choice value={n}>{n}. {}{}</button>", esc(o), rec(n))).collect();
-            let form = format!("<form method=post>{}<input type=hidden name=id value=\"{}\"><input name=text aria-label=answer placeholder=\"or type an answer\"><button>Send</button>{btns}</form>", hidden("answer", &a.fleet, &mtime(ctx)), esc(s("id")));
             let who = join(&[&a.fleet, &a.issue.map_or(String::new(), |n| format!("#{n}")), s("agent"), &age(ctx.now.saturating_sub(a.ts))]);
-            format!("<div class=ask><p><b>needs you</b> <span class=m>{}</span></p><p>{}</p>{}</div>", esc(&who), esc(s("question")), if self.addr.is_some() { form } else { String::new() })
+            // #99: a routine ask counts down to its default; an owner ask waits.
+            let kind = a.data["recommend"].as_u64().filter(|_| s("kind") == "routine").map_or("owner · waits for you".into(), |n| format!("routine · defaults to {n} in {}", age((a.ts + 60 * cfg.map_or(30, |c| c.limits.ask_default_minutes)).saturating_sub(ctx.now))));
+            format!("<div class=ask><p><b>needs you</b> <span class=m>{}</span> <span class=m>{kind}</span></p><p>{}</p>{}</div>", esc(&who), esc(s("question")), if self.addr.is_some() { answer_form(ctx, a, "Send") } else { String::new() })
         }).collect::<String>() + &blocked
     }
 
@@ -1127,6 +1139,15 @@ impl<'a> Server<'a> {
                 }
                 if let Some(b) = blocked_by {
                     card.push(format!("<span class=r>blocked by #{b}</span>"));
+                }
+                // #99: a decision taken by default, with [change]: a new decision on the same ask.
+                let last = events.iter().rev().find(|e| e.is("decision", f, n));
+                if let Some(d) = last.filter(|d| d.str("by") == Some("default")) {
+                    let asked = |e: &&Event| e.is("needs-decision", f, n) && e.str("id") == d.str("id");
+                    let ask = events.iter().find(asked).filter(|_| rw);
+                    let change = ask.map_or(String::new(), |a| answer_form(ctx, a, "[change]"));
+                    let choice = esc(d.str("choice").unwrap_or("?"));
+                    card.push(format!("<span>decided by default: {choice}</span>{change}"));
                 }
                 if let (true, false, Some(k)) = (rw, is_dead, k) {
                     let mv = |label: &str, key: &str, to: u64| {
