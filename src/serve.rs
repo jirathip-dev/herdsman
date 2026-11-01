@@ -1031,7 +1031,7 @@ impl<'a> Server<'a> {
             let who = join(&[&a.fleet, &a.issue.map_or(String::new(), |n| format!("#{n}")), s("agent"), &age(ctx.now.saturating_sub(a.ts))]);
             // #99: a routine ask counts down to its default; an owner ask waits.
             let kind = a.data["recommend"].as_u64().filter(|_| s("kind") == "routine").map_or("owner · waits for you".into(), |n| format!("routine · defaults to {n} in {}", age((a.ts + 60 * cfg.map_or(30, |c| c.limits.ask_default_minutes)).saturating_sub(ctx.now))));
-            format!("<div class=ask><p><b>needs you</b> <span class=m>{}</span> <span class=m>{kind}</span></p><p>{}</p>{}</div>", esc(&who), esc(s("question")), if self.addr.is_some() { answer_form(ctx, a, "Send") } else { String::new() })
+            format!("<div class=ask><p><b>needs you</b> <span class=m>{}</span> <span class=m>· {kind}</span></p><p>{}</p>{}</div>", esc(&who), esc(s("question")), if self.addr.is_some() { answer_form(ctx, a, "Send") } else { String::new() })
         }).collect::<String>() + &blocked
     }
 

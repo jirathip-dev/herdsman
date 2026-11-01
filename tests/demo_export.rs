@@ -113,12 +113,12 @@ fn demo_page_is_inert_and_relative() {
         "{card:.300}"
     );
     assert!(
-        card.contains("<span class=m>owner · waits for you</span>"),
+        card.contains("<span class=m>· owner · waits for you</span>"),
         "{card:.300}"
     );
     let card = &card[card[1..].find("<div class=ask>").unwrap() + 1..];
     assert!(
-        card.starts_with("<div class=ask><p><b>needs you</b> <span class=m>acme-web · #44 · acme-web-impl-44 · 6m</span> <span class=m>routine · defaults to 2 in 24m</span>"),
+        card.starts_with("<div class=ask><p><b>needs you</b> <span class=m>acme-web · #44 · acme-web-impl-44 · 6m</span> <span class=m>· routine · defaults to 2 in 24m</span>"),
         "{card:.300}"
     );
     assert!(
