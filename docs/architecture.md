@@ -63,4 +63,4 @@ History: #60 aimed for 5,000 hand-packed lines; without joining lines or droppin
 herdr adapter, `src/herdr.rs`, included), so the cap was that count rounded up (6,100); #88 (`serial_max`) raised it to
 6,120, #87 (alerts) to 6,170 and #92 (`herdsman drive`, +193 net) to 6,360. #93 re-based it on formatted code: the
 same 6,356 packed lines are 8,859 under rustfmt at width 120, so the cap became 9,000 formatted lines.
-10,000 (2026-11-01, owner: "Maybe we put limit to 10k overall"; re-measured after the orch deletion)
+10,000 (2026-11-01, owner: "Maybe we put limit to 10k overall"; re-measured after the orch deletion); #130 (needs-human card, +102 net) to 10,100 (owner, q38).

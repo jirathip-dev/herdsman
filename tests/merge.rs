@@ -393,3 +393,76 @@ fn merge_into_fleet_repo_prints_reinstall_command_last() {
     );
     assert!(!r.called("cargo"), "printed, never run");
 }
+
+// --- #130: `--owner-override` and `round-extended` ---
+
+/// Four rounds, the last a PASS at the head.
+const OVER: [(&str, &str); 4] = [
+    ("FAIL", OLD),
+    ("FAIL", "3333333333333333333333333333333333333333"),
+    ("FAIL", "4444444444444444444444444444444444444444"),
+    ("PASS", HEAD),
+];
+
+fn over(c: &herdsman::Ctx, r: &Fake) -> (i32, String) {
+    run(c, r, &["merge", "sendmeter", "12", "--owner-override"])
+}
+
+#[test]
+fn owner_override_merges_past_round_limit_and_says_so() {
+    let (_d, c) = setup("override", CONFIG, &OVER);
+    let r = pr("staging", green());
+    let (exit, out) = over(&c, &r);
+    assert_eq!(exit, 0, "{out}");
+    assert!(r.called("gh pr merge 34"));
+    let all = read(&c.state).unwrap();
+    let m = all.iter().find(|e| e.kind == "merged").unwrap();
+    assert_eq!((m.str("by"), m.str("override")), (Some("owner"), Some("ROUND_LIMIT")));
+    assert!(out.contains("Owner override: ROUND_LIMIT"), "closing comment: {out}");
+}
+
+#[test]
+fn owner_override_still_refuses_red_ci_and_a_stale_verdict() {
+    let red = json!([{"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "FAILURE"}]);
+    let (_d, c) = setup("override-red", CONFIG, &OVER);
+    let r = pr("staging", red);
+    let (exit, out) = over(&c, &r);
+    assert!(exit == 3 && out.contains("REFUSED CI_NOT_GREEN"), "{out}");
+    assert!(!r.called("gh pr merge"));
+
+    let stale = [
+        OVER[0],
+        OVER[1],
+        OVER[2],
+        ("PASS", "5555555555555555555555555555555555555555"),
+    ];
+    let (_d, c) = setup("override-stale", CONFIG, &stale);
+    let r = pr("staging", green());
+    let (exit, out) = over(&c, &r);
+    assert!(exit == 3 && out.contains("REFUSED STALE_VERDICT"), "{out}");
+    assert!(!r.called("gh pr merge"));
+}
+
+/// `[one more round]` logs `round-extended`: round 4 of 3 may merge, round 5 is ROUND_LIMIT again.
+#[test]
+fn round_extended_allows_exactly_one_more_round() {
+    let ext = |c: &herdsman::Ctx| {
+        let e = Event::new(30, "sendmeter", Some(12), "round-extended", json!({}));
+        append(&c.state, &e).unwrap();
+    };
+    let (_d, c) = setup("extend-4", CONFIG, &OVER);
+    ext(&c);
+    let (exit, out) = run_cli(&c, &pr("staging", green()));
+    assert_eq!(exit, 0, "round 4 of 3+1 merges: {out}");
+
+    let five = [
+        OVER[0],
+        OVER[1],
+        OVER[2],
+        ("FAIL", "5555555555555555555555555555555555555555"),
+        ("PASS", HEAD),
+    ];
+    let (_d, c) = setup("extend-5", CONFIG, &five);
+    ext(&c);
+    assert_refused(&c, &pr("staging", green()), "ROUND_LIMIT");
+}

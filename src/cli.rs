@@ -84,7 +84,13 @@ enum Cmd {
         file: String,
     },
     /// Merge the issue's PR into the integration branch if every gate passes; writes the one closing comment, closes the issue
-    Merge { fleet: String, issue: u64 },
+    Merge {
+        fleet: String,
+        issue: u64,
+        /// Owner only: merge past ROUND_LIMIT (never past PASS, CI or serial); logged `by: owner`
+        #[arg(long)]
+        owner_override: bool,
+    },
     /// Hold for a decision: log it, notify the fleet with numbered options and the answer command, print its id
     Ask {
         fleet: String,
@@ -682,7 +688,11 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     let pass = verdict == "PASS";
                     gate::verdict(ctx, &cfg, r, out, (&fleet, issue), pass, &sha, &file)?;
                 }
-                Cmd::Merge { fleet, issue } => gate::merge(ctx, &cfg, r, out, &fleet, issue)?,
+                Cmd::Merge {
+                    fleet,
+                    issue,
+                    owner_override: o,
+                } => gate::merge(ctx, &cfg, r, out, &fleet, issue, o)?,
                 Cmd::Brief { fleet, issue } => {
                     let v = gh::spec(ctx, r, cfg.fleet(&fleet)?, &fleet, issue, false)?;
                     let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
