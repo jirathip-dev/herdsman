@@ -152,6 +152,7 @@ impl Role {
 #[serde(default)]
 pub struct Limits {
     pub review_rounds: u32,
+    pub update_rounds: u32,
     pub stall_minutes: u64,
     /// Host-load gate for `herdsman spawn` (`HOST_BUSY`).
     pub load_per_cpu: f64,
@@ -169,6 +170,7 @@ impl Default for Limits {
     fn default() -> Self {
         Limits {
             review_rounds: 3,
+            update_rounds: 3,
             stall_minutes: 30,
             load_per_cpu: 2.5,
             swapout_rate: 2000.0,
