@@ -95,10 +95,21 @@ pub fn verdict(
         return Ok(());
     };
     let (agent, pane) = (e.str("agent"), e.str("pane").unwrap_or_default());
+    // A reviewer herdr still shows `working` (or an unreadable agent list) is left alone.
+    let busy = herdr::agents(r).map_or(true, |a| {
+        a.iter()
+            .any(|a| a["name"].as_str() == agent && a["agent_status"] == "working")
+    });
+    if busy {
+        return Ok(());
+    }
     let ws = e.str("workspace").unwrap_or_default();
-    let gone = check::remove(r, cfg, fleet, wt, ws).map(|()| herdr::close(r, pane));
+    let gone = match crate::spawn::dirty(r, Path::new(wt)) {
+        Some(why) => Err(anyhow::anyhow!(why)),
+        None => check::remove(r, cfg, fleet, wt, ws).and_then(|()| herdr::close(r, pane).map(drop)),
+    };
     let kind = if gone.is_ok() { "lane-closed" } else { "lane-kept" };
-    let reason = gone.map_or_else(|why| format!("{wt}: {why:#}"), |_| "verdict recorded".into());
+    let reason = gone.map_or_else(|why| format!("{wt}: {why:#}"), |()| "verdict recorded".into());
     writeln!(out, "{kind} {}: {reason}", agent.unwrap_or_default())?;
     let d = json!({"agent": agent, "reason": reason});
     emit(&ctx.state, cfg, Event::new(ctx.now, fleet, Some(issue), kind, d))
