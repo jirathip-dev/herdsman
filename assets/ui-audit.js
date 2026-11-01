@@ -182,6 +182,10 @@
     let res;
     try { res = (SCROLL[V] || measure)(); } catch (e) { res = { view: V, controls: 0, outliers: ['audit error: ' + e.message] }; }
     if (innerWidth !== 390) res.outliers.push(`viewport ${innerWidth} px wide, not 390`); // #68: new-headless Chrome keeps windows ≥ 500 px
+    // #114 app-like: no pinch or double-tap zoom.
+    const vp = $('meta[name=viewport]').content, ta = getComputedStyle(document.documentElement).touchAction;
+    if (vp !== 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover') res.outliers.push(`viewport meta "${vp}"`);
+    if (ta !== 'manipulation') res.outliers.push(`html touch-action ${ta}, not manipulation`);
     const out = document.createElement('pre');
     out.id = 'audit';
     out.textContent = JSON.stringify(res);
@@ -272,14 +276,30 @@
         for (const [k, c] of bars) if (r.bottom > c.top && r.top < c.bottom && r.right > c.left && r.left < c.right) bad.push(`"${t.data.trim().slice(0, 20)}": under .${k}`);
       }
       // #65 A: no strip text is cut to an ellipsis, also at the owner's counts (13 queued, 11 done, 5 idle, 3 working).
+      // #114: every queued horse in a row stands on one ground line (its SVG's bottom ±1 px), blocked or not, and
+      // none overlaps the gate post (`.gate::after`).
+      const ground = () => {
+        for (const g of p.querySelectorAll('.gate')) {
+          const a = getComputedStyle(g, '::after'), post = g.getBoundingClientRect().left + parseFloat(a.left) + parseFloat(a.width), rows = new Map();
+          for (const h of g.querySelectorAll('.hqh')) {
+            const r = h.getBoundingClientRect(), y = h.querySelector('svg').getBoundingClientRect().bottom, k = Math.round(r.top);
+            if (r.left < post) bad.push(`${label(h)}: left ${r.left | 0} over the gate post (to ${post | 0})`);
+            if (!rows.has(k)) rows.set(k, []);
+            rows.get(k).push([label(h), y]);
+          }
+          for (const row of rows.values()) for (const [n, y] of row) if (Math.abs(y - row[0][1]) > 1) bad.push(`${n}: feet at ${y.toFixed(1)}, ${row[0][0]} at ${row[0][1].toFixed(1)}`);
+        }
+      };
+      ground();
       const clip = () => [...p.querySelectorAll('.hs p')].filter(e => e.scrollWidth > e.clientWidth).forEach(e => bad.push(`"${e.textContent.slice(0, 24)}": strip text ellipsized, ${e.scrollWidth}>${e.clientWidth}`));
       clip();
       if (V === 'herd1') {
         const f = structuredClone(data), l = f.fleets[0].lanes[0], q = f.fleets[0].queue[0];
         f.fleets[0].lanes = [...'wwwiiiiiddddddddddd'].map((s, i) => ({ ...l, name: 'audit-' + i, state: { w: 'working', i: 'idle', d: 'done' }[s] }));
-        f.fleets[0].queue = Array.from({ length: 13 }, (_, i) => ({ ...q, issue: 900 + i }));
+        f.fleets[0].queue = Array.from({ length: 13 }, (_, i) => ({ ...q, issue: 900 + i, blocked_by: i % 3 ? null : 2683 })); // #114: mixed rows
         herdData(f);
         clip();
+        ground();
       }
     }
     return { view: V, controls: ctl.length, outliers: [...early.splice(0), ...bad] };
