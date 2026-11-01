@@ -604,24 +604,20 @@ pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
             head = (head || l.starts_with("diff --git ")) && !l.starts_with("@@");
             if let Some((_, h)) = l.strip_prefix("@@ ").and_then(|h| h.split_once('+')) {
                 n = h.split([',', ' ']).next().and_then(|s| s.parse().ok()).unwrap_or(1);
-                continue;
-            }
-            if head {
+            } else if head {
                 file = l.strip_prefix("+++ b/").unwrap_or(file);
-                continue;
+            } else if let Some(a) = l.strip_prefix('+').filter(|_| hit.is_none()) {
+                // Mask every secret on the line, not only the first.
+                let mut m = a.trim().to_owned();
+                while let Some(v) = crate::lanes::secret(&m) {
+                    m = m.replace(v, "•••");
+                }
+                if m != a.trim() {
+                    hit = Some(format!("{file}:{n}: {m}"));
+                }
             }
-            let line = n;
-            if l.starts_with(['+', ' ']) {
+            if !head && l.starts_with(['+', ' ']) {
                 n += 1;
-            }
-            let Some(a) = l.strip_prefix('+') else { continue };
-            // Mask every secret on the line, not only the first.
-            let mut m = a.trim().to_owned();
-            while let Some(v) = crate::lanes::secret(&m) {
-                m = m.replace(v, "•••");
-            }
-            if hit.is_none() && m != a.trim() {
-                hit = Some(format!("{file}:{line}: {m}"));
             }
         }
         if let Some(hit) = hit {

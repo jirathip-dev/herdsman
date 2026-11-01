@@ -168,24 +168,16 @@ pub fn secret(l: &str) -> Option<&str> {
     let mut words = l.split(|c: char| !c.is_ascii_alphanumeric() && !"-_.".contains(c));
     let pem = l.contains("-----BEGIN") && l.contains("PRIVATE KEY-----");
     let tok = words.find(|w| jwt(w) || PREFIXES.iter().chain(&["AKIA", "AIza"]).any(|p| pre(w, p)));
-    // A Telegram bot token: an 8+ digit bot id, `:`, then 30+ chars starting `AA`.
-    let bot = |w: &&str| {
-        w.split_once(':').is_some_and(|(id, t)| {
-            id.len() >= 8 && !has(id, |b| !b.is_ascii_digit()) && t.starts_with("AA") && t.len() >= 30
-        })
-    };
-    let tg = l
-        .split(|c: char| !c.is_ascii_alphanumeric() && !"-_:".contains(c))
-        .find(bot);
+    // A Telegram bot token: an 8+ digit bot id, `:AA`, then 28+ chars.
+    let bot = |(d, t): (&str, &str)| d.len() > 7 && t.len() > 27 && d.parse::<u64>().is_ok();
+    let sep = [' ', '"', '\'', '=', ',', '`'];
+    let tg = l.split(sep).find(|w| w.split_once(":AA").is_some_and(bot));
     tok.or(tg).or(pem.then_some(l.trim())).or_else(|| {
         // `NAME = value` or `NAME: value` (JSON/YAML): the quoted value, else the first whitespace-delimited token.
         l.match_indices(['=', ':']).find_map(|(i, _)| {
             let up = l[..i].split_whitespace().last()?.to_uppercase();
-            let r = l[i + 1..].trim_start();
-            let q = r.starts_with(['"', '\'']).then(|| r[1..].split(['"', '\'']).next());
-            let v = q
-                .unwrap_or_else(|| r.split_whitespace().next())?
-                .trim_end_matches([';', ',']);
+            let r = l[i + 1..].trim_start().trim_start_matches(['"', '\'']);
+            let v = r.split(['"', '\'', ' ', '\t']).next()?.trim_end_matches([';', ',']);
             let n = v.chars().count() as f64;
             let bits: f64 = v.chars().map(|c| -(v.matches(c).count() as f64 / n).log2() / n).sum();
             // Words, `snake_case`/`camelCase` identifiers, code and paths are never secrets.
