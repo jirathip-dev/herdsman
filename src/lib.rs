@@ -16,6 +16,7 @@ pub mod check;
 mod cli;
 pub mod config;
 pub mod devices;
+pub mod doctor;
 pub mod drive;
 pub mod events;
 pub mod gate;
