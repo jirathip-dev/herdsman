@@ -61,6 +61,20 @@
       if ($('.now').textContent !== 'no pane: the transcript closed with it') early.push(`chat reads "${$('.now').textContent.slice(0, 40)}"`);
       for (const e of [S, ...S.querySelectorAll('*')].filter(seen)) if (e.matches('.r') || getComputedStyle(e).color === red) early.push(`red in the sheet: ${e.outerHTML.slice(0, 60)}`);
     },
+    // #95: the demo's Others agent (not a lane): only [close pane], the reason in p.st, nothing in the red colour.
+    'sheet-other': async () => {
+      tab('lanes');
+      const row = $('.lane[data-role=other]');
+      if (!row) return early.push('no Others agent in the demo');
+      open(row);
+      await wait();
+      const probe = S.appendChild(Object.assign(document.createElement('i'), { className: 'r' })), red = getComputedStyle(probe).color;
+      probe.remove();
+      if (st.textContent !== 'not a herdsman lane: herdsman can only close its pane') early.push(`p.st reads "${st.textContent}"`);
+      for (const op of ['stop', 'kill', 'clean']) if (seen($(`[data-op=${op}]`))) early.push(`[${op}] shown on an Others agent`);
+      if (!seen($('[data-op=close]'))) early.push('no [close pane] on an Others agent');
+      for (const e of [S, ...S.querySelectorAll('*')].filter(seen)) if (e.matches('.r') || getComputedStyle(e).color === red) early.push(`red in the sheet: ${e.outerHTML.slice(0, 60)}`);
+    },
     // #70: the handle is ≥ 56 px; a −200 px pointer drag moves the sheet mid-drag, release snaps to a detent,
     // and close leaves it shown, sliding off-screen, for a frame before `hidden` (the slide exists). Virtual time
     // (--virtual-time-budget) runs no frames and freezes transitions: rAF is a 16 ms timer here, and the slide is
@@ -158,7 +172,7 @@
   let toasted = null;
   const dragged = [];
   const HP = { herd1: 0, herd2: 1, 'herd-night': 0, 'herd-night-storm': 0 }; // the views measuring one Herd page
-  const ROOTS = { sheet: () => [$('#sheet')], 'sheet-parked': () => [$('#sheet')], ...Object.fromEntries(Object.entries(HP).map(([v, n]) => [v, () => [hp(n), $('.hlt'), $('.hx'), $('.hwx')]])) };
+  const ROOTS = { sheet: () => [$('#sheet')], 'sheet-parked': () => [$('#sheet')], 'sheet-other': () => [$('#sheet')], ...Object.fromEntries(Object.entries(HP).map(([v, n]) => [v, () => [hp(n), $('.hlt'), $('.hx'), $('.hwx')]])) };
   const CTL = 'button:not(.lr,.hh,.hqh), .pk, [role=button]', ROW = 'summary, .lr, .hh, .hqh', NAME = '.nw, .hl b';
   const CHOICE = '.ask button[name=choice], .ask .pick'; // amendment A: wraps, ≤ 4 lines, instead of 28 px
   // A closed <details> keeps its content's boxes (content-visibility), so ask the browser what is shown.
