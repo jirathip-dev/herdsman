@@ -2,7 +2,10 @@
   --fs:13px;--fs-meta:11px;--fs-input:16px;--fs-code:32px;--ctl:28px;--hit:44px;--s1:4px;--s2:8px;--s3:12px;--s4:16px}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-html,body{overflow-x:hidden;overscroll-behavior-y:contain}
+/* #114 app-like: no pinch/double-tap zoom, no text-size jump on rotate, no rubber band (inner scrollers contain).
+   Text stays 13/11 px; iOS Larger Text applies through the system setting. */
+html{touch-action:manipulation;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html,body{overflow-x:hidden;overscroll-behavior:none}
 body{margin:0;background:var(--bg);color:var(--fg);font:var(--fs)/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere;padding:0 var(--s3) calc(var(--hit) + var(--ctl) + env(safe-area-inset-bottom))}
 /* #68: no text past the screen. Text boxes shrink and wrap anywhere (paths, shas, URLs too); one-line cells (.nw .el, .tl) ellipsise. */
 p,li,h2,h3,summary,.kv,.m,.act,.why,.tl,.card *,.msg,.st,code{min-width:0;overflow-wrap:anywhere}
