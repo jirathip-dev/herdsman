@@ -23,6 +23,20 @@ fn mergeable(ctx: &Ctx, r: &dyn Runner, cfg: &Config, s: &IssueState) -> Option<
     gate(f, &pr, Some(s), cfg.limits.review_rounds).ok()
 }
 
+/// `(url, prompt)` when the issue's latest amendment is missing from the lane's `.brief.md` (#101).
+fn amendment(ctx: &Ctx, r: &dyn Runner, cfg: &Config, s: &IssueState, wt: &str) -> Option<(String, String)> {
+    let f = cfg.fleet(&s.fleet).ok()?;
+    let brief = std::fs::read_to_string(Path::new(wt).join(".brief.md")).ok()?;
+    let spec = gh::spec(ctx, r, f, &s.fleet, s.issue, true).ok()?;
+    let url = spec["amended"].as_str()?;
+    if brief.contains(url) {
+        return None;
+    }
+    let n = s.issue;
+    let line = format!("AMENDMENT on #{n} ({url}): run `herdsman brief {} {n}` and apply it", s.fleet);
+    Some((url.to_string(), line))
+}
+
 /// Each alert's dedup key is built from the issue's last activity: once per state, again after a change.
 pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Result<()> {
     let events = read(&ctx.state)?;
@@ -71,13 +85,10 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
                 }
             }
             // #101: an amendment newer than the lane's brief prompts the live lane once.
-            let brief = wt.and_then(|wt| std::fs::read_to_string(Path::new(wt).join(".brief.md")).ok());
-            if let (Some(brief), Some(p), true, Ok(f)) = (brief, pane, status.is_some(), cfg.fleet(&s.fleet)) {
-                let iss = gh::spec(ctx, r, f, &s.fleet, s.issue, true).unwrap_or_default();
-                if let Some(url) = iss["amended"].as_str().filter(|u| !brief.contains(*u)) {
-                    let (n, key) = (s.issue, format!("{lane}:{url}"));
-                    let (seen, fl) = (events.iter().any(|e| e.str("key") == Some(&key)), &s.fleet);
-                    let line = format!("AMENDMENT on #{n} ({url}): run `herdsman brief {fl} {n}` and apply it");
+            if let Some(p) = pane.filter(|_| status.is_some()) {
+                if let Some((url, line)) = wt.and_then(|wt| amendment(ctx, r, cfg, s, wt)) {
+                    let key = format!("{lane}:{url}");
+                    let seen = events.iter().any(|e| e.str("key") == Some(&key));
                     let dsh = spawned.and_then(|e| e.str("harness")) == Some("dsh");
                     if !seen && herdr::reply(r, dsh, lane, p, &line).is_ok() {
                         hits.push(("amended", key, line));

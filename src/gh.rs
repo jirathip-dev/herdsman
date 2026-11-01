@@ -41,16 +41,24 @@ pub fn cached_title(ctx: &Ctx, fleet: &str, issue: u64) -> Option<String> {
     cached_spec(ctx, fleet, issue).and_then(|v| v["title"].as_str().map(String::from))
 }
 
-/// `(url, "\n\n" + text)` of a `**Amendment` comment by an owner, member or collaborator: strangers can't steer a lane.
+/// `(url, "\n\n" + text)` of a `**Amendment` comment by an owner, member or collaborator.
+/// Other authors are ignored: strangers can't steer a lane.
 fn amendment(c: &Value) -> Option<(String, String)> {
     let s = |k: &str| c.pointer(k).and_then(Value::as_str).unwrap_or_default().trim();
-    let ok = matches!(s("/authorAssociation"), "OWNER" | "MEMBER" | "COLLABORATOR");
-    let (body, url) = (s("/body"), s("/url"));
+    if !matches!(s("/authorAssociation"), "OWNER" | "MEMBER" | "COLLABORATOR") {
+        return None;
+    }
+    let body = s("/body");
+    if !body.starts_with("**Amendment") {
+        return None;
+    }
+    let url = s("/url");
     let text = format!("\n\n{body} — {}, {} ({url})", s("/author/login"), s("/createdAt"));
-    (ok && body.starts_with("**Amendment")).then(|| (url.into(), text))
+    Some((url.to_string(), text))
 }
 
-/// The issue's `{title, body + amendments, updatedAt, amended: last url}` (#101); `refresh` re-reads `updatedAt` first, else the cache is trusted.
+/// The issue's `{title, body + amendments, updatedAt, amended: last url}` (#101).
+/// `refresh` re-reads `updatedAt` first, else the cache is trusted.
 pub fn spec(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, issue: u64, refresh: bool) -> Result<Value> {
     let p = cache_path(ctx, "issue", fleet, issue);
     let n = issue.to_string();
