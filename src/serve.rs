@@ -1486,7 +1486,15 @@ impl<'a> Server<'a> {
             None => String::new(),
         };
         if let Some(c) = cfg.filter(|c| !c.accounts.names.is_empty()) {
-            h += "<h2>Accounts</h2>";
+            let capped = |a: &&String| crate::access::capped_until(c, events, a, ctx.now).is_some();
+            let all = c.accounts.names.len();
+            let n = c.accounts.names.keys().filter(capped).count();
+            let t = match n {
+                0 => "g",
+                n if n == all => "r",
+                _ => "a",
+            };
+            h += &format!("<h2>Accounts</h2><p class=kv>accounts <b class={t}>{n} of {all} capped</b></p>");
             for name in c.accounts.names.keys() {
                 let cap = crate::access::cap_line(c, self.r, events, name, ctx.now);
                 let usage = crate::usage::meter(ctx, c, self.r, name)

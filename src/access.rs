@@ -15,12 +15,13 @@ pub const TOKEN_VAR: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 /// `|`-separated, case-insensitive substrings of Claude Code's usage-limit banner.
 pub const CAP_PATTERN: &str = "usage limit reached|hit your limit|limit reached ∙ resets|limit reached · resets";
 
-/// When the account's cap ends, if its latest cap (since any reset) is within `cap_reset_minutes`.
+/// When the account's latest cap (since any reset) ends: its logged `until`, else `cap_reset_minutes` after it.
 pub fn capped_until(cfg: &Config, events: &[Event], name: &str, now: u64) -> Option<u64> {
     let mine =
         |e: &&Event| matches!(e.kind.as_str(), "account-capped" | "account-reset") && e.str("account") == Some(name);
     let last = events.iter().rev().find(mine)?;
-    let until = last.ts + cfg.accounts.cap_reset_minutes * 60;
+    let until = last.data.get("until").and_then(Value::as_u64);
+    let until = until.unwrap_or(last.ts + cfg.accounts.cap_reset_minutes * 60);
     (last.kind == "account-capped" && until > now).then_some(until)
 }
 
@@ -50,15 +51,13 @@ pub fn pick(ctx: &Ctx, cfg: &Config, events: &[Event], role: &Role) -> Result<Op
         w.sort_by(|a, b| a.0.total_cmp(&b.0));
         names = w.into_iter().map(|w| w.1).collect();
     }
-    let name = names
-        .iter()
-        .find(|n| capped_until(cfg, events, n, now).is_none())
-        .ok_or_else(|| {
-            anyhow!(
-                "every account of this role is capped ({}); wait, or `herdsman accounts reset <name>`",
-                names.join(", ")
-            )
-        })?;
+    let Some(name) = names.iter().find(|n| capped_until(cfg, events, n, now).is_none()) else {
+        let all = role.account_list();
+        let first = all.iter().filter_map(|n| capped_until(cfg, events, n, now)).min();
+        let at = crate::events::age(first.unwrap_or(now).saturating_sub(now));
+        let why = format!("every account {all:?} is capped; the first resets in {at}");
+        return refused("ALL_CAPPED", why);
+    };
     let var = &cfg.accounts.names[name];
     let file = expand(
         cfg.accounts
@@ -75,6 +74,56 @@ pub fn pick(ctx: &Ctx, cfg: &Config, events: &[Event], role: &Role) -> Result<Op
         name.clone(),
         format!("{TOKEN_VAR}=\"$(. '{src}' && printf %s \"${var}\")\""),
     )))
+}
+
+/// The banner's `resets 9am` / `resets Nov 4, 8am` (host local time); else `cap_reset_minutes` on (a day if weekly).
+pub fn cap_until(cfg: &Config, r: &dyn Runner, screen: &str, now: u64) -> u64 {
+    let s = screen.to_lowercase().replace([',', '(', '.'], " ");
+    let tail = &s[s.rfind("reset").unwrap_or(s.len())..];
+    let words: Vec<&str> = tail.split_whitespace().skip(1).collect();
+    let date = words.first().zip(words.get(1)).and_then(|(m, d)| month_day(m, d));
+    let secs = words.iter().find_map(|w| clock(w)).or(date.map(|_| 0));
+    let off = local_offset(r, now);
+    let today = now.saturating_add_signed(off) / 86400;
+    let at = |secs: u64| {
+        (today..today + 400)
+            .filter(|&d| date.is_none_or(|md| md == civil_month_day(d)))
+            .map(|d| (d * 86400 + secs).saturating_add_signed(-off))
+            .find(|&t| t > now)
+    };
+    let session = cfg.accounts.cap_reset_minutes * 60;
+    let fallback = if s.contains("week") { 86400 } else { session };
+    secs.and_then(at).unwrap_or(now + fallback)
+}
+
+/// Seconds past midnight of `3pm` / `3:30pm`.
+fn clock(word: &str) -> Option<u64> {
+    let hm = word.strip_suffix("am").or(word.strip_suffix("pm"))?;
+    let (h, m) = hm.split_once(':').unwrap_or((hm, "0"));
+    let pm = if word.ends_with("pm") { 12 } else { 0 };
+    Some((h.parse::<u64>().ok()? % 12 + pm) * 3600 + m.parse::<u64>().ok()? * 60)
+}
+
+/// `(month 1-12, day)` of `nov 4`.
+fn month_day(month: &str, day: &str) -> Option<(u64, u64)> {
+    let months = "jan feb mar apr may jun jul aug sep oct nov dec".split(' ');
+    let (_, m) = months.zip(1..).find(|(name, _)| month.starts_with(name))?;
+    Some((m, day.parse().ok()?))
+}
+
+/// `(month 1-12, day)` of a day number since 1970-01-01 (Hinnant's `civil_from_days`).
+fn civil_month_day(days: u64) -> (u64, u64) {
+    let doe = (days + 719_468) % 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    ((mp + 2) % 12 + 1, doy - (153 * mp + 2) / 5 + 1)
+}
+
+/// The host's UTC offset in seconds (`date +%z`; UTC if unreadable).
+fn local_offset(r: &dyn Runner, now: u64) -> i64 {
+    let z = usage::date(r, now, "+%z").parse::<i64>().unwrap_or(0);
+    z / 100 * 3600 + z % 100 * 60
 }
 
 /// `var` has a non-empty value in an env file's `text` (`VAR=value` lines).
@@ -174,17 +223,10 @@ pub fn reset(ctx: &Ctx, cfg: &Config, out: &mut dyn Write, name: &str) -> Result
     Ok(())
 }
 
-/// `capped 02:10 · resets 07:10` while the account's latest cap holds, else `ok`.
+/// `capped until Nov 4 08:00` while the account's latest cap holds, else `ok`.
 pub fn cap_line(cfg: &Config, r: &dyn Runner, events: &[Event], name: &str, now: u64) -> String {
-    let hhmm = |t| usage::date(r, t, "+%H:%M");
-    let at = |t: u64| {
-        events
-            .iter()
-            .rev()
-            .find(|e| e.kind == "account-capped" && e.str("account") == Some(name))
-            .map_or(t, |e| e.ts)
-    };
-    capped_until(cfg, events, name, now).map_or("ok".into(), |t| format!("capped {} · resets {}", hhmm(at(t)), hhmm(t)))
+    let until = |t| usage::date(r, t, "+%b %-d %H:%M");
+    capped_until(cfg, events, name, now).map_or("ok".into(), |t| format!("capped until {}", until(t)))
 }
 
 /// `*`-wildcard match on lowercased bytes (callers lowercase both sides).

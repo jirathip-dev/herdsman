@@ -74,6 +74,15 @@ pub fn waiting_on(
     if pr["state"] == "CLOSED" {
         return w("none", "nothing to do (closed): clean me", s.last_ts, None);
     }
+    // #104: an impl/fix/review lane whose account capped since its spawn respawns on a free one (`kill` pushes `wip/`).
+    let active = matches!(s.state.split('(').next(), Some("impl" | "fix" | "review"));
+    let spawned = last_spawn(events, &lane).filter(|_| active);
+    let since_spawn = |e: &&Event| spawned.is_some_and(|sp| e.ts >= sp.ts && e.str("account") == sp.str("account"));
+    if let Some(c) = events.iter().filter(since_spawn).find(|e| e.is("account-capped", f, n)) {
+        let role = spawned.and_then(|sp| sp.str("role")).unwrap_or_default();
+        let what = "account capped, waiting for orch to respawn on a free one";
+        return w("orch", what, c.ts, cmd("spawn", &format!(" {role} --supersede")));
+    }
     let pushed = pr["headRefOid"].as_str().unwrap_or_default();
     // #102: a PASSed PR conflicting with / behind integration gets an update lane; its pushed head is reviewed first.
     let how = match (pr["mergeable"].as_str(), pr["mergeStateStatus"].as_str()) {

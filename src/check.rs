@@ -80,7 +80,7 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
                 if access::capped_screen(cfg, &screen) {
                     let why = format!("{name}: {role} lane {lane} hit the usage limit; spawns skip {name} for now");
                     hits.push(("account-capped", format!("{lane}:{name}"), why));
-                    capped = Some(name);
+                    capped = Some((name, access::cap_until(cfg, r, &screen, ctx.now)));
                 }
             }
             if let Some(p) = pane.filter(|_| status.is_some()) {
@@ -115,7 +115,8 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
         for (kind, key, reason) in hits {
             let mut d = json!({"key": key, "reason": reason});
             if kind == "account-capped" {
-                d["account"] = json!(capped);
+                d["account"] = json!(capped.map(|c| c.0));
+                d["until"] = json!(capped.map(|c| c.1));
             }
             fire(ctx, cfg, out, &events, (&s.fleet, Some(s.issue)), kind, d)?;
         }

@@ -1,8 +1,8 @@
 //! #5: per-role Anthropic accounts with cap fallback; per-role MCP allowlist.
 mod common;
 use common::*;
-use herdsman::events::read;
-use serde_json::Value;
+use herdsman::events::{append, read, Event};
+use serde_json::{json, Value};
 use std::path::Path;
 
 const TOKEN_A: &str = "sk-ant-oat01-AAAA-secret";
@@ -151,10 +151,8 @@ fn capped_account_is_skipped_until_reset() {
     assert_eq!(dry_account(&c, 13), "B");
     let (_, list) = run(&c, &Fake::default(), &["accounts"]);
     assert!(
-        list.lines().any(|l| l.starts_with("A ")
-            && l.contains("capped ")
-            && l.contains(" · resets ")
-            && l.contains("1 lanes sendmeter-impl-12")),
+        list.lines()
+            .any(|l| l.starts_with("A ") && l.contains("capped until ") && l.contains("1 lanes sendmeter-impl-12")),
         "{list}"
     );
     assert!(list.lines().any(|l| l.starts_with("B ") && l.contains(" ok")), "{list}");
@@ -183,14 +181,128 @@ fn cap_expires_after_cap_reset_minutes() {
             "herdr agent list",
             &agents(&[("sendmeter-impl-12", "idle", wt.to_str().unwrap(), "w9:p12")]),
         )
-        .reply(
-            "herdr pane read w9:p12",
-            "Claude usage limit reached. Your limit will reset at 3pm.",
-        );
+        .reply("herdr pane read w9:p12", "Claude usage limit reached.");
     assert!(run(&c, &r, &["check"]).1.contains("account-capped"));
     assert_eq!(dry_account(&c, 13), "B");
     c.now += 601;
     assert_eq!(dry_account(&c, 13), "A");
+}
+
+/// Caps lane `sendmeter-impl-12` (pane `w9:p12`) with `banner` via `herdsman check`.
+fn cap(c: &herdsman::Ctx, banner: &str) {
+    let wt = c.worktrees.join("sendmeter/issue-12");
+    let r = Fake::default()
+        .reply(
+            "herdr agent list",
+            &agents(&[("sendmeter-impl-12", "idle", wt.to_str().unwrap(), "w9:p12")]),
+        )
+        .reply("herdr pane read w9:p12", banner);
+    assert!(run(c, &r, &["check"]).1.contains("account-capped"));
+}
+
+#[test]
+fn cap_until_parses_the_banner_reset_in_local_time() {
+    let cfg = herdsman::config::Config::parse("").unwrap();
+    let bkk = Fake::default().reply("date -r", "+0700\n");
+    let now = 1_793_502_000; // 2026-11-01 10:00 +07
+    let until = |s: &str| herdsman::access::cap_until(&cfg, &bkk, s, now);
+    // The banner shapes `cap_pattern` matches.
+    assert_eq!(
+        until("  ⎿  You've hit your limit · resets 3pm (Asia/Bangkok)"),
+        1_793_520_000
+    );
+    assert_eq!(
+        until("5-hour limit reached ∙ resets 9am"),
+        1_793_584_800,
+        "9am already passed: tomorrow"
+    );
+    assert_eq!(
+        until("Weekly limit reached ∙ resets Nov 4, 8am (Asia/Bangkok)"),
+        1_793_754_000
+    );
+    assert_eq!(
+        until("Claude usage limit reached. Your limit will reset at 3:30pm."),
+        1_793_521_800
+    );
+    // Unparseable: cap_reset_minutes (300) for a session limit, a day for a weekly one.
+    assert_eq!(until("Claude usage limit reached."), now + 300 * 60);
+    assert_eq!(until("Weekly limit reached"), now + 86400);
+}
+
+#[test]
+fn capped_account_is_used_again_after_its_banner_reset() {
+    let d = tmpdir("acct-until");
+    let mut c = ctx(&d, &config(&d, "accounts = [\"A\", \"B\"]"));
+    assert_eq!(run(&c, &Fake::default(), &["profiles", "sync"]).0, 0);
+    spawn(&c, 12);
+    // now = 1_000_000 (1970-01-12 13:46:40; `date` unscripted: UTC): 3pm is 1_004_400.
+    cap(&c, "You've hit your limit · resets 3pm (Asia/Bangkok)");
+    let ev = read(&c.state).unwrap();
+    assert_eq!(ev.last().unwrap().data["until"], 1_004_400);
+    assert_eq!(dry_account(&c, 13), "B");
+    c.now = 1_004_399;
+    assert_eq!(dry_account(&c, 13), "B");
+    c.now = 1_004_400;
+    assert_eq!(dry_account(&c, 13), "A");
+}
+
+#[test]
+fn every_account_capped_refuses_all_capped() {
+    let d = tmpdir("acct-all");
+    let c = ctx(&d, &config(&d, "accounts = [\"A\"]"));
+    assert_eq!(run(&c, &Fake::default(), &["profiles", "sync"]).0, 0);
+    spawn(&c, 12);
+    cap(&c, "You've hit your limit · resets 3pm");
+    let (code, out) = run(&c, &Fake::default(), &["spawn", "sendmeter", "13", "impl", "--dry-run"]);
+    assert_eq!(code, 3, "{out}");
+    assert!(
+        out.contains("REFUSED ALL_CAPPED") && out.contains("[\"A\"] is capped; the first resets in 73m"),
+        "{out}"
+    );
+}
+
+#[test]
+fn capped_lane_waits_on_the_orch_to_respawn_on_a_free_account() {
+    let d = tmpdir("acct-respawn");
+    let c = ctx(&d, &config(&d, "accounts = [\"A\", \"B\"]"));
+    assert_eq!(run(&c, &Fake::default(), &["profiles", "sync"]).0, 0);
+    spawn(&c, 12);
+    cap(&c, "You've hit your limit · resets 3pm");
+    let cfg = herdsman::config::Config::load(&c.config).unwrap();
+    let agents = [serde_json::json!({"name": "sendmeter-impl-12", "agent_status": "idle"})];
+    let ev = read(&c.state).unwrap();
+    let waits = herdsman::waiting::scan(&c, &cfg, &Fake::default(), &ev, &agents, false);
+    let w = &waits.iter().find(|(s, _)| s.issue == 12).unwrap().1;
+    assert_eq!(w.who, "orch", "{w:?}");
+    let cmd = w.next_cmd.clone().unwrap();
+    assert_eq!(cmd, "herdsman spawn sendmeter 12 impl --supersede");
+    // That respawn (as drive runs it) picks the free account.
+    let mut args: Vec<&str> = cmd.split_whitespace().skip(1).collect();
+    args.extend(["--dry-run", "--json"]);
+    let (code, out) = run(&c, &Fake::default(), &args);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["account"], "B");
+}
+
+#[test]
+fn capped_ready_lane_is_not_told_to_respawn() {
+    let d = tmpdir("acct-ready");
+    let c = ctx(&d, &config(&d, "accounts = [\"A\", \"B\"]"));
+    assert_eq!(run(&c, &Fake::default(), &["profiles", "sync"]).0, 0);
+    spawn(&c, 12);
+    cap(&c, "You've hit your limit · resets 3pm");
+    let pass = json!({"verdict": "PASS", "sha": "1".repeat(40)});
+    append(&c.state, &Event::new(c.now, "sendmeter", Some(12), "verdict", pass)).unwrap();
+    let cfg = herdsman::config::Config::load(&c.config).unwrap();
+    let agents = [json!({"name": "sendmeter-impl-12", "agent_status": "idle"})];
+    let ev = read(&c.state).unwrap();
+    let waits = herdsman::waiting::scan(&c, &cfg, &Fake::default(), &ev, &agents, false);
+    let w = &waits.iter().find(|(s, _)| s.issue == 12).unwrap().1;
+    assert!(
+        !w.next_cmd.as_deref().unwrap_or_default().contains("--supersede"),
+        "{w:?}"
+    );
+    assert!(!w.what.contains("account capped"), "{w:?}");
 }
 
 #[test]

@@ -27,8 +27,11 @@ shell sources the file and exports the first uncapped account's token as `CLAUDE
 The token is never copied, logged, or put in argv.
 
 **Fallback and caps.** `herdsman check` reads each Claude lane's pane. When it shows the usage-limit
-banner, it logs `account-capped`. Spawns then skip that account for `cap_reset_minutes` (default 300),
-or until `herdsman accounts reset <name>`.
+banner, it logs `account-capped` with `until`, the banner's reset time (`resets 9am`, `resets Nov 4, 8am`,
+host local time; unparseable: `cap_reset_minutes`, default 300, or a day for a weekly limit). Spawns skip
+that account until then, or until `herdsman accounts reset <name>`; with every account capped, spawn
+refuses `ALL_CAPPED` (drive stops starting for the pass). The capped lane waits on the orch: drive
+respawns it with `--supersede` on a free account (the kill pushes its work to `wip/` first).
 
 **Usage meter.** Setup tokens can't read the usage API: they lack the `user:profile` scope, and
 `/api/oauth/usage` answers 403. To get the real meter, log each account in once with a full `claude`
@@ -70,7 +73,7 @@ A        ok                           1 lanes app-impl-12
          5h 1.5 · 7d 12.0 herdsman lane-hours
 ```
 
-The first line is the cap state (`ok`, or `capped 02:10 · resets 07:10`, the logged cap time and its reset) and the lanes on the account now.
+The first line is the cap state (`ok`, or `capped until Nov 4 08:00`) and the lanes on the account now.
 
 Each value has a thin bar on the page: amber at 75 % or more, red at 90 % or more. When the weekly rate
 would run out before the reset, the line adds `at this pace: out Mon evening`. If a login is

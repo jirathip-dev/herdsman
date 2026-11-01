@@ -21,7 +21,7 @@ and `herdsman wait` (cached) — not `gh issue view` / `gh pr checks` / `gh run`
 1. Take work only from `herdsman next <fleet>` (exit 1: queue empty, 2: top item blocked —
    report the blocker). The owner orders the queue; never pick issues yourself.
 2. `herdsman spawn <fleet> <issue> impl` — one implementer per issue, own worktree.
-   `HOST_BUSY`: wait and retry later. `LANE_LIVE` / `WORKTREE_DIRTY`: check `herdsman board`;
+   `HOST_BUSY` / `ALL_CAPPED`: wait and retry later. `LANE_LIVE` / `WORKTREE_DIRTY`: check `herdsman board`;
    `--supersede` only when the old lane is truly dead or replaced on purpose.
 3. When the implementer reports a pushed head + PR: verify the claim (diff, tests);
    `herdsman wait <fleet> <issue> --until ci-done` for CI.
@@ -36,7 +36,8 @@ and `herdsman wait` (cached) — not `gh issue view` / `gh pr checks` / `gh run`
    merges to the integration branch, writes the one closing comment and closes the issue.
 8. `herdsman check` raises stall / lane-dead / ready-unmerged; act on each. `herdsman merge`
    tears down the issue's clean lanes; `herdsman clean --yes` reclaims the rest. When
-   `HOST_BUSY` names idle fleet lanes, run `herdsman clean --yes`, then retry.
+   `HOST_BUSY` names idle fleet lanes, run `herdsman clean --yes`, then retry. A lane whose
+   account capped: `herdsman spawn <fleet> <issue> <role> --supersede` (a free account; `wip/` kept).
 
 ## Serial paths, caps, design
 
