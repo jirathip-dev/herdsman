@@ -66,7 +66,6 @@
       tab('lanes');
       const row = $('.lane[data-role=other]');
       if (!row) return early.push('no Others agent in the demo');
-      row.scrollIntoView({ block: 'start', behavior: 'instant' });
       open(row);
       await wait();
       const probe = S.appendChild(Object.assign(document.createElement('i'), { className: 'r' })), red = getComputedStyle(probe).color;
