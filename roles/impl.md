@@ -29,6 +29,19 @@ Lazy senior dev: YAGNI, reuse, stdlib first, shortest correct diff.
 - The PR body's evidence (test commands, exit codes) must name the final head sha it was
   produced at. Refresh it after every push (`gh pr edit --body`) so it never lags the head.
 
+## Standing answers (decide, don't ask)
+
+- A line budget over by ≤ 25 % (or ≤ 15 lines) is fine: state the count and why in the PR.
+  Over that, trim first, then `herdsman ask --kind routine`.
+- Staging moved or conflicts: merge `origin/<integration>` again and push. Repeat as needed
+  (no limit inside one round).
+- Staging itself broken by someone else's merge: fix the minimal break in your PR, say
+  "staging build fix" in the body, and carry on.
+- A host tool died (Docker, simulator): retry once after 2 min; then `herdsman ask --kind owner`
+  (lanes may not change the host).
+- The cap or a shared-file edit another open PR also makes: use the exact text from the issue
+  amendment.
+
 ## Report
 
 What changed, exact test commands + exit codes, the pushed head sha, what you could not

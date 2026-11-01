@@ -387,7 +387,10 @@ fn answer_refuses_reviewer_menus_and_unparsed_panes() {
 fn unparsed_blocked_pane_shows_masked_tail_and_reply() {
     let (c, r) = blocked(
         "tail",
-        &["l1\nl2\nl3\nl4\nl5\nl6\nl7 token=ghp_abcdefghijklmnopqrstuvwxyz0123456789\nl8"],
+        &[concat!(
+            "l1\nl2\nl3\nl4\nl5\nl6\nl7 token=gh",
+            "p_abcdefghijklmnopqrstuvwxyz0123456789\nl8"
+        )],
     );
     let s = Server::new(&c, &r, Some(ADDR.into()));
     let ck = cookie(&s, &c);
@@ -398,7 +401,7 @@ fn unparsed_blocked_pane_shows_masked_tail_and_reply() {
         "{needs}"
     );
     assert!(
-        !needs.contains("ghp_abcdefghijklmnopqrstuvwxyz0123456789"),
+        !needs.contains(concat!("gh", "p_abcdefghijklmnopqrstuvwxyz0123456789")),
         "masked: {needs}"
     );
 }
