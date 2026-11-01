@@ -133,7 +133,7 @@ function horse(l, k) {
     `<span class=hl><b>${hx(l.name)}</b><span><i class=${hx(l.tone)}>${MARK[l.state] || '?'} ${hx(l.shown)}</i>${l.age ? ' · ' + hx(l.age) : ''}</span></span></button>`;
 }
 const queued = q => `<button type=button class=hqh data-i=${q.issue}><svg viewBox="0 0 132 100" style="${hx(q.coat)}"><use href="#hp2"/></svg>` +
-  `<span>#${q.issue}${q.blocked_by ? `<br>⛔#${q.blocked_by}` : ''}</span></button>`;
+  `<span>#${q.issue}${q.blocked_by ? `<br><i class=r>⛔#${q.blocked_by}</i>` : ''}</span></button>`;
 const tpl = h => { const t = document.createElement('template'); t.innerHTML = h; return t.content.firstElementChild; };
 // #65: the horse keyed `key` (taken from `have`), patched in place to `h`: button and coat attributes, pose, label.
 function keyed(have, key, h) {

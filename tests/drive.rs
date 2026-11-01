@@ -472,6 +472,124 @@ fn drive_now_on_the_board_is_paired_only_and_toasts_its_line() {
     assert!(get(&s).contains("driver: herdsman · last pass 0s ago"));
 }
 
+/// A PR view whose `mergeable` / `mergeStateStatus` are set (CI green).
+fn stale_pr(head: &str, mergeable: &str, status: &str) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(&pr(head, "green")).unwrap();
+    v["mergeable"] = json!(mergeable);
+    v["mergeStateStatus"] = json!(status);
+    v.to_string()
+}
+
+#[test]
+fn a_conflicting_pr_after_pass_gets_update_rounds_then_needs_human() {
+    let c = setup("drive-conflict");
+    let wt = lane(&c, 10, "impl", "sendmeter-impl-12", "issue-12");
+    for (round, p) in [(1, "a1"), (2, "b2"), (3, "c3")] {
+        ev(
+            &c,
+            20 + round,
+            "verdict",
+            json!({"verdict": "PASS", "sha": sha(p), "body": "PASS"}),
+        );
+        herdsman::gh::forget_pr(&c, "sendmeter", 12);
+        let r = fake(NO_AGENTS)
+            .reply("gh pr view issue-12", &stale_pr(&sha(p), "CONFLICTING", "DIRTY"))
+            .reply("git -C", "");
+        let s = &fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 12)];
+        assert_eq!(
+            s.rounds,
+            u32::try_from(round).unwrap(),
+            "each fresh review at the new head is a round"
+        );
+        let (_, out) = run(&c, &r, &["waiting", "sendmeter"]);
+        assert!(out.contains("conflict: PR #100 conflicts with staging"), "{out}");
+        assert!(
+            out.contains("herdsman spawn sendmeter 12 impl --supersede --update"),
+            "{out}"
+        );
+        let (out, steps) = drive(&c, &r);
+        assert_eq!(steps, ["conflict"], "{out}");
+        if round < 3 {
+            assert_eq!(state(&c), format!("fix({round})"));
+            let brief = std::fs::read_to_string(wt.join(".brief.md")).unwrap();
+            assert!(brief.contains("Merge `origin/staging` into this branch"), "{brief}");
+            assert!(!brief.contains("Review findings to fix"), "{brief}");
+        } else {
+            assert!(out.contains("REFUSED ROUND_LIMIT"), "{out}");
+            assert_eq!(state(&c), "needs-human");
+            assert_eq!(r.count("herdr agent start"), 0, "no third update lane");
+            idle(&c, &r);
+        }
+    }
+}
+
+#[test]
+fn a_behind_pr_after_pass_is_updated_the_same_way() {
+    let c = setup("drive-behind");
+    lane(&c, 10, "impl", "sendmeter-impl-12", "issue-12");
+    ev(
+        &c,
+        20,
+        "verdict",
+        json!({"verdict": "PASS", "sha": sha("a1"), "body": "PASS"}),
+    );
+    let r = fake(NO_AGENTS)
+        .reply("gh pr view issue-12", &stale_pr(&sha("a1"), "MERGEABLE", "BEHIND"))
+        .reply("git -C", "");
+    let (_, out) = run(&c, &r, &["waiting", "sendmeter"]);
+    assert!(out.contains("conflict: PR #100 is behind staging"), "{out}");
+    let (out, steps) = drive(&c, &r);
+    assert_eq!(steps, ["conflict"], "{out}");
+    assert_eq!(state(&c), "fix(1)");
+}
+
+#[test]
+fn a_pushed_update_or_fix_head_still_conflicting_gets_a_review_not_another_update() {
+    let c = setup("drive-conflict-stale");
+    lane(&c, 10, "impl", "sendmeter-impl-12", "issue-12");
+    ev(
+        &c,
+        20,
+        "verdict",
+        json!({"verdict": "PASS", "sha": sha("a1"), "body": "PASS"}),
+    );
+    let pr_at = |head: &str| {
+        herdsman::gh::forget_pr(&c, "sendmeter", 12);
+        fake(NO_AGENTS)
+            .reply("gh pr view issue-12", &stale_pr(&sha(head), "CONFLICTING", "DIRTY"))
+            .reply("git -C", "")
+    };
+    assert_eq!(drive(&c, &pr_at("a1")).1, ["conflict"]);
+    assert_eq!(state(&c), "fix(1)");
+    // The update lane pushed b2; GitHub has not recomputed `mergeable` yet.
+    let (_, out) = run(&c, &pr_at("b2"), &["waiting", "sendmeter"]);
+    assert!(out.contains("waiting for orch to spawn review"), "{out}");
+    assert!(
+        out.contains("herdsman spawn sendmeter 12 rev") && !out.contains("--update"),
+        "{out}"
+    );
+    // A FAIL's fix round pushing a conflicting head is reviewed, too.
+    ev(
+        &c,
+        30,
+        "verdict",
+        json!({"verdict": "FAIL", "sha": sha("b2"), "body": "FAIL"}),
+    );
+    ev(
+        &c,
+        31,
+        "spawn",
+        json!({"role": "impl", "agent": "sendmeter-impl-12", "branch": "issue-12"}),
+    );
+    let (_, out) = run(&c, &pr_at("c3"), &["waiting", "sendmeter"]);
+    assert!(
+        out.contains("waiting for orch to spawn review") && !out.contains("--update"),
+        "{out}"
+    );
+    let (code, out) = run(&c, &Fake::default(), &["spawn", "sendmeter", "12", "rev", "--update"]);
+    assert!(code == 3 && out.contains("REFUSED BAD_VALUE"), "{out}");
+}
+
 const SERIAL: &str = "serial_paths = [\"supabase/migrations/**\"]";
 
 /// #100: a driven fleet with `extra` config lines, issues `ns` queued.
