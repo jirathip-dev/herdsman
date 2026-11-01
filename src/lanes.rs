@@ -57,30 +57,27 @@ pub fn join(
             pane: pane.map(String::from),
             ..Lane::default()
         };
-        match sp {
-            Some(e) => {
-                seen.insert(e.str("agent").unwrap_or_default().to_string());
-                l = Lane {
-                    name: e.str("agent").unwrap_or_default().into(),
-                    ..from_spawn(e, l)
-                };
-            }
-            None => {
-                let inside = |d: &Path| {
-                    ["cwd", "foreground_cwd"]
-                        .iter()
-                        .any(|k| s(k).is_some_and(|c| Path::new(c).starts_with(d)))
-                };
-                let fleet = cfg
-                    .fleet
+        if let Some(e) = sp {
+            seen.insert(e.str("agent").unwrap_or_default().to_string());
+            l = Lane {
+                name: e.str("agent").unwrap_or_default().into(),
+                ..from_spawn(e, l)
+            };
+        } else {
+            let inside = |d: &Path| {
+                ["cwd", "foreground_cwd"]
                     .iter()
-                    .find(|(_, f)| inside(&f.local_path()) || inside(&worktrees.join(f.repo_name())));
-                l.fleet = fleet.map(|f| f.0.clone());
-                l.role = "other".into();
-                l.harness = s("agent").unwrap_or("shell").trim_end_matches("-tui").into();
-                let label = s("workspace_id").map(|w| ws.get(w).cloned().unwrap_or_else(|| w.into()));
-                l.name = name.map(String::from).or(label).unwrap_or_else(|| "?".into());
-            }
+                    .any(|k| s(k).is_some_and(|c| Path::new(c).starts_with(d)))
+            };
+            let fleet = cfg
+                .fleet
+                .iter()
+                .find(|(_, f)| inside(&f.local_path()) || inside(&worktrees.join(f.repo_name())));
+            l.fleet = fleet.map(|f| f.0.clone());
+            l.role = "other".into();
+            l.harness = s("agent").unwrap_or("shell").trim_end_matches("-tui").into();
+            let label = s("workspace_id").map(|w| ws.get(w).cloned().unwrap_or_else(|| w.into()));
+            l.name = name.map(String::from).or(label).unwrap_or_else(|| "?".into());
         }
         out.push(l);
     }
@@ -131,7 +128,7 @@ pub const SECTIONS: [&str; 6] = ["blocked", "working", "idle", "done", "parked",
 pub type Groups<'a> = Vec<(&'static str, Vec<(String, Vec<&'a Lane>)>)>;
 
 /// Non-empty [`SECTIONS`], each split by fleet (alphabetical, Others last), newest `changed` first.
-pub fn group<'a>(all: &'a [Lane], changed: impl Fn(&Lane) -> u64) -> Groups<'a> {
+pub fn group(all: &[Lane], changed: impl Fn(&Lane) -> u64) -> Groups<'_> {
     let section = |l: &Lane| SECTIONS.iter().position(|s| *s == l.state).unwrap_or(2);
     let mut v: Vec<&Lane> = all.iter().collect();
     v.sort_by_key(|l| {
@@ -248,7 +245,13 @@ pub fn pending(screen: &str) -> Option<(String, Vec<String>)> {
         let (n, t) = l.trim_start_matches(['❯', '›']).trim_start().split_once(". ")?;
         Some((n.parse::<usize>().ok()?, t.trim().to_string()))
     };
-    let question = |ls: &[&str]| ls.iter().rev().take(6).find(|l| l.contains('?')).map(|q| q.to_string());
+    let question = |ls: &[&str]| {
+        ls.iter()
+            .rev()
+            .take(6)
+            .find(|l| l.contains('?'))
+            .map(std::string::ToString::to_string)
+    };
     let (mut opts, mut i, mut gap) = (
         vec![],
         lines.iter().rposition(|l| opt(l).is_some()).map_or(0, |i| i + 1),
@@ -265,12 +268,13 @@ pub fn pending(screen: &str) -> Option<(String, Vec<String>)> {
     let menu = opts.len() >= 2
         && opts.iter().zip(1..).all(|(o, n)| o.0 == n)
         && lines[i..].iter().any(|l| l.starts_with('❯') && opt(l).is_some());
-    match menu {
-        true => Some((
-            question(&lines[..i]).or(lines[..i].last().map(|l| l.to_string()))?,
+    if menu {
+        Some((
+            question(&lines[..i]).or(lines[..i].last().map(std::string::ToString::to_string))?,
             opts.into_iter().map(|o| o.1).collect(),
-        )),
-        false => Some((question(&lines)?, vec![])),
+        ))
+    } else {
+        Some((question(&lines)?, vec![]))
     }
 }
 

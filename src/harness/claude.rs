@@ -1,4 +1,4 @@
-//! Claude Code: per-role settings.json (PreToolUse hook) + role.md; the kick goes in as argv.
+//! Claude Code: per-role settings.json (`PreToolUse` hook) + role.md; the kick goes in as argv.
 use super::{hook_command, Harness};
 use crate::herdr;
 use crate::runner::Runner;

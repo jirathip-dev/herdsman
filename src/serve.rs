@@ -63,6 +63,7 @@ pub fn serve(ctx: &Ctx, r: &dyn Runner, addr: &str, read_only: bool) -> Result<(
     serve_on(ctx, r, l, read_only)
 }
 
+#[allow(clippy::needless_pass_by_value)] // public API: the listener is handed over and lives as long as the server
 pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> Result<()> {
     let s = Server::new(
         ctx,
@@ -86,7 +87,7 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
         // #57: the host every 10 s (its 2 s vm_stat delta included) here, never on a request.
         sc.spawn(move || loop {
             *lock(&h) = host::sample(r);
-            std::thread::sleep(Duration::from_secs(10))
+            std::thread::sleep(Duration::from_secs(10));
         });
         sc.spawn(move || loop {
             w.tick();
@@ -128,7 +129,7 @@ impl Runner for Memo<'_> {
 
 /// The mutex's data, even after a thread panicked holding it.
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn hash(s: &impl Hash) -> u64 {
@@ -161,7 +162,7 @@ pub struct Server<'a> {
     /// Command stdout by argv, with its time: rate-limited reads, shared with the watcher, which (`fresh`) re-reads at a third of the ttl.
     cache: Cache,
     fresh: bool,
-    /// The background sampler's last host read (serve_on); a request only reads it.
+    /// The background sampler's last host read (`serve_on`); a request only reads it.
     pub host: Arc<Mutex<Host>>,
     /// Reply-box send times per device hash (10 a minute).
     sent: RefCell<BTreeMap<String, Vec<u64>>>,
@@ -239,7 +240,7 @@ fn mtime(ctx: &Ctx) -> String {
 /// An error as the page shows it: `REFUSED <CODE>: …` or `error: …`.
 fn shown(e: &anyhow::Error) -> String {
     e.downcast_ref::<Refusal>()
-        .map_or_else(|| format!("error: {e:#}"), |r| r.to_string())
+        .map_or_else(|| format!("error: {e:#}"), std::string::ToString::to_string)
 }
 
 /// `v` is `name`, or `name:<port>`.
@@ -496,7 +497,7 @@ impl<'a> Server<'a> {
             .map(|m| (m.len(), m.modified().ok()));
         let kicked = self.kick.swap(false, Relaxed);
         if kicked {
-            self.purge()
+            self.purge();
         }
         let mut changed = kicked || log != w.log || now >= w.rendered + 15;
         w.log = log;
@@ -695,6 +696,7 @@ impl<'a> Server<'a> {
     }
 
     /// The paired device whose token the request's `Cookie` carries.
+    #[allow(clippy::unused_self)] // a method so every route reads `self.device(..)` alike
     fn device(&self, ctx: &Ctx, head: &str) -> Option<devices::Device> {
         devices::find(ctx, header(head, "cookie").unwrap_or_default())
     }
@@ -1183,15 +1185,14 @@ impl<'a> Server<'a> {
                 );
             }
             // #60: the live page loads a fleet's role forms when the row is opened (`/frag`); an export inlines them.
-            body += &match self.export {
-                Some(_) => format!(
+            body += &if self.export.is_some() {
+                format!(
                     "<details class=roles><summary><span>roles</span></summary>{}</details>",
                     roles(cfg, f, fc, rw, &mt)
-                ),
-                None => {
-                    let src = format!("frag?id=roles&amp;fleet={}", enc(f));
-                    format!("<details class=roles data-src=\"{src}\"><summary><span>roles</span></summary></details>")
-                }
+                )
+            } else {
+                let src = format!("frag?id=roles&amp;fleet={}", enc(f));
+                format!("<details class=roles data-src=\"{src}\"><summary><span>roles</span></summary></details>")
             };
             let button = |op: &str, label: &str| {
                 if rw {
@@ -1571,7 +1572,7 @@ impl Runner for Canned {
             .filter(|(k, _)| line.starts_with(k.as_str()))
             .max_by_key(|(k, _)| k.len());
         Ok(crate::runner::Out {
-            code: if out.is_some() { 0 } else { 1 },
+            code: i32::from(out.is_none()),
             stdout: out.map_or(String::new(), |o| o.1.clone()),
             stderr: String::new(),
         })

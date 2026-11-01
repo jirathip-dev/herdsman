@@ -367,6 +367,7 @@ pub fn dirty(r: &dyn Runner, wt: &Path) -> Option<String> {
 }
 
 /// `spawn`'s flags.
+#[allow(clippy::struct_excessive_bools)] // independent CLI switches
 #[derive(Default, clap::Args)]
 pub struct Opts {
     /// Print the plan; change nothing
@@ -553,7 +554,7 @@ pub fn spawn(
     Ok(confirmed)
 }
 
-/// SERIAL_BUSY (`serial_max` other `--serial` issues in flight) and CAP (`max_impl` / `max_rev`).
+/// `SERIAL_BUSY` (`serial_max` other `--serial` issues in flight) and CAP (`max_impl` / `max_rev`).
 fn lane_admit(f: &Fleet, events: &[Event], fleet: &str, issue: u64, role: &str) -> Result<()> {
     let st = fold(events);
     let others: Vec<_> = st.values().filter(|s| s.fleet == fleet && s.issue != issue).collect();

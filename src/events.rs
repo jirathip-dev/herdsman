@@ -93,6 +93,7 @@ pub fn read(path: &Path) -> Result<Vec<Event>> {
 }
 
 /// Append, then run notifiers. Notifier failures never fail the caller.
+#[allow(clippy::needless_pass_by_value)] // public API: callers and tests hand the event over
 pub fn emit(state: &Path, cfg: &Config, ev: Event) -> Result<()> {
     append(state, &ev)?;
     for n in cfg.notifiers(&ev.fleet).into_iter().filter(|n| n.wants(&ev.kind)) {
@@ -290,7 +291,7 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
             continue;
         }
         s.last_ts = e.ts;
-        s.last_event = e.kind.clone();
+        s.last_event.clone_from(&e.kind);
         match e.kind.as_str() {
             "spawn" => {
                 s.lane = e.str("agent").map(String::from);
@@ -323,7 +324,7 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
                     format!("fix({})", s.rounds)
                 };
             }
-            "merged" | "blocked" | "needs-human" => s.state = e.kind.clone(),
+            "merged" | "blocked" | "needs-human" => s.state.clone_from(&e.kind),
             // Back to the state before the killed lane: queued / fix(n) for an impl, impl / fix(n) for a review.
             "lane-killed" if e.str("role").and_then(|r| s.lanes.get(r)).map(String::as_str) == e.str("agent") => {
                 let role = e.str("role").unwrap_or_default();
@@ -376,7 +377,7 @@ pub fn age(secs: u64) -> String {
     match secs {
         s if s < 120 => format!("{s}s"),
         s if s < 7200 => format!("{}m", s / 60),
-        s if s < 172800 => format!("{}h", s / 3600),
+        s if s < 172_800 => format!("{}h", s / 3600),
         s => format!("{}d", s / 86400),
     }
 }

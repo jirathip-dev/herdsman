@@ -1,3 +1,4 @@
+#![warn(clippy::pedantic)]
 fn main() {
     let ctx = herdsman::Ctx::from_env();
     let code = herdsman::main_with(

@@ -289,7 +289,7 @@ pub fn teardown(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fl
 }
 
 /// Remove worktree + pane of lanes whose issue is merged (or closed on GitHub). Dry run unless `yes`.
-/// `--lane` (one agent's worktree) refuses UNSAFE_CLEAN with the reason when it cannot go.
+/// `--lane` (one agent's worktree) refuses `UNSAFE_CLEAN` with the reason when it cannot go.
 pub fn clean(
     ctx: &Ctx,
     cfg: &Config,
@@ -339,10 +339,10 @@ pub fn clean(
         };
         seen.insert(wt);
         let pane = e.str("pane").unwrap_or_default();
-        let keep = if !host::live_in(&agents, e.str("agent").unwrap_or_default(), Path::new(wt)).is_empty() {
-            Some("live agent".to_string())
-        } else {
+        let keep = if host::live_in(&agents, e.str("agent").unwrap_or_default(), Path::new(wt)).is_empty() {
             dirty(r, Path::new(wt))
+        } else {
+            Some("live agent".to_string())
         };
         if let Some(reason) = keep {
             if lane.is_some() {
@@ -441,7 +441,7 @@ fn remove(r: &dyn Runner, cfg: &Config, fleet: &str, wt: &str, ws: &str) -> Resu
     Ok(())
 }
 
-/// The agent's newest spawn, unless a `lane-killed` followed it; else NO_SUCH_AGENT.
+/// The agent's newest spawn, unless a `lane-killed` followed it; else `NO_SUCH_AGENT`.
 fn spawned<'a>(events: &'a [Event], agent: &str) -> Result<&'a Event> {
     let i = events
         .iter()
@@ -470,7 +470,7 @@ pub fn stop(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
 }
 
 /// `herdsman kill`: the dry-run line (what is lost); with `yes`, unpushed or dirty work goes to
-/// `wip/<agent>-<stamp>` first (refused SECRET_IN_WIP when the diff masks), then the pane closes.
+/// `wip/<agent>-<stamp>` first (refused `SECRET_IN_WIP` when the diff masks), then the pane closes.
 /// The worktree is kept; an orch's checkout is the owner's and never snapshotted.
 pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent: &str, yes: bool) -> Result<()> {
     let events = read(&ctx.state)?;

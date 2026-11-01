@@ -50,7 +50,7 @@ impl Runner for Real {
 }
 
 pub fn argv(args: &[&str]) -> Vec<String> {
-    args.iter().map(|s| s.to_string()).collect()
+    args.iter().map(std::string::ToString::to_string).collect()
 }
 
 /// Run and fail on a non-zero exit; returns stdout.

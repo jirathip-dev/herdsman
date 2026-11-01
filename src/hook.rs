@@ -1,4 +1,4 @@
-//! Claude PreToolUse / Hermes pre_tool_call hook: the tool guard of `herdsman help --agent`.
+//! Claude `PreToolUse` / Hermes `pre_tool_call` hook: the tool guard of `herdsman help --agent`.
 use serde_json::{json, Value};
 
 pub struct Policy {

@@ -86,10 +86,10 @@ pub struct Fleet {
     pub repo: String,
     pub local: String,
     pub integration: String,
-    /// Globs only `serial_max` lanes at a time may touch: `--serial` issues (SERIAL_BUSY, SERIAL_UNMARKED).
+    /// Globs only `serial_max` lanes at a time may touch: `--serial` issues (`SERIAL_BUSY`, `SERIAL_UNMARKED`).
     #[serde(default)]
     pub serial_paths: Vec<String>,
-    /// How many `--serial` issues may be in flight at once (SERIAL_BUSY); unset = 1.
+    /// How many `--serial` issues may be in flight at once (`SERIAL_BUSY`); unset = 1.
     pub serial_max: Option<usize>,
     /// The only checks merge, `check` and `wait` look at (latest run of each); empty = all.
     #[serde(default)]
@@ -148,7 +148,7 @@ impl Role {
 pub struct Limits {
     pub review_rounds: u32,
     pub stall_minutes: u64,
-    /// Host-load gate for `herdsman spawn` (HOST_BUSY).
+    /// Host-load gate for `herdsman spawn` (`HOST_BUSY`).
     pub load_per_cpu: f64,
     /// Pages swapped out per 2 s sample.
     pub swapout_rate: f64,
@@ -397,39 +397,36 @@ pub fn set_in(text: &str, header: &str, key: &str, lit: &str) -> Result<String> 
         .iter()
         .position(|l| l.trim_start().starts_with('['))
         .map_or(lines.len(), |i| start + 1 + i);
-    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    let mut out: Vec<String> = lines.iter().map(std::string::ToString::to_string).collect();
     let hit = (start + 1..end).find(|&i| {
         let t = lines[i].trim_start();
         t.strip_prefix(key).is_some_and(|r| r.trim_start().starts_with('='))
     });
-    match hit {
-        Some(i) => {
-            let l = lines[i];
-            let eq = l.find('=').unwrap() + 1;
-            let v = eq + l[eq..].len() - l[eq..].trim_start().len();
-            let end = if l[v..].starts_with('"') {
-                l[v + 1..].find('"').map(|c| v + c + 2)
-            } else if lit.starts_with('"') {
-                None
-            } else {
-                Some(
-                    v + l[v..]
-                        .find(|c: char| c.is_whitespace() || c == '#')
-                        .unwrap_or(l.len() - v),
-                )
-            };
-            let Some(end) = end else {
-                bail!("{header} {key}: value must be a \"string\"");
-            };
-            out[i] = format!("{}{lit}{}", &l[..v], &l[end..]);
+    if let Some(i) = hit {
+        let l = lines[i];
+        let eq = l.find('=').unwrap() + 1;
+        let v = eq + l[eq..].len() - l[eq..].trim_start().len();
+        let end = if l[v..].starts_with('"') {
+            l[v + 1..].find('"').map(|c| v + c + 2)
+        } else if lit.starts_with('"') {
+            None
+        } else {
+            Some(
+                v + l[v..]
+                    .find(|c: char| c.is_whitespace() || c == '#')
+                    .unwrap_or(l.len() - v),
+            )
+        };
+        let Some(end) = end else {
+            bail!("{header} {key}: value must be a \"string\"");
+        };
+        out[i] = format!("{}{lit}{}", &l[..v], &l[end..]);
+    } else {
+        let last = (start..end).rev().find(|&i| !lines[i].trim().is_empty()).unwrap();
+        if !out[last].ends_with('\n') {
+            out[last].push('\n');
         }
-        None => {
-            let last = (start..end).rev().find(|&i| !lines[i].trim().is_empty()).unwrap();
-            if !out[last].ends_with('\n') {
-                out[last].push('\n');
-            }
-            out.insert(last + 1, format!("{key} = {lit}\n"));
-        }
+        out.insert(last + 1, format!("{key} = {lit}\n"));
     }
     Ok(out.concat())
 }

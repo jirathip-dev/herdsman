@@ -112,7 +112,7 @@ pub fn serial(events: &[Event], fleet: &str) -> Vec<u64> {
         .collect()
 }
 
-/// The fleet's `--serial` issues in flight: a live impl/fix lane, or at review/ready (SERIAL_BUSY).
+/// The fleet's `--serial` issues in flight: a live impl/fix lane, or at review/ready (`SERIAL_BUSY`).
 pub fn serial_in_flight<'a>(events: &[Event], st: &'a States, fleet: &str) -> Vec<&'a IssueState> {
     let serial = serial(events, fleet);
     let busy = |s: &str| s == "impl" || s.starts_with("fix") || s.starts_with("review") || s == "ready";

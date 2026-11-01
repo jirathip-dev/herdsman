@@ -121,14 +121,13 @@ pub fn diff_names(
     head: &str,
 ) -> Result<Vec<String>> {
     let p = cache_path(ctx, "diff", fleet, issue);
-    let files = match load::<Value>(&p).filter(|c| c["head"] == head) {
-        Some(c) => c["files"].clone(),
-        None => {
-            let out = crate::runner::ok(r, "gh", &["pr", "diff", num, "-R", &f.repo, "--name-only"])?;
-            let v = json!(out.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>());
-            store(&p, &json!({"head": head, "files": v}))?;
-            v
-        }
+    let files = if let Some(c) = load::<Value>(&p).filter(|c| c["head"] == head) {
+        c["files"].clone()
+    } else {
+        let out = crate::runner::ok(r, "gh", &["pr", "diff", num, "-R", &f.repo, "--name-only"])?;
+        let v = json!(out.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>());
+        store(&p, &json!({"head": head, "files": v}))?;
+        v
     };
     Ok(files
         .as_array()

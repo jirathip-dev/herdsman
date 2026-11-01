@@ -141,7 +141,7 @@ pub fn find(ctx: &Ctx, cookie: &str) -> Option<Device> {
     let d = all.iter_mut().find(|d| d.code.is_none() && same(&d.hash, &tok))?;
     d.used = ctx.now;
     let d = d.clone();
-    store(ctx, &all).ok().map(|_| d)
+    store(ctx, &all).ok().map(|()| d)
 }
 
 /// SHA-256, lowercase hex.

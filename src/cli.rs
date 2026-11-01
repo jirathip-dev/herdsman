@@ -335,14 +335,17 @@ pub fn usage_doc() -> String {
         .collect();
     for sub in subs {
         let mut sub = sub.clone();
-        let about = sub.get_about().map(|a| a.to_string()).unwrap_or_default();
+        let about = sub
+            .get_about()
+            .map(std::string::ToString::to_string)
+            .unwrap_or_default();
         let usage = sub.render_usage().to_string().replace("Usage: ", "");
         s += &format!("\n`{}`\n  {about}\n", usage.trim());
         for a in sub
             .get_arguments()
             .filter(|a| a.get_long().is_some_and(|l| l != "help"))
         {
-            let h = a.get_help().map(|h| h.to_string()).unwrap_or_default();
+            let h = a.get_help().map(std::string::ToString::to_string).unwrap_or_default();
             s += &format!("  --{}  {h}\n", a.get_long().unwrap());
         }
     }
@@ -365,16 +368,15 @@ pub fn main_with(args: Vec<String>, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Wri
     }
     match dispatch(cli.cmd, ctx, r, out, stdin) {
         Ok(code) => code,
-        Err(e) => match e.downcast_ref::<gate::Refusal>() {
-            Some(rf) => {
+        Err(e) => {
+            if let Some(rf) = e.downcast_ref::<gate::Refusal>() {
                 let _ = writeln!(out, "{rf}");
                 3
-            }
-            None => {
+            } else {
                 eprintln!("herdsman: {e:#}");
                 1
             }
-        },
+        }
     }
 }
 
@@ -456,7 +458,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 &role,
                 wanted.into_iter().filter_map(|(k, v)| Some((k, v?))).collect(),
                 None,
-            )?
+            )?;
         }
         Cmd::Pause { fleet } => pause(ctx, out, &fleet, true, None)?,
         Cmd::Resume { fleet } => pause(ctx, out, &fleet, false, None)?,
@@ -568,7 +570,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     pane,
                 } => {
                     let issue = lane(&issue)?;
-                    spawn::adopt(ctx, &cfg, r, out, (&fleet, issue, &role), &pane)?
+                    spawn::adopt(ctx, &cfg, r, out, (&fleet, issue, &role), &pane)?;
                 }
                 Cmd::Ask {
                     fleet,
@@ -578,7 +580,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     recommend,
                 } => crate::ask(ctx, &cfg, out, (&fleet, lane(&issue)?), &question, &options, recommend)?,
                 Cmd::Answer { fleet, id, choice, by } => {
-                    crate::answer(ctx, &cfg, r, out, (&fleet, &id), &choice, (&by, None))?
+                    crate::answer(ctx, &cfg, r, out, (&fleet, &id), &choice, (&by, None))?;
                 }
                 Cmd::Check => check::check(ctx, &cfg, r, out)?,
                 Cmd::Drive { fleet } => crate::drive::drive(ctx, &cfg, r, out, fleet.as_deref())?,
@@ -622,7 +624,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 } => access::reset(ctx, &cfg, out, &name)?,
                 Cmd::Protection => return protection::protection(&cfg, r, out),
                 Cmd::Clean { fleet, lane, yes } => {
-                    check::clean(ctx, &cfg, r, out, fleet.as_deref(), (None, lane.as_deref()), yes)?
+                    check::clean(ctx, &cfg, r, out, fleet.as_deref(), (None, lane.as_deref()), yes)?;
                 }
                 Cmd::Stop { agent } => check::stop(ctx, &cfg, r, out, &agent)?,
                 Cmd::Kill { agent, yes } => check::kill(ctx, &cfg, r, out, &agent, yes)?,
@@ -634,7 +636,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     file,
                 } => {
                     let pass = verdict == "PASS";
-                    gate::verdict(ctx, &cfg, r, out, (&fleet, issue), pass, &sha, &file)?
+                    gate::verdict(ctx, &cfg, r, out, (&fleet, issue), pass, &sha, &file)?;
                 }
                 Cmd::Merge { fleet, issue } => gate::merge(ctx, &cfg, r, out, &fleet, issue)?,
                 Cmd::Brief { fleet, issue } => {

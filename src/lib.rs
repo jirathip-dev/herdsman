@@ -1,6 +1,18 @@
 //! fleet: agents act only through this CLI; it owns state and refuses rule breaks.
+#![warn(clippy::pedantic)]
+// Pure style noise for a CLI; reasons in docs/architecture.md (Code rules).
+#![allow(
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::too_many_lines,
+    clippy::format_push_string,
+    clippy::format_collect,
+    clippy::many_single_char_names
+)]
 pub mod access;
 pub mod check;
+#[allow(clippy::doc_markdown)] // its doc comments are clap help text, printed verbatim
 mod cli;
 pub mod config;
 pub mod devices;
@@ -47,7 +59,7 @@ pub struct Ctx {
 
 impl Ctx {
     pub fn from_env() -> Ctx {
-        let env = |k: &str, d: PathBuf| var(k).map(PathBuf::from).unwrap_or(d);
+        let env = |k: &str, d: PathBuf| var(k).map_or(d, PathBuf::from);
         let root = var("HERDSMAN_HOME").map_or_else(home, PathBuf::from);
         let mut hints = vec![];
         // Read the pre-rename dir, never move it, while the new one is missing.

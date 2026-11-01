@@ -33,7 +33,7 @@ fn swapouts(r: &dyn Runner) -> Option<f64> {
     line.split(':').nth(1)?.trim().trim_end_matches('.').parse().ok()
 }
 
-/// Sample the host (macOS: sysctl + two vm_stat samples 2 s apart).
+/// Sample the host (macOS: sysctl + two `vm_stat` samples 2 s apart).
 pub fn sample(r: &dyn Runner) -> Host {
     let pressure = stdout(r, "sysctl", &["-n", "kern.memorystatus_vm_pressure_level"]).and_then(|s| {
         match s.trim() {

@@ -61,7 +61,7 @@ pub fn hook_command(ctx: &Ctx, role: &str) -> String {
 fn attempts(r: &dyn Runner, n: u32, secs: u64) -> impl Iterator<Item = u32> + '_ {
     (0..n).inspect(move |&i| {
         if i > 0 {
-            r.sleep(secs)
+            r.sleep(secs);
         }
     })
 }

@@ -1,5 +1,5 @@
 //! What accounts and providers have used (docs/providers.md): herdsman lane-hours from the log, each account's
-//! Anthropic usage meter read through its own `claude` login, and the DeepSeek balance. Secrets reach `curl` and
+//! Anthropic usage meter read through its own `claude` login, and the `DeepSeek` balance. Secrets reach `curl` and
 //! `security` on stdin only: never argv, the log, a cache or the page.
 use crate::config::{expand, Config};
 use crate::devices::{save, sha256};
@@ -43,6 +43,7 @@ pub fn lane_secs(events: &[Event], account: &str, now: u64, window: u64) -> u64 
 }
 
 /// `5h 1.5 · 7d 12.0 herdsman lane-hours`: what herdsman ran, not Anthropic's quota.
+#[allow(clippy::cast_precision_loss)] // hours to one decimal; f64 is exact far past any lane's run time
 pub fn lane_hours(events: &[Event], account: &str, now: u64) -> String {
     let h = |w: u64| lane_secs(events, account, now, w) as f64 / 3600.0;
     format!("5h {:.1} · 7d {:.1} herdsman lane-hours", h(5 * 3600), h(7 * 86400))
@@ -90,7 +91,7 @@ pub struct Balance {
     pub total: f64,
 }
 
-/// The first `balance_infos` entry of DeepSeek's `/user/balance` reply.
+/// The first `balance_infos` entry of `DeepSeek`'s `/user/balance` reply.
 pub fn parse_balance(body: &str, ts: u64) -> Option<Balance> {
     let v: Value = serde_json::from_str(body).ok()?;
     let b = &v["balance_infos"][0];
@@ -111,7 +112,7 @@ fn env_value(text: &str, var: &str) -> Option<String> {
         .map(|(_, v)| v.trim().trim_matches(['"', '\'']).to_string())
 }
 
-/// The DeepSeek balance and whether it is under `warn_below`, read at most every 10 min; None without a key,
+/// The `DeepSeek` balance and whether it is under `warn_below`, read at most every 10 min; None without a key,
 /// Err(`key not found in <file>`) when the configured env file is unreadable or lacks it.
 pub fn deepseek(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> Option<Result<(Balance, bool), String>> {
     let p = cfg.providers.deepseek.as_ref()?;
@@ -377,11 +378,16 @@ pub fn epoch(s: &str) -> Option<u64> {
     };
     let (y, m) = if mo <= 2 { (y - 1, mo + 9) } else { (y, mo - 3) };
     let (era, yoe) = (y.div_euclid(400), y.rem_euclid(400));
-    let days = era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + (153 * m + 2) / 5 + d - 1 - 719468;
+    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + (153 * m + 2) / 5 + d - 1 - 719_468;
     u64::try_from(days * 86400 + h * 3600 + mi * 60 + se - off).ok()
 }
 
 /// When the week runs out at its rate so far, if that is before its reset.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)] // seconds since the week began, non-negative and far under 2^52
 pub fn out_at((pct, reset): (f64, u64), now: u64) -> Option<u64> {
     let start = reset.checked_sub(7 * 86400)?;
     let out = start + (now.checked_sub(start)? as f64 * 100.0 / pct.max(0.01)) as u64;
