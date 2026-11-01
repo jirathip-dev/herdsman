@@ -1,11 +1,12 @@
 //! Paired phones for the page's reply box (docs/serve.md): only each token's SHA-256 is kept.
-use crate::events::{append, Event};
+use crate::config::Config;
+use crate::events::{append, emit, read, Event};
 use crate::gate::refused;
 use crate::Ctx;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
@@ -30,16 +31,21 @@ pub(crate) fn save(p: &Path, v: &impl Serialize) -> Result<()> {
     write0600(p, serde_json::to_string_pretty(v)?.as_bytes())
 }
 
-/// Replace `p` with `b`, mode 0600.
+/// Replace `p` with `b`, mode 0600, atomically (#122): a temp file renamed over `p`; on any error `p` is left intact.
 pub(crate) fn write0600(p: &Path, b: &[u8]) -> Result<()> {
     std::fs::create_dir_all(p.parent().unwrap_or(p))?;
-    let _ = std::fs::remove_file(p);
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(p)?;
-    Ok(f.write_all(b)?)
+    let tmp = PathBuf::from(format!("{}.tmp-{}", p.display(), std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    let r = (|| {
+        let mut o = std::fs::OpenOptions::new();
+        let mut f = o.write(true).create_new(true).mode(0o600).open(&tmp)?;
+        f.write_all(b)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, p)?;
+        let _ = std::fs::File::open(p.parent().unwrap_or(p)).and_then(|d| d.sync_all());
+        Ok::<_, io::Error>(())
+    })();
+    Ok(r.inspect_err(|_| drop(std::fs::remove_file(&tmp)))?)
 }
 
 pub(crate) fn random(n: usize) -> Result<Vec<u8>> {
@@ -55,8 +61,19 @@ pub fn load(ctx: &Ctx) -> Vec<Device> {
         .unwrap_or_default()
 }
 
+/// #122: a failed write logs `state-write-failed` (notified, path and error kind only), at most once an hour.
 pub fn store(ctx: &Ctx, d: &[Device]) -> Result<()> {
-    save(&dir(ctx).join("devices.json"), &d)
+    let fresh = |e: &Event| e.kind == "state-write-failed" && e.ts + 3600 > ctx.now;
+    let p = dir(ctx).join("devices.json");
+    let r = save(&p, &d);
+    let seen = || read(&ctx.state).unwrap_or_default().iter().any(fresh);
+    if let Some(e) = r.as_ref().err().filter(|_| !seen()) {
+        let kind = e.downcast_ref().map_or(io::ErrorKind::Other, io::Error::kind);
+        let d = json!({"path": p, "error": kind.to_string(), "reason": format!("{}: {kind}", p.display())});
+        let ev = Event::new(ctx.now, "herdsman", None, "state-write-failed", d);
+        let _ = emit(&ctx.state, &Config::load(&ctx.config).unwrap_or_default(), ev);
+    }
+    r
 }
 
 /// The open (unexpired) pairing requests.
@@ -134,14 +151,14 @@ fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0, |d, (x, y)| d | (x ^ y)) == 0
 }
 
-/// The paired (approved) device whose token the `Cookie` header carries (`hd=`); marks it used.
+/// The paired (approved) device whose token the `Cookie` header carries (`hd=`); marks it used at most hourly (#122).
 pub fn find(ctx: &Ctx, cookie: &str) -> Option<Device> {
     let tok = sha256(cookie.split(';').find_map(|c| c.trim().strip_prefix("hd="))?.as_bytes());
     let mut all = load(ctx);
-    let d = all.iter_mut().find(|d| d.code.is_none() && same(&d.hash, &tok))?;
-    d.used = ctx.now;
-    let d = d.clone();
-    store(ctx, &all).ok().map(|()| d)
+    let i = all.iter().position(|d| d.code.is_none() && same(&d.hash, &tok))?;
+    let stale = std::mem::replace(&mut all[i].used, ctx.now) + 3600 <= ctx.now;
+    let _ = stale.then(|| store(ctx, &all));
+    Some(all.swap_remove(i))
 }
 
 /// SHA-256, lowercase hex.
