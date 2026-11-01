@@ -10,9 +10,9 @@ pub struct Policy {
 }
 
 /// Claude and Hermes file-writing tools.
-const EDIT_TOOLS: [&str; 6] = ["Edit", "Write", "MultiEdit", "NotebookEdit", "patch", "write_file"];
+const EDIT_TOOLS: &[&str] = &["Edit", "Write", "MultiEdit", "NotebookEdit", "patch", "write_file"];
 /// git subcommands that make commits or move refs; denied to reviewers.
-const GIT_WRITES: [&str; 8] = [
+const GIT_WRITES: &[&str] = &[
     "commit",
     "push",
     "merge",
@@ -22,7 +22,7 @@ const GIT_WRITES: [&str; 8] = [
     "am",
     "reset",
 ];
-const WRITERS: [&str; 9] = ["rm", "mv", "cp", "tee", "truncate", "chmod", "ln", "install", "dd"];
+const WRITERS: &[&str] = &["rm", "mv", "cp", "tee", "truncate", "chmod", "ln", "install", "dd"];
 
 /// Some(reason) denies Claude's (`Bash`) or Hermes' (`terminal`, `args`) call; `cur_branch` resolves HEAD.
 pub fn decide(input: &Value, p: &Policy, cur_branch: &dyn Fn(&str) -> Option<String>) -> Option<String> {

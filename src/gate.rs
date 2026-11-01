@@ -199,6 +199,14 @@ pub fn merge(
             _ => json!({"error": "no-pr"}),
         }
     };
+    // #129: an auto-update (a merge of integration that adds nothing) keeps the PASS of the head it updated.
+    let h = pr["headRefOid"].as_str().unwrap_or_default();
+    let st = st.map(|mut s| {
+        if !h.is_empty() && !s.reviewed(h) && crate::overlap::pure(r, f, &s, h) {
+            s.verdicts.push((h.into(), "PASS".into()));
+        }
+        s
+    });
     let num = pr["number"].as_u64().unwrap_or_default().to_string();
     let lim = cfg.limits.review_rounds;
     let res = if pr.get("error").is_some() {

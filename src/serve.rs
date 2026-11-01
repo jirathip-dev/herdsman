@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 const SW: &str = include_str!("../assets/sw.js");
 /// #57: served under `/a/<VER>/` as immutable (the SW precaches them); the page links them.
-const ASSETS: [(&str, &str, &[u8]); 5] = [
+const ASSETS: &[(&str, &str, &[u8])] = &[
     ("serve.css", "text/css", include_bytes!("../assets/serve.css")),
     ("herd.css", "text/css", include_bytes!("../assets/herd.css")),
     ("serve.js", "text/javascript", include_bytes!("../assets/serve.js")),
@@ -28,7 +28,7 @@ const ASSETS: [(&str, &str, &[u8]); 5] = [
     ("horses.svg", "image/svg+xml", include_bytes!("../assets/horses.svg")),
 ];
 /// At the root, the fixed paths the manifest and iOS name: cached a day (`/sw.js`, VER filled in, is no-store).
-const FILES: [(&str, &str, &[u8]); 4] = [
+const FILES: &[(&str, &str, &[u8])] = &[
     (
         "manifest.webmanifest",
         "application/manifest+json",
@@ -306,7 +306,7 @@ fn row(class: &str, lead: &str, a: &str, state: &str, age: &str, lines: &[String
 }
 
 /// Form ops only a paired device may POST.
-const PAIRED_OPS: [&str; 6] = ["unpair", "answer", "drive", "override", "extend", "park"];
+const PAIRED_OPS: &[&str] = &["unpair", "answer", "drive", "override", "extend", "park"];
 
 /// The non-empty fields, ` · `-joined (no `-` placeholders).
 fn join(parts: &[&str]) -> String {
@@ -339,13 +339,13 @@ fn hidden(op: &str, fleet: &str, mt: &str) -> String {
     format!("<input type=hidden name=op value={op}><input type=hidden name=fleet value=\"{}\"><input type=hidden name=mtime value={mt}>", esc(fleet))
 }
 
-const GALLOP: [&str; 2] = ["    _/>\n~(___)\n /  \\", "    _/>\n~(___)\n  ><"];
+const GALLOP: &[&str] = &["    _/>\n~(___)\n /  \\", "    _/>\n~(___)\n  ><"];
 const STAND: &str = "    _/>\n~(___)\n  | |";
 const REST: &str = "\n    _/>\n~(___)_";
 const REAR: &str = "     />\n ~(_/\n  / \\";
 
 /// Corral's 8 coats (HerdArt.swift): body, shade, mane; chestnut, palomino, dun and buckskin carry a blaze.
-const COATS: [(&str, &str, &str, bool); 8] = [
+const COATS: &[(&str, &str, &str, bool)] = &[
     ("8a5a33", "6f4527", "2e2019", false),
     ("a05c2c", "7d4520", "5d3317", true),
     ("3b3b44", "2a2a31", "17161a", false),
@@ -1771,8 +1771,8 @@ pub fn export(ctx: &Ctx, r: &dyn Runner, dir: &std::path::Path, demo: bool) -> R
     .map(|(n, b)| (n.to_string(), b));
     for (name, body) in files
         .into_iter()
-        .chain(FILES.map(|f| (f.0.to_string(), f.2)))
-        .chain(ASSETS.map(|a| (v.clone() + a.0, a.2)))
+        .chain(FILES.iter().map(|f| (f.0.to_string(), f.2)))
+        .chain(ASSETS.iter().map(|a| (v.clone() + a.0, a.2)))
     {
         std::fs::write(dir.join(name), body)?;
     }
@@ -1908,7 +1908,7 @@ fn role_form(cfg: &Config, fleet: &str, role: &str, r: &Role, rw: bool, mt: &str
 }
 
 /// Noise folded into one count per run of consecutive events unless `all`.
-const NOISE: [&str; 2] = ["clean", "notify-failed"];
+const NOISE: &[&str] = &["clean", "notify-failed"];
 
 fn events_tab(ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States, all: bool) -> String {
     let repo = |fleet: &str| cfg.and_then(|c| c.fleet.get(fleet)).map(|f| f.repo.clone());
