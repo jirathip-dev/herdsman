@@ -133,7 +133,15 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
         }
     }
     let open = open_asks(&events);
-    for a in open.iter().filter(|a| ctx.now.saturating_sub(a.ts) > 30 * 60) {
+    let routine = |a: &&&Event| a.str("kind") == Some("routine");
+    let due = |a: &&&Event| ctx.now.saturating_sub(a.ts) >= cfg.limits.ask_default_minutes * 60;
+    for a in open.iter().filter(routine).filter(due) {
+        let id = a.str("id").unwrap_or_default();
+        let rec = a.data["recommend"].to_string();
+        crate::answer(ctx, cfg, r, out, (&a.fleet, id), &rec, ("default", None))?;
+    }
+    let waiting = |a: &&&Event| !routine(a) && ctx.now.saturating_sub(a.ts) > 30 * 60;
+    for a in open.iter().filter(waiting) {
         let why = format!(
             "{} unanswered for {}: {}",
             a.str("id").unwrap_or("?"),

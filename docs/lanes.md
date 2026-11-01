@@ -105,6 +105,29 @@ board shows `driver: herdsman · last pass <age> ago`.
 A fix lane may push back on a finding in its report with file:line proof; that is not a fix,
 and the next (fresh) reviewer decides.
 
+## Asks
+
+A lane that needs a decision runs `herdsman ask <fleet> <issue> "<question>" --option … --recommend <n> --kind routine|owner`
+and waits for a `DECISION <id>: <text>` prompt.
+
+- **owner** (the default; an unmarked ask is one) always waits for a person. Scope or feature changes, spend,
+  security or secret trade-offs, anything touching main or production, data deletion, a new dependency. The
+  phone gets a push for each one.
+- **routine** needs `--recommend` (else `NO_RECOMMENDATION`). Fix rounds, ordering, size or cap targets already set
+  by an issue, already-decided specs, test or tooling choices inside the issue's scope. If nobody answers within
+  `[limits] ask_default_minutes` (30), `herdsman check` takes the recommended option through the same path as
+  `herdsman answer`: a `decision` with `by: "default"`, and the lane gets
+  `DECISION <id>: <option> (default after 30 min, nobody replied)`. The phone hears of the default taken, never of
+  the routine ask merely waiting, and a routine ask raises no `ask-waiting`.
+- A routine ask whose question or options use an owner word (`main`, `production`/`prod`, `secret`, `token`,
+  `delete`, `spend`, `cost`, `$`, `dependency`, `scope`, or a plural or inflection such as `secrets`, `deleting`) is
+  refused `OWNER_TOPIC`. The list is a backstop, not the definition.
+
+The needs-you card tags each ask `routine · defaults to 2 in 24m` or `owner · waits for you`. A defaulted
+decision shows on its issue row as `decided by default: <option>` with **[change]**: answering again (also
+`herdsman answer`) logs a new `decision` and prompts the lane, or the next lane's brief carries it. A decision
+someone made is final (`ALREADY_ANSWERED`).
+
 ## Check and notifiers
 
 `herdsman check` alerts once per state on `stall`, `lane-dead` (a parked lane, clean and pushed with no

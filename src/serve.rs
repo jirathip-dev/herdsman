@@ -1,6 +1,6 @@
 //! `herdsman serve`, the phone page (docs/serve.md): std `TcpListener`, one request at a time;
 //! `/live` SSE clients get a thread each, fed by the 1 s watcher thread.
-use crate::config::{Config, Role};
+use crate::config::{Config, Limits, Role};
 use crate::events::{age, append, fold, plain, read, Event, IssueState, States};
 use crate::gate::{refused, Refusal};
 use crate::host::{self, Host};
@@ -292,6 +292,23 @@ fn join(parts: &[&str]) -> String {
         .copied()
         .collect::<Vec<_>>()
         .join(" · ")
+}
+
+/// Ask `a`'s answer form: option buttons (recommended first) and a free-text box.
+fn answer_form(ctx: &Ctx, a: &Event, send: &str) -> String {
+    const REC: &str = " <small>(recommended)</small>";
+    let rec = a.data["recommend"].as_u64();
+    let btn = |(o, n): (&serde_json::Value, u64)| {
+        let o = esc(o.as_str().unwrap_or("?"));
+        let mark = if Some(n) == rec { REC } else { "" };
+        format!("<button name=choice value={n}>{n}. {o}{mark}</button>")
+    };
+    let mut opts: Vec<_> = a.data["options"].as_array().into_iter().flatten().zip(1..).collect();
+    opts.sort_by_key(|o| Some(o.1) != rec);
+    let btns: String = opts.into_iter().map(btn).collect();
+    let id = esc(a.str("id").unwrap_or_default());
+    let op = hidden("answer", &a.fleet, &mtime(ctx));
+    format!("<form method=post>{op}<input type=hidden name=id value=\"{id}\"><input name=text aria-label=answer placeholder=\"or type an answer\"><button>{send}</button>{btns}</form>")
 }
 
 fn hidden(op: &str, fleet: &str, mt: &str) -> String {
@@ -1014,13 +1031,15 @@ impl<'a> Server<'a> {
             .collect();
         crate::events::open_asks(events).into_iter().map(|a| {
             let s = |k| a.str(k).unwrap_or_default();
-            let mut opts: Vec<(u64, &str)> = a.data["options"].as_array().into_iter().flatten().zip(1..).map(|(o, n)| (n, o.as_str().unwrap_or("?"))).collect();
-            opts.sort_by_key(|o| Some(o.0) != a.data["recommend"].as_u64());
-            let rec = |n: &u64| if Some(*n) == a.data["recommend"].as_u64() { " <small>(recommended)</small>" } else { "" };
-            let btns: String = opts.iter().map(|(n, o)| format!("<button name=choice value={n}>{n}. {}{}</button>", esc(o), rec(n))).collect();
-            let form = format!("<form method=post>{}<input type=hidden name=id value=\"{}\"><input name=text aria-label=answer placeholder=\"or type an answer\"><button>Send</button>{btns}</form>", hidden("answer", &a.fleet, &mtime(ctx)), esc(s("id")));
             let who = join(&[&a.fleet, &a.issue.map_or(String::new(), |n| format!("#{n}")), s("agent"), &age(ctx.now.saturating_sub(a.ts))]);
-            format!("<div class=ask><p><b>needs you</b> <span class=m>{}</span></p><p>{}</p>{}</div>", esc(&who), esc(s("question")), if self.addr.is_some() { form } else { String::new() })
+            let mins = cfg.map_or(Limits::default().ask_default_minutes, |c| c.limits.ask_default_minutes);
+            let rec = a.data["recommend"].as_u64().filter(|_| s("kind") == "routine");
+            let left = age((a.ts + 60 * mins).saturating_sub(ctx.now));
+            let kind = rec.map_or("owner · waits for you".into(), |n| format!("routine · defaults to {n} in {left}"));
+            let who = esc(&who);
+            let question = esc(s("question"));
+            let form = self.addr.as_ref().map_or(String::new(), |_| answer_form(ctx, a, "Send"));
+            format!("<div class=ask><p><b>needs you</b> <span class=m>{who}</span> <span class=m>· {kind}</span></p><p>{question}</p>{form}</div>")
         }).collect::<String>() + &blocked
     }
 
@@ -1128,6 +1147,15 @@ impl<'a> Server<'a> {
                 }
                 if let Some(b) = blocked_by {
                     card.push(format!("<span class=r>blocked by #{b}</span>"));
+                }
+                // #99: a decision taken by default, with [change]: a new decision on the same ask.
+                let last = events.iter().rev().find(|e| e.is("decision", f, n));
+                if let Some(d) = last.filter(|d| d.str("by") == Some("default")) {
+                    let asked = |e: &&Event| e.is("needs-decision", f, n) && e.str("id") == d.str("id");
+                    let ask = events.iter().find(asked).filter(|_| rw);
+                    let change = ask.map_or(String::new(), |a| answer_form(ctx, a, "[change]"));
+                    let choice = esc(d.str("choice").unwrap_or("?"));
+                    card.push(format!("<span>decided by default: {choice}</span>{change}"));
                 }
                 if let (true, false, Some(k)) = (rw, is_dead, k) {
                     let mv = |label: &str, key: &str, to: u64| {

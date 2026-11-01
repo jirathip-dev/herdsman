@@ -103,6 +103,7 @@ C = "CLAUDE_CODE_OAUTH_TOKEN_C"
 [limits]
 review_rounds = 3
 stall_minutes = 30   # herdsman check: stall / ready-unmerged threshold
+ask_default_minutes = 30  # herdsman check: a routine ask unanswered this long takes its recommended option
 load_per_cpu = 2.5   # herdsman spawn HOST_BUSY thresholds
 swapout_rate = 2000  # pages swapped out per 2 s sample
 min_free_gb = 10     # herdsman spawn DISK_LOW under this many GB free on /
