@@ -43,5 +43,5 @@ the hook for one release, and `HERDSMAN_LANE` wins when both are set.
 
 ## Size cap
 
-At most 6,340 lines of Rust under `src/` (tests live in `tests/`). CI enforces it. #60 aimed for 5,000; without joining
-lines or dropping features it ended at 6,080 (the herdr adapter, `src/herdr.rs`, included), so the cap was that count rounded up (6,100); #88 (`serial_max`) raised it to 6,120, #87 (alerts) to 6,170 and #92 (`herdsman drive`, +170 net) to 6,340.
+At most 6,360 lines of Rust under `src/` (tests live in `tests/`). CI enforces it. #60 aimed for 5,000; without joining
+lines or dropping features it ended at 6,080 (the herdr adapter, `src/herdr.rs`, included), so the cap was that count rounded up (6,100); #88 (`serial_max`) raised it to 6,120, #87 (alerts) to 6,170 and #92 (`herdsman drive`, +193 net) to 6,360.
