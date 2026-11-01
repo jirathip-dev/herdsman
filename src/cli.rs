@@ -163,6 +163,8 @@ enum Cmd {
         #[command(subcommand)]
         cmd: PushCmd,
     },
+    /// One pass of the loop for `driver = "herdsman"` fleets: do every step that's due, then exit; safe from cron
+    Drive { fleet: Option<String> },
     /// Alert once per state on stall, lane-dead, ready-unmerged, orch-holding, ask-waiting; nudge an idle orch; idempotent, safe from cron
     Check,
     /// Each `[accounts]` account: ok / capped until hh:mm, and the lanes on it (names only, never tokens)
@@ -311,7 +313,7 @@ pub fn usage_doc() -> String {
     cmd.build();
     let mut s = String::from(include_str!("../roles/usage-head.md"));
     // The owner's commands; the sections below name them.
-    let owner = ["accounts", "pause", "resume", "serve"];
+    let owner = ["accounts", "drive", "pause", "resume", "serve"];
     let subs = cmd.get_subcommands().filter(|c| !c.is_hide_set() && !owner.contains(&c.get_name()));
     let subs: Vec<_> = subs.flat_map(|c| if c.has_subcommands() { c.get_subcommands().collect() } else { vec![c] }).collect();
     for sub in subs {
@@ -354,6 +356,12 @@ pub fn main_with(args: Vec<String>, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Wri
             }
         },
     }
+}
+
+/// One command run in process (`herdsman drive`): its exit code, or its error or refusal.
+pub(crate) fn run(args: &[&str], ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write) -> Result<i32> {
+    let cli = Cli::try_parse_from(std::iter::once("herdsman").chain(args.iter().copied()))?;
+    dispatch(cli.cmd, ctx, r, out, &mut std::io::empty())
 }
 
 fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mut dyn Read) -> Result<i32> {
@@ -460,6 +468,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 Cmd::Ask { fleet, issue, question, options, recommend } => crate::ask(ctx, &cfg, out, (&fleet, lane(&issue)?), &question, &options, recommend)?,
                 Cmd::Answer { fleet, id, choice, by } => crate::answer(ctx, &cfg, r, out, (&fleet, &id), &choice, (&by, None))?,
                 Cmd::Check => check::check(ctx, &cfg, r, out)?,
+                Cmd::Drive { fleet } => crate::drive::drive(ctx, &cfg, r, out, fleet.as_deref())?,
                 Cmd::Waiting(Scope { fleet, json }) => {
                     let all = crate::waiting::scan(ctx, &cfg, r, &read(&ctx.state)?, &crate::host::agents(r).unwrap_or_default(), true);
                     let rows: Vec<_> = all.into_iter().filter(|(s, w)| s.lane.as_ref() == Some(&w.lane)).map(|x| x.1).filter(|w| matches!(w.who, "orch" | "owner") && fleet.as_ref().is_none_or(|f| *f == w.fleet)).collect();

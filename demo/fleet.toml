@@ -42,6 +42,7 @@ model = "opus"
 repo = "acme-example/docs"
 local = "/srv/acme/docs"
 integration = "staging"
+driver = "herdsman"
 
 [fleet.docs.role.orch]
 harness = "hermes"

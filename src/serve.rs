@@ -194,6 +194,9 @@ fn row(class: &str, lead: &str, a: &str, state: &str, age: &str, lines: &[String
     )
 }
 
+/// Form ops only a paired device may POST.
+const PAIRED_OPS: [&str; 3] = ["unpair", "answer", "drive"];
+
 /// The non-empty fields, ` · `-joined (no `-` placeholders).
 fn join(parts: &[&str]) -> String {
     parts.iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join(" · ")
@@ -381,6 +384,7 @@ impl<'a> Server<'a> {
         // Host/Origin-checked: the live stream, transcripts, Herd's data and every write.
         let guarded = method == "GET" && ["/live", "/lane", "/herd.json"].contains(&path)
             || method == "POST" && self.addr.is_some();
+        let paired_op = form(body.trim()).get("op").is_some_and(|o| PAIRED_OPS.contains(&o.as_str()));
         let (status, ctype, body) = match (method, path) {
             ("GET", _) if frags => self.frags(ctx, false, self.device(ctx, head).is_some()).map_or_else(fail, |f| {
                 ("200 OK", JSON, serde_json::to_vec(&f.into_iter().collect::<BTreeMap<_, _>>()).unwrap_or_default())
@@ -407,7 +411,9 @@ impl<'a> Server<'a> {
                 let a = ASSETS.iter().find(|a| p == format!("/a/{VER:08x}/{}", a.0)).inspect(|_| cache = "public, max-age=31536000, immutable");
                 a.or_else(|| FILES.iter().find(|f| p.strip_prefix('/') == Some(f.0)).inspect(|_| cache = "public, max-age=86400")).map_or(("404 Not Found", "text/plain", text("not found\n")), |f| ("200 OK", f.1, f.2.to_vec()))
             }
-            ("POST", "/") if form(body.trim()).get("op").is_some_and(|o| o == "unpair" || o == "answer") && self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("only a paired device may remove devices or answer asks\n")),
+            ("POST", "/") if paired_op && self.device(ctx, head).is_none() => {
+                ("401 Unauthorized", "text/plain", text("only a paired device may unpair, answer or drive\n"))
+            }
             ("POST", "/") => {
                 let msg = self.write(ctx, &form(body.trim())).unwrap_or_else(|e| shown(&e));
                 return see(&format!("/?msg={}", enc(&msg)));
@@ -618,6 +624,11 @@ impl<'a> Server<'a> {
                 crate::answer(ctx, &Config::load(&ctx.config)?, self.r, &mut out, (fleet, g("id")), choice, ("owner", Some("web")))?;
                 format!("answered {}", g("id"))
             }
+            "drive" => {
+                crate::drive::drive(ctx, &Config::load(&ctx.config)?, self.r, &mut out, Some(fleet))?;
+                let line = String::from_utf8_lossy(&out).lines().collect::<Vec<_>>().join("; ");
+                if line.is_empty() { format!("{fleet}: nothing due") } else { line }
+            }
             "unpair" => {
                 let mut all = devices::load(ctx);
                 all.retain(|d| d.hash != g("hash"));
@@ -812,7 +823,13 @@ impl<'a> Server<'a> {
                 );
                 continue;
             }
-            h += &format!("<h2><span>{}</span>{}</h2>", esc(f), button("pause", "Pause"));
+            let drive = if fc.driven() { button("drive", "Drive now") } else { String::new() };
+            h += &format!("<h2><span>{}</span>{drive}{}</h2>", esc(f), button("pause", "Pause"));
+            if fc.driven() {
+                let last = crate::drive::last_pass(ctx, f).map(|t| age(now.saturating_sub(t)));
+                let last = last.map_or("no pass yet".into(), |a| format!("last pass {a} ago"));
+                h += &format!("<p class=m>driver: herdsman · {last}</p>");
+            }
             let stall = cfg.limits.stall_minutes * 60;
             let live = mine.iter().filter(|s| s.active_lane().is_some() && gone(s).is_none());
             let next = live.map(|s| ((s.last_ts + stall).saturating_sub(now), s.issue)).min();

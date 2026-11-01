@@ -59,8 +59,14 @@ pub fn waiting_on(events: &[Event], s: &IssueState, head: Option<(&str, u64)>, p
         "ready" => w("ci", "waiting for CI", s.last_ts, None),
         // The exact command, or none (no nudge) while the verdict word or the head sha is unknown.
         "review" => match rev {
+            // #92: a verdict is for the head the rev lane was spawned at; a moved PR head gets a fresh reviewer.
+            Some(_) if head.is_some_and(|h| !pushed.is_empty() && h.0 != pushed) => {
+                let what = format!("verdict is for {:.7}, the PR head moved to {pushed:.7}: review again", head.unwrap_or_default().0);
+                w("orch", &what, s.last_ts, cmd("spawn", " rev --supersede"))
+            }
             Some((path, v)) => {
-                let next = (matches!(v, "PASS" | "FAIL") && !pushed.is_empty()).then(|| format!("herdsman verdict {f} {n} {v} --sha {pushed} --file {path}"));
+                let at = head.is_some_and(|h| h.0 == pushed);
+                let next = (matches!(v, "PASS" | "FAIL") && at).then(|| format!("herdsman verdict {f} {n} {v} --sha {pushed} --file {path}"));
                 w("orch", "verdict written, waiting for orch to record it", s.last_ts, next)
             }
             None => w("none", "rev idle without a verdict (check the pane)", s.last_ts, None),
@@ -104,7 +110,9 @@ pub fn scan(ctx: &Ctx, cfg: &Config, r: &dyn Runner, events: &[Event], agents: &
         let path = spawn.and_then(|e| e.str("worktree")).map(|wt| format!("{wt}/verdict.md"));
         let fresh = |p: &String| std::fs::metadata(p).and_then(|m| m.modified()).is_ok_and(|t| t > std::time::UNIX_EPOCH + std::time::Duration::from_secs(spawn.map_or(0, |e| e.ts)));
         let word = path.as_ref().filter(|p| fresh(p)).and_then(|p| std::fs::read_to_string(p).ok()).map(|v| v.lines().next().unwrap_or_default().trim().to_string());
-        let mut w = waiting_on(events, &s, head, &pr, &f.required_checks, path.as_deref().zip(word.as_deref()));
+        // In review, `head` is the one the rev lane was spawned at (logged since #92; else its worktree's).
+        let at = spawn.filter(|_| s.lanes.get("rev") == Some(&lane)).and_then(|e| Some((e.str("sha")?, e.ts)));
+        let mut w = waiting_on(events, &s, at.or(head), &pr, &f.required_checks, path.as_deref().zip(word.as_deref()));
         // #83: a paused fleet's lane with no pane and a clean, pushed worktree is parked until `resume`.
         let safe = || wt.is_some_and(|wt| crate::spawn::dirty(r, std::path::Path::new(wt)).is_none());
         if f.paused && !agents.iter().any(|a| a["name"] == lane.as_str() && a["agent_status"] != "parked") && safe() {

@@ -20,6 +20,13 @@
   const VIEWS = {
     queue: () => tab('queue'),
     'queue-open': () => { tab('queue'); const d = $('#queue details.q'); d.open = true; d.scrollIntoView(); },
+    // #92: the demo's `driver = "herdsman"` fleet (docs): its heading and `driver: herdsman · last pass …` line, moved
+    // to the top (a scrolled view shoots blank).
+    'queue-drive': () => {
+      tab('queue');
+      const p = [...$$('#queue p.m')].find(p => p.textContent.startsWith('driver:'));
+      $('#queue').prepend(p.previousElementSibling, p);
+    },
     lanes: () => tab('lanes'),
     sheet: async () => { // the longest agent name, then kill refused, kill's dry run, clean refused, a send error
       tab('lanes');

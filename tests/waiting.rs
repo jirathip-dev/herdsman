@@ -81,6 +81,7 @@ fn fixture(name: &str) -> (herdsman::Ctx, Fake) {
         .reply("gh pr view issue-4 ", &pr(&sha("4"), "green"))
         .reply("gh pr view issue-5 ", &pr(&sha("5"), "pending"))
         .reply("gh pr view issue-6 ", &pr(&sha("6"), "pending"))
+        .reply(&format!("git -C {} ", c.worktrees.join("rev-6").display()), &format!("{} {}", sha("6"), NOW - 900))
         .reply("gh pr view issue-14 ", &pr(&sha("e"), "pending"))
         .reply("gh pr view issue-13 ", &pr(&sha("d"), "pending").replace("OPEN", "CLOSED"))
         .reply("gh pr view issue-10 ", &pr(&sha("b"), "pending"))

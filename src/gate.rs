@@ -73,7 +73,7 @@ pub fn verdict(
     let limit = cfg.limits.review_rounds;
     writeln!(out, "recorded {v} for {fleet}#{issue} @ {head} (round {round}/{limit})")?;
     if !pass && round >= limit {
-        let d = json!({"reason": format!("FAIL in round {round}/{limit}")});
+        let d = json!({"reason": format!("FAIL in round {round}/{limit}"), "findings": body});
         emit(&ctx.state, cfg, Event::new(ctx.now, fleet, Some(issue), "needs-human", d))?;
         writeln!(out, "round limit reached → needs-human")?;
     }

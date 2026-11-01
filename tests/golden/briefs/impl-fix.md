@@ -25,6 +25,8 @@ Lazy senior dev: YAGNI, reuse, stdlib first, shortest correct diff.
 - If the repo has a `justfile`, run `just --list` once and use its recipes.
 - Test with the exact commands from the brief. Save output to a named log and report the
   raw exit status; `cmd | grep` is never PASS/FAIL evidence.
+- Fix rounds get the review findings verbatim. Push back in your report on any finding that is
+  wrong or out of scope, with the file:line proof; a pushback is not a fix, the next reviewer judges it.
 - After three attempts in one diagnostic class without progress, stop and report.
 - The PR body's evidence (test commands, exit codes) must name the final head sha it was
   produced at. Refresh it after every push (`gh pr edit --body`) so it never lags the head.
@@ -40,6 +42,8 @@ verify. You are judged on the diff against the acceptance criteria, not on effor
 AC: it {works} \ `ok`
 
 ## Review findings to fix (latest FAIL verdict)
+
+If a finding is wrong or out of scope, say so in your report with file:line proof; that is not a fix. The next reviewer decides.
 
 FAIL
 

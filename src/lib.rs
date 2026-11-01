@@ -4,6 +4,7 @@ pub mod check;
 mod cli;
 pub mod config;
 pub mod devices;
+pub mod drive;
 pub mod events;
 pub mod gate;
 pub mod gh;
