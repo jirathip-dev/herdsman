@@ -990,7 +990,7 @@ impl<'a> Server<'a> {
         };
         Ok(format!(
             "<!doctype html><html lang=en><head><meta charset=utf-8>\
-             <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
+             <meta name=viewport content=\"width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover\">\
              <meta name=theme-color content=\"#1f2a38\"><meta name=apple-mobile-web-app-capable content=yes>\
              <link rel=manifest href={root}manifest.webmanifest><link rel=icon href={root}icon-192.png><link rel=apple-touch-icon href={root}icon-180.png>\
              <title>herdsman</title><link rel=stylesheet href={root}a/{VER:08x}/serve.css><link rel=stylesheet href={root}a/{VER:08x}/herd.css></head>\
