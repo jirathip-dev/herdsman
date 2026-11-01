@@ -464,9 +464,9 @@ fn lane_loads_more_from_the_scrollback() {
     assert!(r.called("herdr pane read w1:p2 --source recent --lines 400"));
 }
 
-/// iOS zooms on focus under 16 px; the fix is the font size, never `maximum-scale`.
+/// iOS zooms on focus under 16 px; the fix is the font size. #114: the page is app-like, so no pinch or double-tap zoom.
 #[test]
-fn inputs_are_16px_and_zoom_stays_allowed() {
+fn inputs_are_16px_and_zoom_is_off() {
     let css = include_str!("../assets/serve.css");
     let rule = css.lines().find(|l| l.starts_with(".reply textarea{")).unwrap();
     assert!(
@@ -476,6 +476,6 @@ fn inputs_are_16px_and_zoom_stays_allowed() {
     let (c, _) = lane("zoom");
     let page = String::from_utf8_lossy(&Server::new(&c, &Fake::default(), None).respond("GET / HTTP/1.1\r\n\r\n", T))
         .into_owned();
-    assert!(page.contains("<meta name=viewport") && !page.contains("maximum-scale"));
+    assert!(page.contains("initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"));
     assert!(css.contains(".lock body{position:fixed") && include_str!("../assets/serve.js").contains("visualViewport"));
 }

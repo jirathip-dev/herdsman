@@ -180,6 +180,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: Option<AccountsCmd>,
     },
+    /// Read-only host check: herdr, gh, config, accounts, harnesses, serve, phone, watchdog; ✓/✗/! with the fix per line, exit 1 on any ✗
+    Doctor {
+        #[arg(long)]
+        json: bool,
+    },
     /// Read-only: is GitHub branch protection on for main, staging and the integration branch of each fleet repo? Exit 1 unless all are
     Protection,
     /// Remove worktree + pane of merged or closed-issue lanes (never live, dirty or unpushed ones); dry run unless --yes
@@ -322,7 +327,7 @@ pub fn usage_doc() -> String {
     cmd.build();
     let mut s = String::from(include_str!("../roles/usage-head.md"));
     // The owner's commands; the sections below name them.
-    let owner = ["accounts", "drive", "pause", "resume", "serve"];
+    let owner = ["accounts", "doctor", "drive", "pause", "resume", "serve"];
     let subs = cmd
         .get_subcommands()
         .filter(|c| !c.is_hide_set() && !owner.contains(&c.get_name()));
@@ -551,6 +556,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 )?;
             }
         }
+        Cmd::Doctor { json } => return crate::doctor::doctor(ctx, r, out, json),
         cmd => {
             let cfg = Config::load(&ctx.config)?;
             match cmd {

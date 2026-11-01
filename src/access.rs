@@ -66,11 +66,7 @@ pub fn pick(ctx: &Ctx, cfg: &Config, events: &[Event], role: &Role) -> Result<Op
             .context("[accounts].accounts_env is not set")?,
     );
     let text = std::fs::read_to_string(&file).with_context(|| format!("cannot read {}", file.display()))?;
-    let set = text
-        .lines()
-        .filter_map(|l| l.trim().trim_start_matches("export ").split_once('='))
-        .any(|(k, v)| k.trim() == var && !v.trim().trim_matches(['"', '\'']).is_empty());
-    if !set {
+    if !has_var(&text, var) {
         bail!("account {name}: {var} is not set in {}", file.display());
     }
     let src = file.to_string_lossy().replace('\'', r"'\''");
@@ -128,6 +124,13 @@ fn civil_month_day(days: u64) -> (u64, u64) {
 fn local_offset(r: &dyn Runner, now: u64) -> i64 {
     let z = usage::date(r, now, "+%z").parse::<i64>().unwrap_or(0);
     z / 100 * 3600 + z % 100 * 60
+}
+
+/// `var` has a non-empty value in an env file's `text` (`VAR=value` lines).
+pub fn has_var(text: &str, var: &str) -> bool {
+    text.lines()
+        .filter_map(|l| l.trim().trim_start_matches("export ").split_once('='))
+        .any(|(k, v)| k.trim() == var && !v.trim().trim_matches(['"', '\'']).is_empty())
 }
 
 /// The pane shows Claude Code's usage-limit banner.

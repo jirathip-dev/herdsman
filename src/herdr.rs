@@ -25,6 +25,11 @@ pub fn json(r: &dyn Runner, a: &[String]) -> Result<Value> {
     runner::json(r, "herdr", a)
 }
 
+/// `herdr status`: client and server versions (`herdsman doctor`).
+pub fn status(r: &dyn Runner) -> Result<String> {
+    ok(r, &argv(&["status"]))
+}
+
 /// `herdr agent list` or `workspace list` (`what`), as JSON.
 pub fn list(r: &dyn Runner, what: &str) -> Result<Value> {
     json(r, &argv(&[what, "list"]))

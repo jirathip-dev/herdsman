@@ -57,6 +57,9 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
    ellipsis, a Herd strip/`[A]`/`[×]` not 28 px or `[A]` not inside the strip left of `[×]` (#71), a lane horse not 132±1 px wide or a queued one not 53±1 (#65), or
    text under the weather caption or the demo's weather switcher with the page scrolled to its end, or ellipsised
    strip text, also with a fixture of the owner's counts (13 queued, 11 done, 5 idle, 3 working) (#65 A).
+   On every view it also fails unless the viewport meta is `…,maximum-scale=1,user-scalable=no,viewport-fit=cover` and
+   `html` has `touch-action:manipulation` (#114: no zoom), and on Herd pages unless every queued horse in a row has its
+   feet (SVG bottom) on one line ±1 px, blocked or not (the owner's-counts fixture mixes them), and none overlaps the gate post.
    Two more views (#65) prove updates never move the scroll: `herd-scroll` scrolls Herd page 1 to 400 px and
    pushes a changed fixture through `herdData()` (a label, a band move, a lane and a queued issue gone, one lane
    added); `queue-scroll` opens every Queue row, scrolls to 400 px and pushes a changed section through `frag()`.
