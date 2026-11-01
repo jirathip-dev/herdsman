@@ -128,13 +128,14 @@ main{transition:transform .2s}
 .ask form button[name]{order:-1}
 .ask>button{display:flex;width:fit-content;margin:var(--s4) 0}
 /* #63 amendment A, the one exception to the 28 px rule: a choice is a sentence, not a label. Full width, wrapping,
-   at most 4 lines (then an ellipsis; the full text is its title), the brackets on the first line, stacked 8 px apart. */
-.ask form:has([name=choice]){row-gap:var(--s2)}.ask .pick+.pick{margin-top:var(--s2)}
-.ask button[name=choice],.ask .pick{display:flex;width:100%;height:auto;min-height:var(--ctl);margin:0;padding:calc((var(--ctl) - 1.35em) / 2) 1ch;
+   at most 4 lines (then an ellipsis; the full text is its title), the brackets on the first line, stacked 8 px apart.
+   #139: every choice, wherever the answer form renders (.ask, the queue row card, the Herd card). */
+form:has([name=choice]){display:flex;row-gap:var(--s2)}button.pick+button.pick{margin-top:var(--s2)}
+button[name=choice],button.pick{display:flex;width:100%;height:auto;min-height:var(--ctl);margin:0;padding:calc((var(--ctl) - 1.35em) / 2) 1ch;
   justify-content:flex-start;align-items:flex-start;text-align:left;white-space:normal;overflow-wrap:anywhere;line-height:1.35}
-.ask button[name=choice]::after,.ask .pick::after{inset:calc(-1 * var(--s1)) calc(-1 * var(--s2));align-items:flex-start;padding-top:calc(var(--s1) + (var(--ctl) - 1.35em) / 2)}
-.ask button[name=choice]>span,.ask .pick>span{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
-.ask small{font-size:var(--fs-meta)}
+button[name=choice]::after,button.pick::after{inset:calc(-1 * var(--s1)) calc(-1 * var(--s2));align-items:flex-start;padding-top:calc(var(--s1) + (var(--ctl) - 1.35em) / 2)}
+button[name=choice]>span,button.pick>span{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.ask small,button[name=choice] small{font-size:var(--fs-meta)}
 /* #43: sheet actions, kill/clean confirm, `/` menu, per-turn transcript, tool calls collapsed; the page locked under the sheet. */
 .lock,.lock body{overflow:hidden;overscroll-behavior:none}
 .lock body{position:fixed;left:0;right:0}

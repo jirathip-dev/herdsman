@@ -1226,7 +1226,7 @@ impl<'a> Server<'a> {
                 if let Some(d) = last.filter(|d| d.str("by") == Some("default")) {
                     let asked = |e: &&Event| e.is("needs-decision", f, n) && e.str("id") == d.str("id");
                     let ask = events.iter().find(asked).filter(|_| rw);
-                    let change = ask.map_or(String::new(), |a| answer_form(ctx, a, "[change]"));
+                    let change = ask.map_or(String::new(), |a| answer_form(ctx, a, "change"));
                     let choice = esc(d.str("choice").unwrap_or("?"));
                     card.push(format!("<span>decided by default: {choice}</span>{change}"));
                 }
