@@ -33,7 +33,8 @@ fn amendment(ctx: &Ctx, r: &dyn Runner, cfg: &Config, s: &IssueState, wt: &str) 
         return None;
     }
     let n = s.issue;
-    let line = format!("AMENDMENT on #{n} ({url}): run `herdsman brief {} {n}` and apply it", s.fleet);
+    let fleet = &s.fleet;
+    let line = format!("AMENDMENT on #{n} ({url}): run `herdsman brief {fleet} {n}` and apply it");
     Some((url.to_string(), line))
 }
 
