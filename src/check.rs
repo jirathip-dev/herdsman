@@ -70,6 +70,20 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
                     capped = Some(name);
                 }
             }
+            // #101: an amendment newer than the lane's brief prompts the live lane once.
+            let brief = wt.and_then(|wt| std::fs::read_to_string(Path::new(wt).join(".brief.md")).ok());
+            if let (Some(brief), Some(p), true, Ok(f)) = (brief, pane, status.is_some(), cfg.fleet(&s.fleet)) {
+                let iss = gh::spec(ctx, r, f, &s.fleet, s.issue, true).unwrap_or_default();
+                if let Some(url) = iss["amended"].as_str().filter(|u| !brief.contains(*u)) {
+                    let (n, key) = (s.issue, format!("{lane}:{url}"));
+                    let (seen, fl) = (events.iter().any(|e| e.str("key") == Some(&key)), &s.fleet);
+                    let line = format!("AMENDMENT on #{n} ({url}): run `herdsman brief {fl} {n}` and apply it");
+                    let dsh = spawned.and_then(|e| e.str("harness")) == Some("dsh");
+                    if !seen && herdr::reply(r, dsh, lane, p, &line).is_ok() {
+                        hits.push(("amended", key, line));
+                    }
+                }
+            }
             if idle > stall && status != Some("working") && !parked {
                 let st = status.unwrap_or("gone");
                 hits.push((
