@@ -210,7 +210,7 @@ pub struct Notify {
     pub sub: Option<String>,
 }
 
-/// A webpush notifier's events when `on` is unset: the Telegram set plus the asks (#40) and a stuck orch (#46).
+/// A webpush notifier's events when `on` is unset: the Telegram set plus the asks (#40), a stuck orch (#46) and needs-human (#130).
 pub const WEBPUSH_ON: &[&str] = &[
     "blocked",
     "stall",
@@ -218,6 +218,7 @@ pub const WEBPUSH_ON: &[&str] = &[
     "ready-unmerged",
     "merged",
     "needs-decision",
+    "needs-human",
     "orch-stuck",
     "ask-waiting",
     "state-write-failed",

@@ -76,10 +76,10 @@ pub fn verdict(
         cfg,
         Event::new(ctx.now, fleet, Some(issue), "verdict", data),
     )?;
-    let limit = cfg.limits.review_rounds;
+    let limit = cfg.limits.review_rounds + st.as_ref().map_or(0, |s| s.extra);
     writeln!(out, "recorded {v} for {fleet}#{issue} @ {head} (round {round}/{limit})")?;
     if !pass && round >= limit {
-        let d = json!({"reason": format!("FAIL in round {round}/{limit}"), "findings": body});
+        let d = json!({"reason": format!("review rounds ran out ({round}/{limit})"), "findings": body});
         emit(
             &ctx.state,
             cfg,
@@ -158,11 +158,11 @@ pub fn gate(f: &Fleet, pr: &Value, st: Option<&IssueState>, limit: u32) -> Resul
     if v != "PASS" {
         return Err(refuse("VERDICT_FAIL", format!("verdict for {head} is {v}")));
     }
-    let rounds = st.map_or(0, |s| s.rounds);
+    let (rounds, limit) = st.map_or((0, limit), |s| (s.rounds, limit.saturating_add(s.extra)));
     if rounds > limit {
         return Err(refuse(
             "ROUND_LIMIT",
-            format!("{rounds} review rounds > limit {limit}; needs a human"),
+            format!("review rounds ran out ({rounds}/{limit})"),
         ));
     }
     ci_green(&pr["statusCheckRollup"], &f.required_checks)
@@ -170,7 +170,16 @@ pub fn gate(f: &Fleet, pr: &Value, st: Option<&IssueState>, limit: u32) -> Resul
     Ok(head)
 }
 
-pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &str, issue: u64) -> Result<()> {
+/// `over` (`--owner-override`, #130) lifts only `ROUND_LIMIT`.
+pub fn merge(
+    ctx: &Ctx,
+    cfg: &Config,
+    r: &dyn Runner,
+    out: &mut dyn Write,
+    fleet: &str,
+    issue: u64,
+    over: bool,
+) -> Result<()> {
     let f = cfg.fleet(fleet)?;
     let events = read(&ctx.state)?;
     let st = fold(&events).remove(&(fleet.to_string(), issue));
@@ -199,10 +208,11 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
         s
     });
     let num = pr["number"].as_u64().unwrap_or_default().to_string();
+    let lim = cfg.limits.review_rounds;
     let res = if pr.get("error").is_some() {
         Err(refuse("NO_PR", format!("no open PR for branch {branch} in {}", f.repo)))
     } else {
-        gate(f, &pr, st.as_ref(), cfg.limits.review_rounds)
+        gate(f, &pr, st.as_ref(), if over { u32::MAX } else { lim })
     };
     let serial = || crate::queue::serial(&read(&ctx.state).unwrap_or_default(), fleet).contains(&issue);
     let res = match res {
@@ -248,12 +258,16 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
     )?;
     let mc = json(r, "gh", &["pr", "view", &num, "-R", &f.repo, "--json", "mergeCommit"])?;
     let merge_sha = mc["mergeCommit"]["oid"].as_str().unwrap_or("?").to_string();
-    let d = json!({"pr": num, "merge_sha": merge_sha, "verdict_sha": head, "into": f.integration});
+    let mut d = json!({"pr": num, "merge_sha": merge_sha, "verdict_sha": head, "into": f.integration});
+    if over {
+        (d["by"], d["override"]) = (json!("owner"), json!("ROUND_LIMIT"));
+    }
     emit(&ctx.state, cfg, Event::new(ctx.now, fleet, Some(issue), "merged", d))?;
     // The one GitHub comment fleet writes: ≤ 5 lines, merge sha + verdict sha.
     let evidence = format!(
-        "Merged via `herdsman merge`: PR #{num} → `{}` @ `{merge_sha}`\nPinned PASS verdict sha: `{head}`",
-        f.integration
+        "Merged via `herdsman merge`: PR #{num} → `{}` @ `{merge_sha}`\nPinned PASS verdict sha: `{head}`{}",
+        f.integration,
+        if over { "\nOwner override: ROUND_LIMIT" } else { "" }
     );
     let n = issue.to_string();
     writeln!(out, "{evidence}")?;

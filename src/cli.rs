@@ -84,7 +84,13 @@ enum Cmd {
         file: String,
     },
     /// Merge the issue's PR into the integration branch if every gate passes; writes the one closing comment, closes the issue
-    Merge { fleet: String, issue: u64 },
+    Merge {
+        fleet: String,
+        issue: u64,
+        /// Owner only: merge past ROUND_LIMIT (never past PASS, CI or serial); logged `by: owner`
+        #[arg(long)]
+        owner_override: bool,
+    },
     /// Hold for a decision: log it, notify the fleet with numbered options and the answer command, print its id
     Ask {
         fleet: String,
@@ -349,8 +355,8 @@ enum ProfilesCmd {
     },
 }
 
-/// Line budget of `help --agent` (tests/spawn.rs): raise it here, next to the text it counts.
-pub const HELP_AGENT_MAX: usize = 194;
+/// Line budget of `help --agent` (tests/spawn.rs): raise it here, next to the text it counts (+1 for #130's `--owner-override`).
+pub const HELP_AGENT_MAX: usize = 195;
 
 /// The one usage doc both harnesses get: the commands generated from the CLI definition, the rest from `roles/usage-*.md`.
 pub fn usage_doc() -> String {
@@ -700,7 +706,11 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     let pass = verdict == "PASS";
                     gate::verdict(ctx, &cfg, r, out, (&fleet, issue), pass, &sha, &file)?;
                 }
-                Cmd::Merge { fleet, issue } => gate::merge(ctx, &cfg, r, out, &fleet, issue)?,
+                Cmd::Merge {
+                    fleet,
+                    issue,
+                    owner_override: o,
+                } => gate::merge(ctx, &cfg, r, out, &fleet, issue, o)?,
                 Cmd::Brief { fleet, issue } => {
                     let v = gh::spec(ctx, r, cfg.fleet(&fleet)?, &fleet, issue, false)?;
                     let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
