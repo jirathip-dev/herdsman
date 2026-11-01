@@ -830,3 +830,54 @@ fn host_busy_stops_the_pass_and_cap_stops_starting() {
     assert_eq!((state_of(&c, 1), state_of(&c, 3)), ("impl".into(), "queued".into()));
     idle(&c, &fan_fake(&working(&c, &[1])));
 }
+
+/// #149: unmarked #12 at PASS + green whose PR changes `files`: one drive pass, then the `serial-auto` events.
+fn serial_auto(name: &str, files: &str) -> (herdsman::Ctx, Fake, String, Vec<Event>) {
+    let cfg = CONFIG.replace(
+        "integration = \"staging\"",
+        &format!("integration = \"staging\"\ndriver = \"herdsman\"\n{SERIAL}"),
+    );
+    let c = ctx(&tmpdir(name), &cfg);
+    lane(&c, 10, "impl", "sendmeter-impl-12", "gone-12");
+    std::fs::remove_dir_all(c.worktrees.join("sendmeter/gone-12")).unwrap();
+    let head = sha("abc");
+    ev(
+        &c,
+        30,
+        "verdict",
+        json!({"verdict": "PASS", "sha": head, "body": "PASS"}),
+    );
+    let r = fake(NO_AGENTS)
+        .reply("gh pr view issue-12", &pr(&head, "green"))
+        .reply("gh pr diff 100", files)
+        .reply("gh pr merge 100", "")
+        .reply("gh pr view 100", r#"{"mergeCommit":{"oid":"m3rg3"}}"#)
+        .reply("gh issue", "");
+    let (out, steps) = drive(&c, &r);
+    assert_eq!(steps, ["merge"], "{out}");
+    assert!(!out.contains("SERIAL_UNMARKED"), "{out}");
+    assert_eq!(state(&c), "merged");
+    let auto = read(&c.state).unwrap().into_iter().filter(|e| e.kind == "serial-auto");
+    (c, r, out, auto.collect())
+}
+
+#[test]
+fn an_unmarked_pr_touching_a_serial_path_is_auto_marked_and_merges() {
+    let (c, r, out, auto) = serial_auto("drive-serial-auto", "src/a.rs\nsupabase/migrations/1_x.sql\n");
+    assert!(
+        out.contains("sendmeter #12 serial-auto: supabase/migrations/1_x.sql"),
+        "{out}"
+    );
+    assert_eq!(auto.len(), 1);
+    assert_eq!(
+        (auto[0].issue, auto[0].str("path")),
+        (Some(12), Some("supabase/migrations/1_x.sql"))
+    );
+    idle(&c, &r);
+}
+
+#[test]
+fn a_pr_off_serial_paths_is_not_marked() {
+    let (_, _, out, auto) = serial_auto("drive-serial-none", "src/a.rs\n");
+    assert!(auto.is_empty(), "{out}");
+}
