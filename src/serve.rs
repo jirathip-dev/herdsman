@@ -845,7 +845,7 @@ impl<'a> Server<'a> {
             .find(|l| Some(&l.name) == q.get("agent"))?;
         let want = (before + lines).to_string();
         let screen = herdr::recent(&self.cached(ctx.now, 5), l.pane.as_deref()?, &want).ok()?;
-        let all = lanes::tail(&screen, before + lines);
+        let all = lanes::tail(&lanes::chat(&screen).0.join("\n"), before + lines);
         let page = &all[..all.len().saturating_sub(before)];
         // `recent` is herdr's whole window: a short read (or the 2000 clamp) means nothing older.
         let more = all.len() == before + lines && before + lines <= 2000;
