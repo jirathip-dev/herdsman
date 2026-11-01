@@ -107,6 +107,9 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
         let pr = gh::cached_pr(ctx, fleet, s.issue);
         let red = gh::ci(&gh::required(&pr["statusCheckRollup"], &f.required_checks)) == "failed";
         let n = s.issue.to_string();
+        if let Err(e) = crate::gate::sync_label(ctx, cfg, r, out, s, &pr) {
+            writeln!(out, "{fleet} #{n} label: {e:#}")?;
+        }
         if w.who == "orch" {
             // `waiting` names the orch's exact next command; drive runs it instead.
             let Some(cmd) = &w.next_cmd else { continue };

@@ -31,6 +31,7 @@ repo = "<owner>/<repo>"
 local = "~/src/<repo>"
 integration = "staging"                      # merge target; main never is
 required_checks = ["test"]                   # gate on these checks only; unset = all
+# merge_label = "merge-ready"                # PR label the full CI needs: added on a PASS at the head
 serial_paths = ["db/migrations/**"]          # `--serial` lanes: serial_max (default 1) at a time
 serial_label = "schema"                      # their Queue mark, 🔒schema; ≤ 8 characters, default "serial"
 

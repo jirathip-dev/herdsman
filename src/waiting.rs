@@ -257,6 +257,14 @@ pub fn scan(
             &f.required_checks,
             path.as_deref().zip(word.as_deref()),
         );
+        // #150: a PASS whose PR lacks the merge label never gets its full CI run.
+        if let Some(l) = f
+            .merge_label
+            .as_deref()
+            .filter(|l| w.who == "ci" && !gh::has_label(&pr, l))
+        {
+            w.what = format!("PASS, PR lacks label `{l}`, so the full CI has not run");
+        }
         let to = f.driven().then_some("for drive (next pass ≤ 5 min)");
         w.what = w.what.replace("for orch", to.unwrap_or("for orch"));
         // #83: a paused fleet's lane with no pane and a clean, pushed worktree is parked until `resume`.
