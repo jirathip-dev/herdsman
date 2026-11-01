@@ -80,44 +80,54 @@ pub fn pick(ctx: &Ctx, cfg: &Config, events: &[Event], role: &Role) -> Result<Op
     )))
 }
 
-/// When the banner's `resets 9am` / `resets Nov 4, 8am` (host local time) falls; else `cap_reset_minutes` on, a
-/// day for a weekly limit.
+/// The banner's `resets 9am` / `resets Nov 4, 8am` (host local time); else `cap_reset_minutes` on (a day if weekly).
 pub fn cap_until(cfg: &Config, r: &dyn Runner, screen: &str, now: u64) -> u64 {
-    const MONTHS: &str = "janfebmaraprmayjunjulaugsepoctnovdec";
     let s = screen.to_lowercase().replace([',', '(', '.'], " ");
-    let fallback = now + [cfg.accounts.cap_reset_minutes * 60, 86400][usize::from(s.contains("week"))];
-    let z = usage::date(r, now, "+%z");
-    let off = z.parse::<i64>().map_or(0, |z| z / 100 * 3600 + z % 100 * 60);
-    let at = s.rfind("reset").unwrap_or(s.len());
-    let w: Vec<&str> = s[at..].split_whitespace().skip(1).collect();
-    let clock = w.iter().find_map(|t| {
-        let (hm, pm) = (
-            t.strip_suffix("am").or(t.strip_suffix("pm"))?,
-            u64::from(t.ends_with("pm")),
-        );
-        let (h, m) = hm.split_once(':').unwrap_or((hm, "0"));
-        Some((h.parse::<u64>().ok()? % 12 + pm * 12) * 3600 + m.parse::<u64>().ok()? * 60)
-    });
-    let m3 = w.first().and_then(|m| MONTHS.find(m.get(..3)?));
-    let day = w.get(1).and_then(|d| d.parse::<u64>().ok());
-    let date = m3.filter(|i| i % 3 == 0).zip(day);
-    // (3 × 0-based month, day) of a day number since 1970-01-01 (Hinnant's civil_from_days).
-    let md = |d: u64| {
-        let doe = (d + 719_468) % 146_097;
-        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-        let mp = (5 * doy + 2) / 153;
-        (
-            usize::try_from((mp + 2) % 12).unwrap_or(0) * 3,
-            doy - (153 * mp + 2) / 5 + 1,
-        )
-    };
+    let tail = &s[s.rfind("reset").unwrap_or(s.len())..];
+    let words: Vec<&str> = tail.split_whitespace().skip(1).collect();
+    let date = words.first().zip(words.get(1)).and_then(|(m, d)| month_day(m, d));
+    let secs = words.iter().find_map(|w| clock(w)).or(date.map(|_| 0));
+    let off = local_offset(r, now);
     let today = now.saturating_add_signed(off) / 86400;
-    (today..today + 400)
-        .filter(|&d| date.is_none_or(|x| x == md(d)))
-        .filter_map(|d| (d * 86400 + clock?).checked_add_signed(-off))
-        .find(|&t| t > now)
-        .unwrap_or(fallback)
+    let at = |secs| {
+        (today..today + 400)
+            .filter(|&d| date.is_none_or(|md| md == civil_month_day(d)))
+            .map(|d| (d * 86400 + secs).saturating_add_signed(-off))
+            .find(|&t| t > now)
+    };
+    let session = cfg.accounts.cap_reset_minutes * 60;
+    let fallback = if s.contains("week") { 86400 } else { session };
+    secs.and_then(at).unwrap_or(now + fallback)
+}
+
+/// Seconds past midnight of `3pm` / `3:30pm`.
+fn clock(word: &str) -> Option<u64> {
+    let hm = word.strip_suffix("am").or(word.strip_suffix("pm"))?;
+    let (h, m) = hm.split_once(':').unwrap_or((hm, "0"));
+    let pm = if word.ends_with("pm") { 12 } else { 0 };
+    Some((h.parse::<u64>().ok()? % 12 + pm) * 3600 + m.parse::<u64>().ok()? * 60)
+}
+
+/// `(month 1-12, day)` of `nov 4`.
+fn month_day(month: &str, day: &str) -> Option<(u64, u64)> {
+    let months = "jan feb mar apr may jun jul aug sep oct nov dec".split(' ');
+    let (_, m) = months.zip(1..).find(|(name, _)| month.starts_with(name))?;
+    Some((m, day.parse().ok()?))
+}
+
+/// `(month 1-12, day)` of a day number since 1970-01-01 (Hinnant's `civil_from_days`).
+fn civil_month_day(days: u64) -> (u64, u64) {
+    let doe = (days + 719_468) % 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    ((mp + 2) % 12 + 1, doy - (153 * mp + 2) / 5 + 1)
+}
+
+/// The host's UTC offset in seconds (`date +%z`; UTC if unreadable).
+fn local_offset(r: &dyn Runner, now: u64) -> i64 {
+    let z = usage::date(r, now, "+%z").parse::<i64>().unwrap_or(0);
+    z / 100 * 3600 + z % 100 * 60
 }
 
 /// The pane shows Claude Code's usage-limit banner.

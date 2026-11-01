@@ -1458,8 +1458,13 @@ impl<'a> Server<'a> {
         };
         if let Some(c) = cfg.filter(|c| !c.accounts.names.is_empty()) {
             let capped = |a: &&String| crate::access::capped_until(c, events, a, ctx.now).is_some();
-            let (n, all) = (c.accounts.names.keys().filter(capped).count(), c.accounts.names.len());
-            let t = ["g", "a", "r"][usize::from(n > 0) + usize::from(n == all)];
+            let all = c.accounts.names.len();
+            let n = c.accounts.names.keys().filter(capped).count();
+            let t = match n {
+                0 => "g",
+                n if n == all => "r",
+                _ => "a",
+            };
             h += &format!("<h2>Accounts</h2><p class=kv>accounts <b class={t}>{n} of {all} capped</b></p>");
             for name in c.accounts.names.keys() {
                 let cap = crate::access::cap_line(c, self.r, events, name, ctx.now);
