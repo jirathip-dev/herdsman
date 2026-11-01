@@ -59,4 +59,4 @@ startable work, no open ask), `ask-waiting` (an ask open >30 min) and `alerts-of
 orch >5 min: its pane gets the exact next command, once per issue, head and state), then `orch-stuck` 10 min later; `herdsman merge` emits
 `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain line, or raw event JSON with `format = "json"`. A fleet's own `[[fleet.<name>.notify]]` (same fields)
 replaces the global `[[notify]]` for its events; `notify_global = true` in `[fleet.<name>]` sends to both.
-Owner-only: `herdsman pause|resume <fleet>` (PAUSED), `herdsman drive` (cron) and `herdsman serve`, the phone page (its writes log `"via":"web"`).
+Owner-only: `herdsman pause|resume <fleet>` (PAUSED), `herdsman drive` (cron), `herdsman doctor` (host check) and `herdsman serve`, the phone page (its writes log `"via":"web"`).
