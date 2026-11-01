@@ -29,7 +29,8 @@ and `herdsman wait` (cached) — not `gh issue view` / `gh pr checks` / `gh run`
    recorded FAIL findings. Then review the new head (step 4).
    A PR that conflicts with (or is behind) the integration branch after a PASS or a pushed fix:
    `herdsman spawn <fleet> <issue> impl --supersede --update` — the lane merges `origin/<integration>`,
-   resolves, re-runs the gates and pushes; it counts as a fix round. Then review the new head (step 4).
+   resolves, re-runs the gates and pushes; a PASSed update round counts toward `update_rounds`, not
+   `review_rounds` (a FAIL counts as a normal round); status shows `review(3)+u1`. Then review the new head (step 4).
 7. PASS: `herdsman merge <fleet> <issue>`. It checks exact-head PASS, green CI, round limit,
    merges to the integration branch, writes the one closing comment and closes the issue.
 8. `herdsman check` raises stall / lane-dead / ready-unmerged; act on each. `herdsman merge`

@@ -214,6 +214,9 @@ pub struct IssueState {
     /// The latest lane's reasoning effort, as spawned.
     pub effort: Option<String>,
     pub rounds: u32,
+    /// #123: passed `--update` rounds, apart from `rounds`; `updating` while one is open (state `fix(n)+uk`).
+    pub updates: u32,
+    pub updating: bool,
     pub last_ts: u64,
     pub last_event: String,
     /// Latest agent per role (impl, rev).
@@ -311,24 +314,34 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
                 if let (Some(r), Some(a)) = (e.str("role"), e.str("agent")) {
                     s.lanes.insert(r.into(), a.into());
                 }
-                if e.str("role") == Some("rev") {
-                    s.state = format!("review({})", s.rounds + 1);
-                } else {
+                let rev = e.str("role") == Some("rev");
+                if !rev {
                     s.branch = e.str("branch").map(String::from).or(s.branch.take());
-                    s.state = if s.rounds == 0 {
-                        "impl".into()
-                    } else {
-                        format!("fix({})", s.rounds)
-                    };
+                    s.updating = e.data.get("update") == Some(&Value::Bool(true));
                 }
+                let u = if s.updating {
+                    format!("+u{}", s.updates + 1)
+                } else {
+                    String::new()
+                };
+                s.state = match (rev, s.rounds) {
+                    (true, n) => format!("review({}){u}", n + u32::from(!s.updating)),
+                    (false, 0) => "impl".into(),
+                    (false, n) => format!("fix({n}){u}"),
+                };
             }
             "verdict" => {
                 let sha = e.str("sha").unwrap_or_default();
-                // A round is a distinct reviewed sha; re-recording one does not burn another.
-                if !s.reviewed(sha) {
-                    s.rounds += 1;
-                }
                 let v = e.str("verdict").unwrap_or_default().to_string();
+                // A round is a distinct reviewed sha; re-recording one does not burn another.
+                // #123: a PASSed update round is an update; a FAILed merge-only check is a normal round.
+                let new = u32::from(!s.reviewed(sha));
+                *if s.updating && v == "PASS" {
+                    &mut s.updates
+                } else {
+                    &mut s.rounds
+                } += new;
+                s.updating = false;
                 s.verdicts.push((sha.into(), v.clone()));
                 s.state = if v == "PASS" {
                     "ready".into()

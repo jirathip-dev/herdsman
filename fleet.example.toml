@@ -102,6 +102,7 @@ C = "CLAUDE_CODE_OAUTH_TOKEN_C"
 
 [limits]
 review_rounds = 3
+update_rounds = 3   # `spawn --update` (conflict/behind) rounds, counted apart from review_rounds
 stall_minutes = 30   # herdsman check: stall / ready-unmerged threshold
 ask_default_minutes = 30  # herdsman check: a routine ask unanswered this long takes its recommended option
 load_per_cpu = 2.5   # herdsman spawn HOST_BUSY thresholds

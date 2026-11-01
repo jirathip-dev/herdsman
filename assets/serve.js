@@ -409,6 +409,12 @@ ta.oninput = () => {
 ta.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && matches().length) { e.preventDefault(); pick(matches()[0]); } };
 cmds.onclick = e => { const li = e.target.closest('li'); if (li) pick(li.textContent); };
 // Delegated: rows and needs-you cards are swapped in place. A menu option POSTs `/answer`.
+// #127: a prompt's command expands on tap; `auto-denies in m:ss` counts down from the pane read.
+document.addEventListener('click', e => { const c = e.target.closest('.ask .command'); if (c) c.classList.toggle('open'); });
+setInterval(() => $$('.ask .cd').forEach(c => {
+  const s = Math.max(0, c.dataset.until - Math.floor(Date.now() / 1000));
+  c.textContent = `auto-denies in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}), 1000);
 document.addEventListener('click', async e => {
   const b = e.target.closest('.lane .lr, .ask .pick, .ask .rp');
   if (!b) return;

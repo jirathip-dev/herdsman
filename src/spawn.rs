@@ -469,13 +469,16 @@ pub fn spawn(
     if let Some(n) = issue {
         lane_admit(f, &events, fleet, n, role)?;
     }
-    let rounds = issue
+    let updates = issue
         .and_then(|n| fold(&events).remove(&(fleet.into(), n)))
-        .map_or(0, |s| s.rounds);
-    if o.update && rounds >= cfg.limits.review_rounds {
-        let why = format!("PR still conflicts after round {rounds}/{}", cfg.limits.review_rounds);
-        event("needs-human", json!({"code": "ROUND_LIMIT", "reason": why}))?;
-        return refused("ROUND_LIMIT", why);
+        .map_or(0, |s| s.updates);
+    if o.update && updates >= cfg.limits.update_rounds {
+        let why = format!(
+            "PR still conflicts after {updates}/{} update rounds",
+            cfg.limits.update_rounds
+        );
+        event("needs-human", json!({"code": "UPDATE_LIMIT", "reason": why}))?;
+        return refused("UPDATE_LIMIT", why);
     }
 
     // Host-load gate, before anything is created.
@@ -591,6 +594,7 @@ pub fn spawn(
     let mut d = lane_data(&p, &pane, ws);
     d["confirmed"] = json!(kicked.as_ref().is_ok_and(|c| *c));
     d["error"] = json!(kicked.as_ref().err().map(|e| format!("{e:#}")));
+    d["update"] = json!(o.update);
     if let Some(h) = sha.filter(|h| !h.is_empty()) {
         d["sha"] = json!(h);
     }

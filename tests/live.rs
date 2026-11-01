@@ -3,7 +3,7 @@
 mod common;
 use common::*;
 use herdsman::events::{append, read, Event};
-use herdsman::lanes::pending;
+use herdsman::lanes::{pending, prompt};
 use herdsman::serve::Server;
 use serde_json::json;
 use std::io::{Read, Write};
@@ -161,6 +161,72 @@ fn prompt_parser_fixtures() {
         Some(("Which?".into(), vec![])),
         "out of order: no menu, never a guess"
     );
+}
+
+/// #127: the real screen (paths masked) of a prompt Claude auto-denies after 15 s.
+const COUNTDOWN: &str = include_str!("golden/screens/claude-permission-countdown.txt");
+
+#[test]
+fn prompt_card_golden_from_the_auto_deny_screen() {
+    assert_eq!(
+        prompt(COUNTDOWN).unwrap(),
+        json!({
+            "title": "Bash command",
+            "reason": "Dangerous rm operation on possibly-empty variable path: $S/*.png in `rm -f $S/*.png` (rewrite it as \"${S:?}\"/*.png or use a literal path)",
+            "command": "cp /Users/me/qg.bak tests/queue_graph.rs && cargo fmt && S=/Users/me/snaps; rm -f $S/*.png; HERDSMAN_SNAPSHOTS=$S cargo test --test queue_graph",
+            "countdown": 14,
+            "question": "Do you want to proceed?",
+            "options": ["Yes", "No"],
+            "push": false
+        })
+    );
+    // No countdown: it waits for the owner, so it pushes; a countdown that ran out pushes too.
+    let c = prompt(PERMISSION).unwrap();
+    assert_eq!(
+        (c["title"].as_str(), c["countdown"].as_u64(), c["push"].as_bool()),
+        (Some("Bash command"), None, Some(true))
+    );
+    assert_eq!(c["command"], "cargo test --all");
+    assert_eq!(prompt(&COUNTDOWN.replace("in 0:14", "in 0:00")).unwrap()["push"], true);
+    assert_eq!(
+        prompt("Should I also update the README?\n> "),
+        None,
+        "no menu, no card JSON"
+    );
+}
+
+#[test]
+fn countdown_card_shows_reason_command_and_clears_when_the_prompt_goes() {
+    let (c, r) = blocked("countdown", &[COUNTDOWN, COUNTDOWN]);
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    let ck = cookie(&s, &c);
+    let page = req(&s, "GET", "/", "", &ck);
+    let needs = &page[page.find("<div id=needs>").unwrap()..page.find("<main>").unwrap()];
+    for want in [
+        "data-push=0",
+        "<p class=title>Bash command</p>",
+        "<p class=reason>Dangerous rm operation on possibly-empty variable path",
+        "<p class=command>cp /Users/me/qg.bak",
+        &format!("<p class=cd data-until={}>auto-denies in 0:14</p>", T + 14),
+        "class=pick value=2",
+    ] {
+        assert!(needs.contains(want), "{want}: {needs}");
+    }
+    assert!(!needs.contains("data-push=1"), "{needs}");
+    // Auto-denied: the next read shows Claude working again, so the card goes.
+    let working = "⏺ Bash(cargo test)\n  ⎿ Error: denied\n\n✶ Pontificating… (12m 0s · ↓ 3.1k tokens)\n";
+    let r2 = Fake::default()
+        .reply(
+            "herdr agent list",
+            &agents(&[("sendmeter-impl-12", "blocked", "/x", "w1:p2")]),
+        )
+        .reply("herdr workspace list", "{}")
+        .reply("herdr pane read", working);
+    let s2 = Server::new(&c, &r2, Some(ADDR.into()));
+    let page = String::from_utf8_lossy(&s2.respond(&format!("GET / HTTP/1.1\r\nHost: {ADDR}\r\n{ck}\r\n"), T + 5))
+        .into_owned();
+    let needs = &page[page.find("<div id=needs>").unwrap()..page.find("<main>").unwrap()];
+    assert!(!needs.contains("sendmeter-impl-12"), "no stale card: {needs}");
 }
 
 /// sendmeter-impl-12 (claude) blocked on a permission prompt; sendmeter-rev-9-r1 too.
@@ -387,7 +453,10 @@ fn answer_refuses_reviewer_menus_and_unparsed_panes() {
 fn unparsed_blocked_pane_shows_masked_tail_and_reply() {
     let (c, r) = blocked(
         "tail",
-        &["l1\nl2\nl3\nl4\nl5\nl6\nl7 token=ghp_abcdefghijklmnopqrstuvwxyz0123456789\nl8"],
+        &[concat!(
+            "l1\nl2\nl3\nl4\nl5\nl6\nl7 token=gh",
+            "p_abcdefghijklmnopqrstuvwxyz0123456789\nl8"
+        )],
     );
     let s = Server::new(&c, &r, Some(ADDR.into()));
     let ck = cookie(&s, &c);
@@ -398,7 +467,7 @@ fn unparsed_blocked_pane_shows_masked_tail_and_reply() {
         "{needs}"
     );
     assert!(
-        !needs.contains("ghp_abcdefghijklmnopqrstuvwxyz0123456789"),
+        !needs.contains(concat!("gh", "p_abcdefghijklmnopqrstuvwxyz0123456789")),
         "masked: {needs}"
     );
 }
@@ -413,7 +482,7 @@ fn live_board_fits_390px() {
         eprintln!("skipping: no swift/WebKit here");
         return;
     }
-    let (c, r) = blocked("live-shots", &[]);
+    let (c, r) = blocked("live-shots", &[COUNTDOWN]);
     let s = Server::new(&c, &r, Some(ADDR.into()));
     let ck = cookie(&s, &c);
     let page = req(&s, "GET", "/", "", &ck);
@@ -428,6 +497,7 @@ fn live_board_fits_390px() {
         ("sync-red", "queue", "last = Date.now() - 600000; sync('r')".into()),
         ("pull", "queue", "sync('g'); M.style.transform = 'translateY(60px)'; ptr.hidden = false; ptr.style.transform = 'rotate(240deg)'".into()),
         ("needs-you-menu", "queue", "sync('g')".into()),
+        ("needs-you-countdown", "queue", "sync('g')".into()),
         ("answer-sent", "queue", format!("sync('g'); {stub}; document.querySelector('.ask .pick[value=\"1\"]').click()")),
         ("sheet-blocked", "lanes", "sync('g'); open(document.querySelector('.lane[data-agent=\"sendmeter-impl-12\"]'))".into()),
     ];
