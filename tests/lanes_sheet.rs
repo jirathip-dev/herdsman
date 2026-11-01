@@ -145,6 +145,42 @@ fn sheet_transcript_is_the_masked_pane_tail() {
     assert!(req(&s, "GET", "/lane?agent=nobody", "", &cookie, T).starts_with("HTTP/1.1 404 "));
 }
 
+/// #95: an Others agent's sheet JSON offers only `close` (and its pane); `/act op=close` closes that pane.
+#[test]
+fn others_sheet_offers_only_close_pane() {
+    let (c, r) = fixture("others");
+    let r = r.reply("herdr pane close", "");
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    let cookie = paired(&s, &c);
+    let sheet = |agent: &str| {
+        let res = req(&s, "GET", &format!("/lane?agent={agent}"), "", &cookie, T);
+        serde_json::from_str::<serde_json::Value>(&res[res.find("\r\n\r\n").unwrap() + 4..]).unwrap()
+    };
+    let (other, lane) = (sheet("side-project"), sheet("sendmeter-impl-12"));
+    assert_eq!((&other["acts"], &other["pane"]), (&json!(["close"]), &json!("w4:p1")));
+    assert_eq!(
+        (&lane["acts"], &lane["pane"]),
+        (&json!(["stop", "kill", "clean"]), &json!(null))
+    );
+    let res = req(&s, "POST", "/act", "agent=w4:p1&op=close&confirm=1", &cookie, T);
+    assert!(
+        res.starts_with("HTTP/1.1 200 OK") && r.called("herdr pane close w4:p1"),
+        "{res}"
+    );
+    let res = req(
+        &s,
+        "POST",
+        "/act",
+        "agent=sendmeter-impl-12&op=close&confirm=1",
+        &cookie,
+        T,
+    );
+    assert!(
+        res.contains("REFUSED IS_LANE") && !r.called("herdr pane close w1:p2"),
+        "{res}"
+    );
+}
+
 /// Pair at `T` as an iPhone (Pair, `serve approve`, claim) and return the `Cookie:` header line.
 fn paired(s: &Server, c: &herdsman::Ctx) -> String {
     let cookie = pair(s, c, "Mozilla/5.0 (iPhone) Safari/604.1", T);

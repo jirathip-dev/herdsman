@@ -295,6 +295,33 @@ fn stop_sends_escape() {
 }
 
 #[test]
+fn close_shuts_an_others_pane_and_refuses_lanes() {
+    let (c, _) = lane("close");
+    let list = agents(&[(LANE, "idle", "/x", "w1:p2"), ("dsh-tui-test", "idle", "/tmp", "w9:p1")]);
+    let r = Fake::default()
+        .reply("herdr agent list", &list)
+        .reply("herdr pane close", "");
+    let (code, out) = run(&c, &r, &["close", "dsh-tui-test"]);
+    assert_eq!(
+        (code, out.as_str()),
+        (0, "closed dsh-tui-test's pane; its worktree and files stay\n")
+    );
+    assert!(r.called("herdr pane close w9:p1") && !r.called("git"));
+    let e = read(&c.state).unwrap().pop().unwrap();
+    assert_eq!(
+        (e.kind.as_str(), e.str("agent")),
+        ("closed-other", Some("dsh-tui-test"))
+    );
+    // A lane, by name or by its pane id: IS_LANE, nothing closes.
+    for who in [LANE, "w1:p2"] {
+        let (code, out) = run(&c, &r, &["close", who]);
+        assert!(code == 3 && out.starts_with("REFUSED IS_LANE"), "{out}");
+    }
+    assert!(!r.called("herdr pane close w1:p2"));
+    assert_eq!(kinds(&c, "closed-other"), 1);
+}
+
+#[test]
 fn clean_lane_refuses_unsafe_lanes() {
     let (c, wt) = lane("clean-lane");
     let r = git(&wt, "", "0\n", "").reply("herdr agent list", NO_AGENTS);
