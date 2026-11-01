@@ -1405,7 +1405,7 @@ impl<'a> Server<'a> {
                 "round {}",
                 s.state
                     .split_once('(')
-                    .map_or(s.rounds.to_string(), |r| r.1.trim_end_matches(')').into())
+                    .map_or(s.rounds.to_string(), |r| r.1.replace(')', ""))
             )
         });
         let o = |v: &Option<String>| v.clone().unwrap_or_default();

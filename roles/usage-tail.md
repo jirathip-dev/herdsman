@@ -15,7 +15,7 @@ queued → impl → review(n) → fix(n) → ready → merged; plus blocked, nee
 - NO_VERDICT: no review verdict recorded
 - STALE_VERDICT: verdicts exist, but none for the PR's current head sha
 - VERDICT_FAIL: latest verdict for the head sha is FAIL
-- ROUND_LIMIT: review rounds exceed [limits].review_rounds (→ needs-human)
+- ROUND_LIMIT: review rounds exceed [limits].review_rounds (→ needs-human). UPDATE_LIMIT: spawn --update after [limits].update_rounds (default 3) PASSed update rounds (→ needs-human)
 - CI_NOT_GREEN: a check at the head sha is missing, pending or failed
 - BAD_SHA: verdict --sha is not 40 hex chars
 - STALE_SHA: verdict --sha is not the branch head
