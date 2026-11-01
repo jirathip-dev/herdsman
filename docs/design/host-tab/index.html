@@ -1,0 +1,159 @@
+<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Host tab mockup</title>
+<!-- #141 design mockup: the Host tab as 4 status-ranked groups with text gauges and plain-language results, and the
+     bracket tab bar. serve.css is the board's, unchanged; the rules below use its tokens only and move to serve.css in
+     phase 2. Static: groups and rows open natively (<details>), no script. -->
+<link rel=stylesheet href=../../../assets/serve.css>
+<style>
+/* Mockup only: three fixtures stacked, each with its tab bar drawn in the flow under it (the board's is fixed). */
+body{padding:0 var(--s3) var(--s4)}
+.fx{margin:var(--s4) 0 var(--s2);padding:var(--s1) var(--s2);border:1px dashed #30363d;border-radius:6px;color:var(--mute);font-size:var(--fs-meta)}
+.fx b{color:var(--fg)}
+.fixture nav{position:static;margin:var(--s3) calc(-1 * var(--s3)) 0}
+@media (min-width:900px){.wrap{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s4)}.fixture section{min-height:560px}}
+
+/* ---- proposed for serve.css (#141) ---- */
+/* Green as --g's hex (.pairp.g): `@property --g` (the gait angle) voids the colour token until #138 renames it --gait. */
+:root{--ok:#3fb950}
+/* Q1: a group is a <details>; its header is the whole width, 44 px, with one status dot, the name in caps, a one-line
+   summary (hidden while open) and the chevron. A problem group's header takes its colour on a 12 % tint. */
+.grp{border-bottom:1px solid var(--line)}
+.grp>summary{display:flex;align-items:center;gap:var(--s2);min-height:var(--hit);margin:0 calc(-1 * var(--s2));padding:0 var(--s2);white-space:nowrap}
+.grp>summary .dt{flex:none;width:8px;height:8px;border-radius:50%;background:currentColor;color:var(--ok)}
+.grp>summary .gn{flex:none;font-weight:700;letter-spacing:.08em}
+.grp>summary .gs{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--mute);font-size:var(--fs-meta)}
+.grp[open]>summary .gs{visibility:hidden}
+.grp>summary .cv,.rw>summary .cv{flex:none;margin-left:auto;font-style:normal;color:var(--mute)}
+.grp>summary .cv::before,.rw>summary .cv::before{content:"▸"}.grp[open]>summary .cv::before,.rw[open]>summary .cv::before{content:"▾"}
+.grp[data-t=a]>summary{color:var(--a);background:color-mix(in srgb,var(--a) 12%,transparent)}
+.grp[data-t=r]>summary{color:var(--r);background:color-mix(in srgb,var(--r) 12%,transparent)}
+.grp:is([data-t=a],[data-t=r])>summary :is(.dt,.gs){color:inherit}
+.grp[open]{padding-bottom:var(--s2)}
+/* A row: label (9ch) · gauge (14ch) · value; a row without a gauge spans the last two. Meta and fix lines sit under
+   the value column. Status words take a colour; the rest stays default text. */
+.gr{display:grid;grid-template-columns:9ch 14ch minmax(0,1fr);gap:0 1ch;align-items:baseline;margin:0;padding:var(--s1) 0}
+.gr>.k,.rw>summary>.k{color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gr>.w,.gr>.mt{grid-column:2/-1}
+.mt{font-size:var(--fs-meta);color:var(--mute)}
+.grp .ok{color:var(--ok)}
+/* Q2: the gauge, box-drawing text in the mono font: ▕ + 12 cells + ▏. Filled █ = value ÷ limit (disk: floor ÷ free),
+   rounded to whole cells, full past the limit. Green under 80 %, amber 80–100 %, red over; empty ░ cells muted. */
+.bar{white-space:pre;color:var(--ok)}.bar.a{color:var(--a)}.bar.r{color:var(--r)}
+.bar i{font-style:normal;color:#30363d}
+/* The fix: what clears a problem, in words, then its command in the accent. */
+.grp code{color:var(--l);background:color-mix(in srgb,var(--l) 12%,transparent);border-radius:3px;padding:0 .3ch;font:inherit}
+/* Q4: a row with a raw line (a fleet's last drive result, the spawn gate) is a <details>: the plain words wrap (at most
+   3 lines), the age and chevron right; a tap shows the raw line under it, 11 px, wrapping. 44 px tall at least. */
+.rw{border:0}
+.rw>summary{display:grid;grid-template-columns:9ch minmax(0,1fr) auto;gap:0 1ch;align-items:baseline;align-content:center;min-height:var(--hit);padding:var(--s1) 0;white-space:normal}
+.rw>summary>.x{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.rw>summary>.t{font-size:var(--fs-meta);color:var(--mute);white-space:nowrap}
+.rw>summary>.t .cv{margin-left:.5ch}
+.rw>pre{margin:0 0 var(--s2) calc(10ch * 13 / 11);padding:var(--s1) var(--s2);border-radius:4px;background:#161b22;color:var(--mute);font:inherit;font-size:var(--fs-meta);white-space:pre-wrap;overflow-wrap:anywhere}
+.rw>.sub{margin:0 0 var(--s2) 10ch}.rw>.sub>p{margin:0;padding:var(--s1) 0}
+.grp form.role{display:flex;align-items:center;justify-content:space-between;padding:var(--s2) 0;border-top:0}
+/* Q3: the tab bar. Bracket labels like every control; inactive muted; the active tab a pressed key: accent fill, dark
+   text, and a 2 px accent bar along the top of its whole cell. A tab whose items need you shows ·N in red (dark on the
+   accent fill when it is the active tab). The whole cell is the tap target (52 px). */
+nav a{display:flex;align-items:center;justify-content:center;min-height:calc(var(--hit) + var(--s2));line-height:1}
+nav a>span{display:inline-flex;align-items:center;height:var(--ctl);padding:0 .5ch;white-space:nowrap}
+nav a>span::before{content:"["}nav a>span::after{content:"]"}
+nav a .n{color:var(--r);font-weight:700}
+nav a.on{color:var(--bg);box-shadow:inset 0 2px var(--l)}
+nav a.on>span{background:var(--l);color:var(--bg)}
+nav a.on .n{color:inherit}
+</style></head>
+<body>
+<div class=wrap>
+
+<!-- ================= busy: the owner's screenshot (staging, 2026-11-01) ================= -->
+<div class=fixture>
+<p class=fx><b>busy</b> · the owner's screenshot: load/cpu 4.24, HOST_BUSY, herdr 0.9.5/0.9.0, exit 4 #138, SERIAL_BUSY. MACHINE red floats first; problem groups open; ALERTS healthy, one line.</p>
+<section id=host>
+
+<details class=grp data-t=r open><summary><i class=dt></i><span class=gn>MACHINE</span><span class=gs>spawns held · load 4.24 / 2.5</span><i class=cv></i></summary>
+<p class=gr><span class=k>load/cpu</span><span class="bar r">▕████████████▏</span><span><b class=r>4.24</b> / 2.5</span></p>
+<p class=gr><span class=k>memory</span><span class=w><b class=ok>normal</b> <span class=mt>pressure</span></span></p>
+<p class=gr><span class=k>swap-out</span><span class=bar>▕<i>░░░░░░░░░░░░</i>▏</span><span>0 / 2000 <span class=mt>pages/2s</span></span></p>
+<p class=gr><span class=k>disk</span><span class=bar>▕███<i>░░░░░░░░░</i>▏</span><span>42 GB free</span><span class=mt>floor 10 GB · worktrees 12.2 GB</span></p>
+<details class=rw open><summary><span class=k>spawns</span><span class=x><b class=r>held</b> · no new lanes until load/cpu is under 2.5</span><span class=t><i class=cv></i></span></summary>
+<pre>spawn gate HOST_BUSY: load/cpu 4.24 &gt; 2.5</pre></details>
+</details>
+
+<details class=grp data-t=a open><summary><i class=dt></i><span class=gn>SERVICES</span><span class=gs>herdr needs a restart</span><i class=cv></i></summary>
+<p class=gr><span class=k>board</span><span class=w><b class=ok>up 59m</b> · v0.1.0</span></p>
+<p class=gr><span class=k>tick</span><span class=w><b class=ok>ran 0s ago</b></span></p>
+<p class=gr><span class=k>herdr</span><span class=w><b class=a>update half done</b> · client 0.9.5, server 0.9.0</span><span class="mt fix">→ restart herdr to finish the update: <code>herdr update --handoff</code></span></p>
+<details class=rw><summary><span class=k>accounts</span><span class=x><b class=ok>0 of 3 capped</b></span><span class=t><i class=cv></i></span></summary>
+<div class=sub><p>A · <b class=ok>ok</b> <span class=mt>5h 0.0 · 7d 0.0 lane-hours</span></p><p>B · <b class=ok>ok</b> <span class=mt>5h 0.0 · 7d 0.0 lane-hours</span></p><p>C · <b class=ok>ok</b> <span class=mt>5h 37.7 · 7d 558.4 lane-hours</span></p></div></details>
+</details>
+
+<details class=grp data-t=a open><summary><i class=dt></i><span class=gn>FLEETS</span><span class=gs>synergy waiting on 3 merges</span><i class=cv></i></summary>
+<details class=rw open><summary><span class=k>synergy</span><span class=x><b class=a>waiting</b> — 3 database slots full (#2755, #2782, #2891 must merge first)</span><span class=t>8m<i class=cv></i></span></summary>
+<pre>REFUSED SERIAL_BUSY: serial #2755 is unmerged (impl), #2782 is unmerged (impl), #2891 is unmerged (impl); retry after it merges</pre></details>
+<details class=rw><summary><span class=k>herdsman</span><span class=x><b class=ok>started</b> #138 (impl) · prompt not confirmed yet</span><span class=t>8m<i class=cv></i></span></summary>
+<pre>exit 4: "herdsman-impl-138" ["claude" "fleet-impl"] @ "~/.herdr/worktrees/herdsman/issue-138"</pre></details>
+<details class=rw><summary><span class=k>sendmeter</span><span class=x><b class=m>paused</b> · <code>herdsman resume sendmeter</code> starts it again</span><span class=t><i class=cv></i></span></summary>
+<pre>drive sendmeter: paused</pre></details>
+</details>
+
+<details class=grp data-t=g><summary><i class=dt></i><span class=gn>ALERTS</span><span class=gs>on · 1 device · sent 11m ago</span><i class=cv></i></summary></details>
+
+</section>
+<nav><a href=#queue><span>queue<b class=n>·2</b></span></a><a href=#lanes><span>lanes</span></a><a href=#host class=on><span>host</span></a><a href=#events><span>events</span></a></nav>
+</div>
+
+<!-- ================= now: the live board, 2026-11-01 ~19:15 ================= -->
+<div class=fixture>
+<p class=fx><b>now</b> · the live board at 19:15: load/cpu 1.84 (green), herdr still 0.9.5/0.9.0, synergy SERIAL_BUSY. SERVICES and FLEETS float above MACHINE; MACHINE opened by a tap (kept per session).</p>
+<section id=host>
+
+<details class=grp data-t=a open><summary><i class=dt></i><span class=gn>SERVICES</span><span class=gs>herdr needs a restart</span><i class=cv></i></summary>
+<p class=gr><span class=k>board</span><span class=w><b class=ok>up 65m</b> · v0.1.0</span></p>
+<p class=gr><span class=k>tick</span><span class=w><b class=ok>ran 0s ago</b></span></p>
+<p class=gr><span class=k>herdr</span><span class=w><b class=a>update half done</b> · client 0.9.5, server 0.9.0</span><span class="mt fix">→ restart herdr to finish the update: <code>herdr update --handoff</code></span></p>
+<details class=rw><summary><span class=k>accounts</span><span class=x><b class=ok>0 of 3 capped</b></span><span class=t><i class=cv></i></span></summary></details>
+</details>
+
+<details class=grp data-t=a open><summary><i class=dt></i><span class=gn>FLEETS</span><span class=gs>synergy waiting on 3 merges</span><i class=cv></i></summary>
+<details class=rw><summary><span class=k>synergy</span><span class=x><b class=a>waiting</b> — 3 database slots full (#2755, #2782, #2891 must merge first)</span><span class=t>8m<i class=cv></i></span></summary>
+<pre>REFUSED SERIAL_BUSY: serial #2755 is unmerged (impl), #2782 is unmerged (impl), #2891 is unmerged (impl); retry after it merges</pre></details>
+<details class=rw><summary><span class=k>herdsman</span><span class=x><b class=ok>started</b> review #129 (round 2)</span><span class=t>8m<i class=cv></i></span></summary>
+<pre>"herdsman-rev-129-r2" ["claude" "fleet-rev"] "rev-129-r2" @ "~/.herdr/worktrees/herdsman/rev-129-r2"</pre></details>
+<details class=rw><summary><span class=k>sendmeter</span><span class=x><b class=m>paused</b> · <code>herdsman resume sendmeter</code> starts it again</span><span class=t><i class=cv></i></span></summary></details>
+</details>
+
+<details class=grp data-t=g open><summary><i class=dt></i><span class=gn>MACHINE</span><span class=gs>load 1.84 / 2.5 · 42 GB free</span><i class=cv></i></summary>
+<p class=gr><span class=k>load/cpu</span><span class=bar>▕█████████<i>░░░</i>▏</span><span>1.84 / 2.5</span></p>
+<p class=gr><span class=k>memory</span><span class=w><b class=ok>normal</b> <span class=mt>pressure</span></span></p>
+<p class=gr><span class=k>swap-out</span><span class=bar>▕<i>░░░░░░░░░░░░</i>▏</span><span>0 / 2000 <span class=mt>pages/2s</span></span></p>
+<p class=gr><span class=k>disk</span><span class=bar>▕███<i>░░░░░░░░░</i>▏</span><span>42 GB free</span><span class=mt>floor 10 GB · worktrees 12.4 GB</span></p>
+<p class=gr><span class=k>spawns</span><span class=w><b class=ok>admitted</b></span></p>
+</details>
+
+<details class=grp data-t=g><summary><i class=dt></i><span class=gn>ALERTS</span><span class=gs>on · 1 device · sent 18m ago</span><i class=cv></i></summary>
+<p class=gr><span class=k>push</span><span class=w><b class=ok>on</b> · 1 device · last sent 18m ago</span></p>
+<form class=role><span>iPhone Safari <span class=mt>alerts on 8h ago</span></span><button type=button><span>remove</span></button></form>
+<form class=role><span>iPhone Safari 99cc <span class=mt>paired 5h ago · used 90s ago</span></span><button type=button><span>unpair</span></button></form>
+</details>
+
+</section>
+<nav><a href=#queue><span>queue<b class=n>·1</b></span></a><a href=#lanes><span>lanes</span></a><a href=#host class=on><span>host</span></a><a href=#events><span>events</span></a></nav>
+</div>
+
+<!-- ================= healthy ================= -->
+<div class=fixture>
+<p class=fx><b>healthy</b> · the live values with herdr restarted (server 0.9.5) and synergy's slots clear: every group one line, green dot. The tab bar below it: [queue] active with its count.</p>
+<section id=host>
+<details class=grp data-t=g><summary><i class=dt></i><span class=gn>MACHINE</span><span class=gs>load 1.84 / 2.5 · 42 GB free</span><i class=cv></i></summary></details>
+<details class=grp data-t=g><summary><i class=dt></i><span class=gn>SERVICES</span><span class=gs>board up 65m · tick 0s · herdr 0.9.5</span><i class=cv></i></summary></details>
+<details class=grp data-t=g><summary><i class=dt></i><span class=gn>FLEETS</span><span class=gs>2 driving · sendmeter paused</span><i class=cv></i></summary></details>
+<details class=grp data-t=g><summary><i class=dt></i><span class=gn>ALERTS</span><span class=gs>on · 1 device · sent 18m ago</span><i class=cv></i></summary></details>
+</section>
+<nav><a href=#queue><span>queue</span></a><a href=#lanes><span>lanes</span></a><a href=#host class=on><span>host</span></a><a href=#events><span>events</span></a></nav>
+<nav><a href=#queue class=on><span>queue<b class=n>·2</b></span></a><a href=#lanes><span>lanes</span></a><a href=#host><span>host</span></a><a href=#events><span>events</span></a></nav>
+</div>
+
+</div>
+</body></html>
