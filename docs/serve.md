@@ -188,6 +188,15 @@ prunes that device; any other failure logs one `notify-failed` (no retry). Tappi
 opens the page on its tab with the issue's row open. `herdsman push test` sends a test alert to
 every subscribed device.
 
+The subscribe tells the truth (#87): with a webpush notifier it pushes one "alerts are on" test to
+that device alone and answers `alerts on` (or why the test push failed); without one it still keeps
+the subscription but answers, under the button, "alerts are saved but off: add `[[notify]] type =
+"webpush"` to fleet.toml (docs/serve.md)". The Host tab's Alerts row reads `on · 1 device · last
+sent 3m ago`, `off: no webpush notifier`, or `on · last failure: <reason>` while a webpush
+`notify-failed` is newer than the last delivery. Each delivery logs one passive `push-sent` with the
+device count only (no endpoint, no key). `herdsman check` logs one `alerts-off` (again only when the
+device count changes) while `subs.json` has devices but fleet.toml has no webpush notifier.
+
 Secrets: the VAPID key (`<state>/webpush/vapid.key`) and the subscriptions
 (`<state>/webpush/subs.json`, endpoint, keys, device label, creation time) are 0600 and never
 logged, printed or served; the page gets only the public key and each device's label.

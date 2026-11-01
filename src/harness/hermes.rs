@@ -29,9 +29,7 @@ impl Harness for Hermes {
     fn start_cmd(&self, _ctx: &Ctx, p: &Plan, pane: &str) -> Vec<String> {
         // Unattended lanes cannot answer Hermes' first-use hook consent prompt.
         let mut a = argv(&["-p", &p.profile, "--accept-hooks"]);
-        if let Some(e) = &p.effort {
-            a.extend(["--reasoning".into(), e.clone()]);
-        }
+        a.extend(p.effort.iter().flat_map(|e| ["--reasoning".into(), e.clone()]));
         herdr::start_argv(&p.agent, "hermes", pane, a)
     }
 

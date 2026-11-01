@@ -63,9 +63,5 @@ pub fn admit(h: &Host, l: &Limits) -> Result<(), String> {
     if let Some(x) = h.load_per_cpu.filter(|x| *x > l.load_per_cpu) {
         why.push(format!("load/cpu {x:.2} > {}", l.load_per_cpu));
     }
-    if why.is_empty() {
-        Ok(())
-    } else {
-        Err(why.join("; "))
-    }
+    why.is_empty().then_some(()).ok_or_else(|| why.join("; "))
 }

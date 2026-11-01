@@ -108,13 +108,8 @@ pub fn deepseek(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> Option<Result<(Balan
         Some(b) if ctx.now < b.ts + POLL => b,
         _ => {
             let got = curl(r, "https://api.deepseek.com/user/balance", &format!("header = \"Authorization: Bearer {}\"\n", q(&key)));
-            match got.filter(|g| g.0 == 200).and_then(|g| parse_balance(&g.2, ctx.now)) {
-                Some(b) => {
-                    let _ = save(&path, &b);
-                    b
-                }
-                None => cached?,
-            }
+            let fresh = got.filter(|g| g.0 == 200).and_then(|g| parse_balance(&g.2, ctx.now));
+            fresh.inspect(|b| { let _ = save(&path, b); }).or(cached)?
         }
     };
     let low = b.total < p.warn_below;
@@ -254,11 +249,7 @@ fn refresh(r: &dyn Runner, creds: &mut Value, (svc, acct): (&str, &str), now: u6
     let hex: String = creds.to_string().bytes().map(|b| format!("{b:02x}")).collect();
     let stored = r.run_in("security", &argv(&["-i"]), &format!("add-generic-password -U -a \"{acct}\" -s \"{svc}\" -X \"{hex}\"\n"));
     let back = stored.is_ok_and(|o| o.code == 0).then(|| keychain_read(r, svc, acct)).flatten();
-    if back.is_some_and(|b| b["claudeAiOauth"]["accessToken"] == json!(token)) {
-        Ok(token)
-    } else {
-        Err(Poll::Lost)
-    }
+    back.filter(|b| b["claudeAiOauth"]["accessToken"] == json!(token)).map(|_| token).ok_or(Poll::Lost)
 }
 
 /// `five_hour` and `seven_day` of `/api/oauth/usage`: (utilization %, reset epoch).

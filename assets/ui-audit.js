@@ -89,7 +89,8 @@
       tab('host');
       const push = Object.assign(document.createElement('button'), { id: 'push', type: 'button', textContent: 'Enable alerts' });
       push.dataset.key = 'AA';
-      $('#host').append(Object.assign(document.createElement('h2'), { textContent: 'Alerts' }), push);
+      const row = Object.assign(document.createElement('p'), { className: 'kv', textContent: 'on · 1 device · last sent 3m ago' }); // #87
+      $('#host').append(Object.assign(document.createElement('h2'), { textContent: 'Alerts' }), row, push);
       tidy($('#host'));
       Object.defineProperty(window, 'Notification', { value: { requestPermission: async () => 'granted' } });
       const sub = { toJSON: () => ({ endpoint: 'e', keys: { p256dh: 'p', auth: 'a' } }) };

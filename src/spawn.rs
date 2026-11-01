@@ -125,10 +125,7 @@ pub fn lane_title(head: &str, issue_title: &str) -> String {
         return format!("{head} · {t}");
     }
     let cut: String = t.chars().take(room.saturating_sub(1)).collect();
-    let cut = match cut.rfind(char::is_whitespace) {
-        Some(i) if i > 0 => &cut[..i],
-        _ => &cut,
-    };
+    let cut = cut.rfind(char::is_whitespace).filter(|&i| i > 0).map_or(&cut[..], |i| &cut[..i]);
     match cut.trim_end() {
         "" => head.to_string(),
         c => format!("{head} · {c}…"),
@@ -332,9 +329,7 @@ pub fn spawn(
         return refused(code, format!("{msg}; `--supersede` replaces it"));
     }
 
-    if let Some(n) = issue {
-        lane_admit(f, &events, fleet, n, role)?;
-    }
+    issue.map(|n| lane_admit(f, &events, fleet, n, role)).transpose()?;
 
     // Host-load gate, before anything is created.
     if let Err(why) = host::admit(&host::sample(r), &cfg.limits) {
@@ -344,10 +339,8 @@ pub fn spawn(
         event("override", json!({"code": "HOST_BUSY", "reason": why, "role": role, "agent": p.agent}))?;
     }
     if o.supersede && !dup.is_empty() {
-        for a in &live {
-            if let Some(pane) = a["pane_id"].as_str() {
-                herdr::close(r, pane)?;
-            }
+        for pane in live.iter().filter_map(|a| a["pane_id"].as_str()) {
+            herdr::close(r, pane)?;
         }
         let why: Vec<&str> = dup.iter().map(|d| d.1.as_str()).collect();
         event("supersede", json!({"role": role, "agent": p.agent, "killed": names, "reason": why.join("; ")}))?;

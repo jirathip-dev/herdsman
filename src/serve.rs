@@ -427,10 +427,13 @@ impl<'a> Server<'a> {
                 None => ("403 Forbidden", "text/plain", text("not approved yet: `herdsman serve approve <code>` on the Mac\n")),
             },
             ("POST", "/push/subscribe" | "/push/unsubscribe") if self.device(ctx, head).is_none() => ("401 Unauthorized", "text/plain", text("pair this device first\n")),
-            ("POST", "/push/subscribe") => match crate::webpush::subscribe(&ctx.state, &form(body.trim()), &kind(head), now) {
-                Ok(()) => ("200 OK", "text/plain", text("alerts on\n")),
-                Err(e) => ("400 Bad Request", "text/plain", format!("{}\n", shown(&e)).into_bytes()),
-            },
+            ("POST", "/push/subscribe") => {
+                let sub = Config::load(&ctx.config).ok().and_then(|c| c.webpush_sub().map(String::from));
+                match crate::webpush::subscribe(&ctx.state, &form(body.trim()), &kind(head), now, sub.as_deref()) {
+                    Ok(msg) => ("200 OK", "text/plain", format!("{msg}\n").into_bytes()),
+                    Err(e) => ("400 Bad Request", "text/plain", format!("{}\n", shown(&e)).into_bytes()),
+                }
+            }
             ("POST", "/push/unsubscribe") => {
                 let id = form(body.trim()).get("id").cloned().unwrap_or_default();
                 let msg = crate::webpush::remove(&ctx.state, &[id]).map_or_else(|e| shown(&e), |n| format!("{n} alert device removed"));
@@ -987,8 +990,19 @@ impl<'a> Server<'a> {
             }
             // #18: the button shows only in the Home Screen app (serve.js); endpoints and keys stay on the Mac.
             let key = crate::webpush::vapid(&ctx.state).map(|k| crate::webpush::public(&k)).unwrap_or_default();
-            h += &format!("<h2>Alerts</h2><button id=push type=button hidden data-key={}>Enable alerts</button>", base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, key));
-            for s in crate::webpush::load(&ctx.state) {
+            // #87: on/off from fleet.toml; the last `push-sent`, unless a webpush `notify-failed` is newer.
+            let (subs, sent) = (crate::webpush::load(&ctx.state), events.iter().rfind(|e| e.kind == "push-sent"));
+            let failed = events.iter().rfind(|e| e.kind == "notify-failed" && e.str("cmd") == Some("webpush"));
+            let when = sent.map_or("never sent".into(), |e| format!("last sent {} ago", ago(ctx.now, e.ts)));
+            let row = match (cfg.and_then(Config::webpush_sub), failed.filter(|f| sent.is_none_or(|e| f.ts > e.ts))) {
+                (None, _) => "off: no webpush notifier".to_string(),
+                (_, Some(f)) => format!("on · last failure: {}", f.str("error").unwrap_or("?")),
+                _ => format!("on · {} device{} · {when}", subs.len(), if subs.len() == 1 { "" } else { "s" }),
+            };
+            let key = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, key);
+            h += &format!("<h2>Alerts</h2><p class=kv>{}</p>", esc(&row));
+            h += &format!("<button id=push type=button hidden data-key={key}>Enable alerts</button>");
+            for s in subs {
                 h += &format!(
                     "<form method=post action=/push/unsubscribe class=role><input type=hidden name=id value={}><span>{} <span class=m>alerts on {} ago</span></span><button>Remove</button></form>",
                     s.id(),

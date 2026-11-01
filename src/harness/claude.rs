@@ -46,12 +46,8 @@ impl Harness for Claude {
             "--append-system-prompt-file".into(),
             dir.join("role.md").to_string_lossy().into(),
         ];
-        if let Some(m) = &p.model {
-            a.extend(["--model".into(), m.clone()]);
-        }
-        if let Some(e) = p.effort.as_deref().filter(|e| *e != "none") {
-            a.extend(["--effort".into(), e.into()]);
-        }
+        a.extend(p.model.iter().flat_map(|m| ["--model".into(), m.clone()]));
+        a.extend(p.effort.iter().filter(|e| e.as_str() != "none").flat_map(|e| ["--effort".into(), e.clone()]));
         // Display name = terminal title on the herdr board (else Claude titles it from the kick).
         a.extend(["--name".into(), p.title.clone()]);
         // `--mcp-config` is variadic: `--strict-mcp-config` ends it before the kick.

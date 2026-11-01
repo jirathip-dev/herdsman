@@ -242,6 +242,12 @@ impl Config {
         }
     }
 
+    /// The first webpush notifier's VAPID `sub`: `None` means the page's alerts are saved but never sent (#87).
+    pub fn webpush_sub(&self) -> Option<&str> {
+        let all = self.notify.iter().chain(self.fleet.values().flat_map(|f| &f.notify));
+        all.filter(|n| n.webpush()).find_map(|n| n.sub.as_deref())
+    }
+
     pub fn fleet(&self, name: &str) -> Result<&Fleet> {
         self.fleet.get(name).ok_or_else(|| anyhow!("unknown fleet '{name}'"))
     }
@@ -300,10 +306,7 @@ pub fn glob(g: &[u8], s: &[u8]) -> bool {
 }
 
 pub fn expand(p: &str) -> PathBuf {
-    match p.strip_prefix("~/") {
-        Some(rest) => home().join(rest),
-        None => PathBuf::from(p),
-    }
+    p.strip_prefix("~/").map_or_else(|| PathBuf::from(p), |rest| home().join(rest))
 }
 
 pub fn home() -> PathBuf {
