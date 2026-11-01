@@ -346,6 +346,9 @@ fn check_prompts_an_idle_orch_after_5_min_then_alerts_after_15() {
     assert_eq!(r.count(&format!("herdr agent prompt {ORCH} {line}")), 1);
     let (_, waiting) = run(&c, &r, &["waiting", "sendmeter"]);
     assert!(waiting.contains("sendmeter #88 orch: waiting for orch to spawn #88 (6m) → herdsman spawn sendmeter 88 impl"), "{waiting}");
+    spawn(&c, NOW, 87, "impl", "sendmeter-impl-87");
+    let (_, status) = run(&c, &r, &["status", "sendmeter"]);
+    assert!(status.contains("#88    queued       sendmeter-orch           6m waiting for orch to spawn #88\n"), "{status}");
     c.now = NOW + 15 * 60;
     assert!(!check(&c, &r).contains("orch-stuck"));
     c.now = NOW + 17 * 60;

@@ -199,11 +199,11 @@ pub fn open_asks(events: &[Event]) -> Vec<&Event> {
 pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
     let mut m: BTreeMap<(String, u64), IssueState> = BTreeMap::new();
     for e in events {
-        let Some(n) = e.issue else { continue };
+        let Some(n) = e.issue.filter(|_| !PASSIVE.contains(&e.kind.as_str())) else { continue };
         let new = || IssueState { fleet: e.fleet.clone(), issue: n, state: "queued".into(), ..Default::default() };
         let s = m.entry((e.fleet.clone(), n)).or_insert_with(new);
         // A merged issue never leaves `merged`, whatever is logged after it.
-        if PASSIVE.contains(&e.kind.as_str()) || s.state == "merged" {
+        if s.state == "merged" {
             continue;
         }
         // Design lanes are the owner's: they never move the issue through review or merge.

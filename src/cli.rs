@@ -1,6 +1,6 @@
 //! The clap CLI, `herdsman help --agent` and dispatch to the modules.
 use crate::config::{self, home, Config};
-use crate::events::{fold, read, status_line};
+use crate::events::{fold, read, status_line, IssueState};
 use crate::runner::{self, Runner};
 use crate::{access, check, devices, gate, gh, harness, hook, migrate, pause, protection, queue, queue_change, serve, set, spawn, Ctx};
 use anyhow::{bail, Result};
@@ -384,6 +384,12 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 for s in rows {
                     let w = waits.iter().flatten().find(|(x, _)| x.fleet == s.fleet && x.issue == s.issue).map_or("-", |w| w.1.what.as_str());
                     writeln!(out, "{:<5} {w}", status_line(s, ctx.now))?;
+                }
+                // #89: the queue's never-laned `next` issue, waiting on the orch to spawn it.
+                let fresh = waits.iter().flatten().filter(|(x, _)| !all.contains_key(&(x.fleet.clone(), x.issue)));
+                for (x, w) in fresh.filter(|(x, _)| fleet.as_ref().is_none_or(|f| *f == x.fleet)) {
+                    let x = IssueState { last_ts: w.since, ..x.clone() };
+                    writeln!(out, "{:<5} {}", status_line(&x, ctx.now), w.what)?;
                 }
                 write!(out, "{}", serial.concat())?;
             }
