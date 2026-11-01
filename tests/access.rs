@@ -1,8 +1,8 @@
 //! #5: per-role Anthropic accounts with cap fallback; per-role MCP allowlist.
 mod common;
 use common::*;
-use herdsman::events::read;
-use serde_json::Value;
+use herdsman::events::{append, read, Event};
+use serde_json::{json, Value};
 use std::path::Path;
 
 const TOKEN_A: &str = "sk-ant-oat01-AAAA-secret";
@@ -282,6 +282,27 @@ fn capped_lane_waits_on_the_orch_to_respawn_on_a_free_account() {
     let (code, out) = run(&c, &Fake::default(), &args);
     assert_eq!(code, 0, "{out}");
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["account"], "B");
+}
+
+#[test]
+fn capped_ready_lane_is_not_told_to_respawn() {
+    let d = tmpdir("acct-ready");
+    let c = ctx(&d, &config(&d, "accounts = [\"A\", \"B\"]"));
+    assert_eq!(run(&c, &Fake::default(), &["profiles", "sync"]).0, 0);
+    spawn(&c, 12);
+    cap(&c, "You've hit your limit · resets 3pm");
+    let pass = json!({"verdict": "PASS", "sha": "1".repeat(40)});
+    append(&c.state, &Event::new(c.now, "sendmeter", Some(12), "verdict", pass)).unwrap();
+    let cfg = herdsman::config::Config::load(&c.config).unwrap();
+    let agents = [json!({"name": "sendmeter-impl-12", "agent_status": "idle"})];
+    let ev = read(&c.state).unwrap();
+    let waits = herdsman::waiting::scan(&c, &cfg, &Fake::default(), &ev, &agents, false);
+    let w = &waits.iter().find(|(s, _)| s.issue == 12).unwrap().1;
+    assert!(
+        !w.next_cmd.as_deref().unwrap_or_default().contains("--supersede"),
+        "{w:?}"
+    );
+    assert!(!w.what.contains("account capped"), "{w:?}");
 }
 
 #[test]
