@@ -1,7 +1,8 @@
 //! #105: harness-neutral screen parsing, golden-tested on real captured screens (paths masked) from Claude Code,
-//! dsh-TUI and Hermes: no divider, input line, status bar, spinner or tip in `turns()`; the spinner (or status bar)
-//! is the status line; the transcript's messages and tool rows are kept. `BLESS=1` rewrites the `.turns.json` files.
-use herdsman::lanes::{activity, chat, tail, turns};
+//! dsh-TUI and Hermes: no divider, input line, status bar, spinner or tip in the transcript lines; the spinner (or
+//! status bar) is the status line; the messages and tool rows are kept. `BLESS=1` rewrites the `.lines.json` files
+//! (#138: the sheet groups these lines into blocks, tests/chat_blocks.rs).
+use herdsman::lanes::{activity, chat, tail};
 use std::path::Path;
 
 /// (fixture, harness, status line, text that must not be chat, text that must stay).
@@ -117,7 +118,7 @@ fn real_screens_keep_the_transcript_and_lift_the_frame_and_spinner() {
         let screen = std::fs::read_to_string(dir.join(format!("{name}.txt"))).unwrap();
         let (body, status) = chat(&screen);
         assert_eq!(status.unwrap_or_default(), want, "{name}: status line");
-        let t = turns(&tail(&body.join("\n"), 2000));
+        let t = tail(&body.join("\n"), 2000);
         let text = serde_json::to_string_pretty(&t).unwrap();
         let rule = text.split(|c| !"─━═╌┄▔▁".contains(c)).any(|r| r.chars().count() >= 20);
         assert!(!rule, "{name}: a divider is chat\n{text}");
@@ -131,14 +132,14 @@ fn real_screens_keep_the_transcript_and_lift_the_frame_and_spinner() {
             let a = activity(harness, &screen);
             assert!(want.starts_with(a.trim_end_matches('…')), "{name}: activity `{a}`");
         }
-        let golden = dir.join(format!("{name}.turns.json"));
+        let golden = dir.join(format!("{name}.lines.json"));
         if std::env::var_os("BLESS").is_some() {
             std::fs::write(&golden, text + "\n").unwrap();
         } else {
             assert_eq!(
                 text + "\n",
                 std::fs::read_to_string(golden).unwrap(),
-                "{name}: turns changed"
+                "{name}: transcript lines changed"
             );
         }
     }

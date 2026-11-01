@@ -135,13 +135,19 @@ fn sheet_transcript_is_the_masked_pane_tail() {
     );
     let v: serde_json::Value = serde_json::from_str(&res[res.find("\r\n\r\n").unwrap() + 4..]).unwrap();
     assert_eq!(v["harness"], "claude");
-    let tool = |head: &str, body: &str| json!({"tool": head, "body": body});
-    let turns = json!([{"me": null, "items": [tool("⏺ Read(src/serve.rs)", "  ⎿ Read 120 lines")]}, {"me": "> fix the test", "items": [tool("⏺ Bash(cargo test)", "  ⎿ ok")]}]);
+    // #138: the lines (the sheet groups them into blocks); the last block is live, the rest on the rolling file.
+    let lines = json!([
+        "⏺ Read(src/serve.rs)",
+        "  ⎿ Read 120 lines",
+        "> fix the test",
+        "⏺ Bash(cargo test)",
+        "  ⎿ ok"
+    ]);
     assert_eq!(
-        (&v["turns"], &v["before"], &v["more"]),
-        (&turns, &json!(5), &json!(false))
+        (&v["lines"], &v["live"], &v["before"], &v["more"]),
+        (&lines, &json!(2), &json!(5), &json!(false))
     );
-    assert!(r.called("herdr pane read w1:p2 --source recent --lines 200"));
+    assert!(r.called("herdr pane read w1:p2 --source recent --lines 200 --format ansi"));
     assert!(req(&s, "GET", "/lane?agent=nobody", "", &cookie, T).starts_with("HTTP/1.1 404 "));
 }
 
@@ -611,10 +617,13 @@ fn lanes_and_sheet_fit_390px() {
             "transcript-more",
             "horse",
             format!(
-                "{}; {open}; snap('full'); setTimeout(() => document.querySelector('.tool').open = true, 100)",
+                "{}; {open}; snap('full'); setTimeout(() => document.querySelector('.blk.run').open = true, 100)",
                 fake((200, &more.to_string()), (200, &sent))
             ),
         ),
+        // #138 gate 2: every block type, open with [show all] pressed, and collapsed.
+        ("chat-open", "horse", chat_scene(true)),
+        ("chat-collapsed", "horse", chat_scene(false)),
         (
             "slash-menu",
             "horse",

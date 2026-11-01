@@ -1,0 +1,40 @@
+[0m[38;2;255;107;128m⏺ [0mBackground command "fd -H -t f '^chrome-headless-shell$' /Users/me /private/tmp /tmp 2>/dev/null | head -3; ls
+"/Applications/Google Chrome.app" 2>/dev/null | head -1" failed with exit code 144
+
+[0m[38;2;255;107;128m⏺[0m Background command "ls ~/.cache/puppeteer 2>/dev/null; fd -t x chrome-headless-shell ~ /tmp -d 8 2>/dev/null | head
+-3; cargo build --release --locked 2>&1 | tail -2" failed with exit code 144
+
+[0m[38;2;255;255;255m⏺ [0mThe shells are killed (exit 144 is my kill). Next: commit, then merge staging.
+
+[0m[38;2;78;186;101m⏺[0m [0m[1mBash[0m(git commit -q -m "serve: choices wrap wherever the answer form renders; [change] not [[change]] (#139)…)
+[0m[38;2;153;153;153m  ⎿  [0mAuto-merging .github/workflows/ci.yml
+     Auto-merging demo/events.jsonl
+     Auto-merging src/serve.rs
+     [0m[2m… +2 lines[0m
+[0m[38;2;153;153;153m  ⎿  [0mUpdated [0m[1m.github/workflows/ci.yml [0m[38;2;153;153;153m(+2 -5)[0m
+[0m[38;2;153;153;153m  ⎿  [0mUpdated [0m[1massets/herd.js[0m [0m[38;2;153;153;153m(+17 -5)[0m
+[0m[38;2;153;153;153m  ⎿  [0mUpdated [0m[1massets/serve.js[0m [0m[38;2;153;153;153m(+2 -1)[0m
+[0m[38;2;153;153;153m  ⎿  [0mCreated [0m[1mci/cap.toml[0m [0m[38;2;153;153;153m(+4 -0)[0m
+[0m[38;2;153;153;153m  ⎿  [0mCreated [0m[1mdemo/cache/pr-acme-api-22.json [0m[38;2;153;153;153m(+1 -0)[0m
+[0m[38;2;153;153;153m  ⎿  … 36 more files changed[0m
+[0m[38;2;153;153;153m  ⎿  (a git step in this command can move the working tree, so these may be its changes, not edits) [0m
+  
+  [0m[38;2;153;153;153mRan [0m[1m[38;2;153;153;153m1[0m[38;2;153;153;153m shell command [0m
+
+[0m[38;2;255;255;255m⏺ [0mMerge is clean. Building and running the tests now, logged to the scratchpad, with no [0m[38;2;177;185;249mfd [0mscans this time.
+  
+  [0m[38;2;153;153;153mRan [0m[1m[38;2;153;153;153m2[0m[38;2;153;153;153m shell commands [0m
+
+[0m[38;2;255;255;255m⏺ [0mThere's a chrome-headless-shell already installed in the Playwright cache, so I can use it without installing
+  anything.
+
+  [0m[38;2;153;153;153mListed [0m[1m[38;2;153;153;153m1[0m[38;2;153;153;153m directory [0m
+     
+[0m[38;2;255;255;255m⏺ [0mWaiting for the build and tests to notify (bounded by the 10 min timeout).
+
+[0m[38;2;153;153;153m✻[0m [0m[38;2;153;153;153mBrewed for 42s · done 9:51 PM · 1 shell still running[0m
+
+[0m[38;2;136;136;136m────────────────────────────────────────────────────────── herdsman · impl #139 · Answer options overflow the page in… ─[0m
+❯ 
+[0m[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;255;107;128m⏵⏵ bypass permissions on[0m[38;2;153;153;153m · [0m[38;2;0;204;204m1 shell[0m[38;2;153;153;153m · ↓ to manage[0m

@@ -98,11 +98,17 @@ fn every_control_passes_the_audit_at_390px() {
             "open(document.querySelector('.lane[data-agent=\"sendmeter-impl-12\"]'))".to_string(),
         ),
         ("ui-herd", "lanes", "#herd", format!("herd(true); herdData({herd})")),
+        ("ui-chat-open", "lanes", "#sheet", chat_scene(true)),
+        ("ui-chat-collapsed", "lanes", "#sheet", chat_scene(false)),
     ];
     let audit = include_str!("ui/audit.js");
     for (name, tab, root, then) in scenes {
         // The audit scrolls and opens rows, so the scene is set up again for the screenshot.
-        let js = format!("{stub}; {audit}; {then}; window.measure = [audit('{root}')]; tab('{tab}'); {then}");
+        // #138 (the chat scenes): no sideways scroll inside the chat or a panel, no chat text but 11 or 13 px; the blocks drawn.
+        let fit = "const c = document.querySelector('.chat'); window.measure.push(c.scrollWidth - c.clientWidth \
+            + [...c.querySelectorAll('pre, .blk')].filter(e => e.scrollWidth > e.clientWidth).length, \
+            [...c.querySelectorAll('*')].filter(e => e.childNodes.length && [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()) && !['11px', '13px'].includes(getComputedStyle(e).fontSize)).length, c.querySelectorAll('.blk, .qs').length, c.querySelectorAll('.blk[open]').length)";
+        let js = format!("{stub}; {audit}; {then}; window.measure = [audit('{root}')]; tab('{tab}'); {then}; {fit}");
         let png = std::env::var("HERDSMAN_SNAPSHOTS").map_or(d.join(format!("{name}.png")), |p| {
             std::path::Path::new(&p).join(format!("{name}.png"))
         });
@@ -122,10 +128,18 @@ fn every_control_passes_the_audit_at_390px() {
         let out = String::from_utf8_lossy(&o.stdout);
         let v: Vec<f64> = out.split_whitespace().filter_map(|n| n.parse().ok()).collect();
         assert!(
-            o.status.success() && v.len() == 3,
+            o.status.success() && v.len() == 7,
             "{name}: {out} {}",
             String::from_utf8_lossy(&o.stderr)
         );
+        if name.starts_with("ui-chat") {
+            let open = if name == "ui-chat-open" { 7.0 } else { 0.0 };
+            assert_eq!(
+                (v[3], v[4], v[5], v[6]),
+                (0.0, 0.0, 10.0, open),
+                "{name}: chat overflow, text not 11/13 px, blocks, open blocks"
+            );
+        }
         assert!(
             v[0] <= 390.0 && v[1] == 390.0,
             "{name}: scrollWidth {} at {}",

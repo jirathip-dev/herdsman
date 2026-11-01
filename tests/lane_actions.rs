@@ -58,8 +58,13 @@ fn kill_dry_run_lists_what_is_lost() {
 fn kill_pushes_wip_then_closes_and_logs() {
     let (c, wt) = lane("kill-yes");
     let r = git(&wt, " M src/a.rs\n", "2\n", "+fn x() {}\n");
+    // #138: the lane's rolling transcript goes with it.
+    let log = herdsman::lanes::log(&c.state, LANE).unwrap();
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    std::fs::write(&log, "⏺ hi\n").unwrap();
     let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
     assert_eq!(code, 0, "{out}");
+    assert!(!log.exists());
     assert!(
         out.contains(&format!("killed {LANE}: work pushed to wip/{LANE}-20261031-1200")),
         "{out}"
@@ -409,44 +414,19 @@ fn act_needs_a_paired_cookie_and_logs_via_web() {
     assert_eq!(kinds(&c, "act"), 1);
 }
 
-/// 20 Claude turns of 10 lines (prompt, a tool call with 6 output lines, a 2-line reply) and a Hermes `┊` run.
+/// A screen of 5 settled lines and a live block.
 fn screen() -> String {
-    let mut s = String::new();
-    for i in 0..20 {
-        s += &format!("> prompt {i}\n⏺ Bash(cargo test {i})\n  ⎿ running\n");
-        s += &(0..5).map(|k| format!("    out {k}\n")).collect::<String>();
-        s += &format!("⏺ Done {i}, a long reply that wraps\n  onto a second line\n");
-    }
-    s + "┊ 💻 terminal ls\n┊   a.rs b.rs\n"
+    "> fix it\n⏺ Bash(cargo test)\n  ⎿ ok\n⏺ Done.\n  All green.\n⏺ Bash(cargo fmt)\n".into()
 }
 
+/// #138: `/lane` pages back through the rolling transcript (450 older lines on file, a gap line as this read does not
+/// overlap them, then its settled lines), `more` while older lines exist; the live block is sent, never written.
 #[test]
-fn transcript_groups_200_lines_into_turns_with_tools_collapsed() {
-    let lines = herdsman::lanes::tail(&screen(), 202);
-    let turns = herdsman::lanes::turns(&lines[..200]);
-    assert_eq!(turns.len(), 20);
-    for (i, t) in turns.iter().enumerate() {
-        let items = t["items"].as_array().unwrap();
-        assert_eq!(t["me"], format!("> prompt {i}"));
-        assert_eq!(items.len(), 2, "{t}");
-        assert_eq!(items[0]["tool"], format!("⏺ Bash(cargo test {i})"));
-        assert_eq!(items[0]["body"].as_str().unwrap().lines().count(), 6);
-        assert_eq!(
-            items[1]["text"],
-            format!("⏺ Done {i}, a long reply that wraps\n  onto a second line")
-        );
-    }
-    let tail = herdsman::lanes::turns(&lines[198..]);
-    let hermes = &tail[0]["items"].as_array().unwrap()[1];
-    assert_eq!(
-        (&hermes["tool"], &hermes["body"]),
-        (&json!("┊ 💻 terminal ls"), &json!("┊   a.rs b.rs"))
-    );
-}
-
-#[test]
-fn lane_loads_more_from_the_scrollback() {
+fn lane_pages_back_through_the_rolling_transcript() {
     let (c, _) = lane("more");
+    let log = herdsman::lanes::log(&c.state, LANE).unwrap();
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    std::fs::write(&log, (0..450).map(|i| format!("  out {i}\n")).collect::<String>()).unwrap();
     let list = agents(&[(LANE, "working", "/x", "w1:p2")]);
     let r = Fake::default()
         .reply("herdr agent list", &list)
@@ -463,15 +443,32 @@ fn lane_loads_more_from_the_scrollback() {
         serde_json::from_str::<serde_json::Value>(&res[res.find("\r\n\r\n").unwrap() + 4..]).unwrap()
     };
     let first = get("&lines=500");
+    let lines = first["lines"].as_array().unwrap();
     assert_eq!(
-        (&first["before"], &first["more"]),
-        (&json!(200), &json!(true)),
+        (lines.len(), &first["live"], &first["before"], &first["more"]),
+        (200, &json!(1), &json!(200), &json!(true)),
         "the cap stays at 200"
     );
+    assert_eq!(
+        (&lines[193], &lines[194], &lines[199]),
+        (
+            &json!(herdsman::lanes::GAP),
+            &json!("> fix it"),
+            &json!("⏺ Bash(cargo fmt)")
+        )
+    );
     let older = get("&lines=200&before=200");
-    assert_eq!((&older["before"], &older["more"]), (&json!(202), &json!(false)));
-    assert_eq!(older["turns"][0]["items"][0]["tool"], "⏺ Bash(cargo test 0)");
-    assert!(r.called("herdr pane read w1:p2 --source recent --lines 400"));
+    assert_eq!(
+        (&older["before"], &older["more"], &older["live"]),
+        (&json!(400), &json!(true), &json!(0))
+    );
+    assert_eq!(older["lines"][0], "  out 57");
+    let oldest = get("&before=400");
+    assert_eq!((&oldest["before"], &oldest["more"]), (&json!(457), &json!(false)));
+    assert_eq!(oldest["lines"][0], "  out 0");
+    let file = std::fs::read_to_string(&log).unwrap();
+    assert!(file.ends_with("  out 449\n┄ not captured: scrolled past between reads ┄\n> fix it\n⏺ Bash(cargo test)\n  ⎿ ok\n⏺ Done.\n  All green.\n"), "{file}");
+    assert!(r.called("herdr pane read w1:p2 --source recent --lines 200 --format ansi"));
 }
 
 /// iOS zooms on focus under 16 px; the fix is the font size. #114: the page is app-like, so no pinch or double-tap zoom.

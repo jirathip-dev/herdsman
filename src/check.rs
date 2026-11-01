@@ -84,6 +84,9 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
                 }
             }
             if let Some(p) = pane.filter(|_| status.is_some()) {
+                if let Some(f) = crate::lanes::log(&ctx.state, lane) {
+                    crate::lanes::roll(&f, &crate::lanes::body(&herdr::recent(r, p, "200").unwrap_or_default()));
+                }
                 if let Some((url, line)) = wt.and_then(|wt| amendment(ctx, r, cfg, s, wt)) {
                     let key = format!("{lane}:{url}");
                     let seen = events.iter().any(|e| e.str("key") == Some(&key));
@@ -419,6 +422,7 @@ pub fn clean(
         if !pane.is_empty() {
             let _ = herdr::close(r, pane);
         }
+        drop_log(ctx, e.str("agent"));
         writeln!(out, "removed {wt} ({}#{n} {why})", e.fleet)?;
         emit(
             &ctx.state,
@@ -468,6 +472,11 @@ fn purge(r: &dyn Runner, out: &mut dyn Write, wt: &Path) -> Result<u64> {
         }
     }
     Ok(freed)
+}
+
+/// #138: the lane's rolling transcript goes with it.
+fn drop_log(ctx: &Ctx, agent: Option<&str>) {
+    let _ = crate::lanes::log(&ctx.state, agent.unwrap_or_default()).map(std::fs::remove_file);
 }
 
 /// Bytes under `p` (symlinks not followed); the worktree total for the disk row.
@@ -680,6 +689,7 @@ pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
         git(&["push", "origin", &format!("HEAD:refs/heads/{w}")])?;
     }
     herdr::close(r, e.str("pane").unwrap_or_default())?;
+    drop_log(ctx, Some(agent));
     let d = json!({"agent": agent, "role": role, "pane": e.str("pane"), "wip": wip});
     emit(
         &ctx.state,

@@ -230,3 +230,55 @@ pub fn pair(s: &herdsman::serve::Server, c: &Ctx, ua: &str, now: u64) -> String 
     );
     cookie
 }
+
+/// #138 gate 2: a sheet with every block type: you, assistant prose with markdown, a status line, a passing and a
+/// failing tool run (capped, with its tail), a diff with long lines, the gap line, a running call and the live line.
+pub fn chat_fixture() -> serde_json::Value {
+    let g = |s: &str| format!("\x1b[38;2;153;153;153m{s}\x1b[0m");
+    let mut l = vec![
+        "❯ Read ~/.herdr/worktrees/acme/issue-7/.brief.md and execute it fully.".to_string(),
+        g("  Read 1 file, ran 3 shell commands"),
+        "⏺ I read the brief. The overlap check skips **merged** issues only, so a closed one still counts.".into(),
+        "⏺ Bash(cargo test --locked)".into(),
+        "  ⎿  test result: \x1b[38;2;80;200;80mok\x1b[0m. 218 passed; 0 failed".into(),
+        herdsman::lanes::GAP.into(),
+        "⏺ # Plan".into(),
+        "  Base is green. The bug is in `src/overlap.rs`: the list keeps every issue that is not **merged**.".into(),
+        "  1. Swap `s.state != \"merged\"` for `!s.done()`, which the board already uses everywhere.".into(),
+        "  2. Run the gates: `cargo test`, `cargo fmt --check`, `cargo clippy --all-targets --locked`.".into(),
+        "  - the merge path and its refusal codes stay as they are".into(),
+        "⏺ Update(src/overlap.rs)".into(),
+        "  ⎿  Updated src/overlap.rs with 1 addition and 1 removal".into(),
+        "      49      git(r, &dir, &[\"fetch\", \"-q\", \"origin\"])?;".into(),
+        "      52 \x1b[48;2;61;1;0m-        .filter(|s| s.fleet == fleet && \x1b[48;2;92;2;0ms.state != \"merged\"\x1b[48;2;61;1;0m && s.issue != 0 && s.lane.is_some())\x1b[0m".into(),
+        "      52 \x1b[48;2;2;40;0m+        .filter(|s| s.fleet == fleet && \x1b[48;2;4;71;0m!s.done()\x1b[48;2;2;40;0m && s.issue != 0 && s.lane.is_some())\x1b[0m".into(),
+        "\x1b[38;2;255;107;128m⏺\x1b[0m Bash(cargo test --locked overlap -- --nocapture --test-threads=1 2>&1 | tee /tmp/a-very-long-log-name.log)".into(),
+        "  ⎿  Error: Exit code 101".into(),
+    ];
+    l.extend((0..26).map(|i| format!("     test overlap::tests::case_{i} ... \x1b[38;2;80;200;80mok\x1b[0m")));
+    l.push("     thread 'overlap::tests::skips_closed' panicked at src/overlap.rs:214:9: assertion `left == right` failed: a closed issue's branch is not in flight".into());
+    l.push("     test result: \x1b[38;2;220;90;90mFAILED\x1b[0m. 26 passed; 1 failed".into());
+    l.push(g("  Ran 2 shell commands"));
+    l.push(
+        "⏺ Bash(L=~/scratchpad; cargo build --release --locked >$L/build.log 2>&1; echo build=$?; cargo fmt --check)"
+            .into(),
+    );
+    serde_json::json!({"harness": "claude", "acts": ["stop", "kill", "clean"], "lines": l, "live": 1,
+        "status": "✽ Gusting… (2m 47s · ↓ 1.8k tokens)", "before": l.len(), "more": true})
+}
+
+/// #138: page JS that opens sendmeter-impl-12's sheet full and draws `chat_fixture()` at once (the poll answers the
+/// same), every block open with [show all] pressed, or all collapsed.
+pub fn chat_scene(open: bool) -> String {
+    let fx = chat_fixture();
+    format!(
+        "window.fetch = async u => u.includes('lane') ? new Response({j}) : new Response('', {{status: 404}}); \
+         open(document.querySelector('.lane[data-agent=\"sendmeter-impl-12\"]')); snap('full'); \
+         hist = {l}.slice(0, -1); tail = {l}.slice(-1); harness = 'claude'; spin = true; paint(); \
+         $('.live').hidden = false; $('.live').innerHTML = '<b>✽</b> Gusting… (2m 47s · ↓ 1.8k tokens)'; \
+         document.querySelectorAll('.blk').forEach(d => d.open = {open}); \
+         if ({open}) document.querySelectorAll('.more2 button').forEach(b => b.click())",
+        j = serde_json::to_string(&fx.to_string()).unwrap(),
+        l = fx["lines"]
+    )
+}

@@ -197,14 +197,15 @@ document.addEventListener('submit', async e => {
 B.insertAdjacentHTML('beforeend', `<div id=sheet hidden><div class=bd></div><div class=sh role=dialog aria-modal=true>
 <div class=hd><p><b></b></p></div><div class=top></div><div class=acts><button type=button data-op=stop>Stop</button><button type=button data-op=kill>Kill</button><button type=button data-op=clean>Clean</button><button type=button data-op=close>Close pane</button></div>
 <div class=cf hidden><p></p><button type=button class=yes>Kill</button><button type=button class=no>Cancel</button></div>
-<div class=chat><button type=button class=more hidden>Load more</button><div class=old></div><div class=now></div></div>
+<div class=chat><button type=button class=more hidden>Load more</button><div class=now></div></div>
+<p class=live hidden></p>
 <p class=pairf hidden><button type=button class=pairb>Pair this phone</button></p>
 <ul class=cmds hidden></ul>
 <form class=reply><textarea name=text rows=1 maxlength=2000 placeholder="Message, or / for commands" aria-label=message></textarea><button>Send</button></form>
 <p class=st></p></div></div>`);
 if (DEMO) sync();
-const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st'), now = $('.now'), old = $('.old'), more = $('.more');
-let agent = null, timer = 0, cur = 0, y = 0, nopane = false, opane = null;
+const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st'), now = $('.now'), more = $('.more');
+let agent = null, timer = 0, y = 0, nopane = false, opane = null;
 // The Lanes row of `agent` (its sheet card), from the needs-you cards and the herd.
 const laneOf = agent => [...$$('.lane')].find(l => l.dataset.agent === agent);
 const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text || '' });
@@ -292,20 +293,156 @@ function tidy(root) {
 }
 tidy(document);
 rf.innerHTML = '<i>↻</i>';
-// One block per turn (server-grouped): the typed prompt, text runs, tool calls collapsed to their head line.
-const render = turns => turns.map(t => {
-  const d = el('div', 'turn');
-  if (t.me) d.append(el('p', 'b me', t.me));
-  for (const i of t.items) {
-    if (i.tool === undefined) { d.append(el('p', 'b', i.text)); continue; }
-    const x = el('details', 'tool');
-    x.append(el('summary', '', i.tool));
-    if (i.body) x.append(el('pre', '', i.body));
-    d.append(x);
+// #138 chat blocks: pure from here to `chat:end` (tests/chat_blocks.rs runs it under node). A role run is a block:
+// you (a typed prompt), the assistant (prose), a tool run (`⏺ Name(…)`/`•`/`$`/`┊` plus its `⎿`/indented output),
+// status (a line all in grey: `Ran 2 shell commands`), and the gap line where the rolling transcript missed lines.
+const GAP = '┄ not captured: scrolled past between reads ┄';
+const esc = s => s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+const plain = l => l.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+// A terminal colour to the nearest board token by hue (no terminal hex reaches the page); grey is the default text
+// when light, `m` when dark. Bands: red < 12° or ≥ 330°, amber < 70°, green < 160°, cyan < 200°, blue < 255°, else purple.
+function tone(r, g, b) {
+  const mx = Math.max(r, g, b), d = mx - Math.min(r, g, b);
+  if (d < 40) return mx >= 200 ? '' : 'm';
+  const h = (60 * (mx === r ? (g - b) / d : mx === g ? (b - r) / d + 2 : (r - g) / d + 4) + 360) % 360;
+  return h < 12 || h >= 330 ? 'r' : h < 70 ? 'a' : h < 160 ? 'g' : h < 200 ? 'c' : h < 255 ? 'l' : 'p';
+}
+const BASIC = ['m', 'r', 'g', 'a', 'l', 'p', 'c', ''], CUBE = [0, 95, 135, 175, 215, 255];
+const rgb256 = n => n < 232 ? [CUBE[(n - 16) / 36 | 0], CUBE[((n - 16) / 6 | 0) % 6], CUBE[(n - 16) % 6]] : Array(3).fill(8 + 10 * (n - 232));
+// An ANSI line as [text, classes] runs: fg `t-<token>`, bold `t-b`, dim `t-m`, and red/green backgrounds (diffs)
+// as `bg-r`/`bg-g`, `…2` when bright (changed words).
+function runs(line) {
+  const out = []; let fg = '', bg = '', b = false, dim = false;
+  const col = (c, i) => c[i] === 5 ? [rgb256(c[i + 1]), i + 1] : [c.slice(i + 1, i + 4), i + 3];
+  const tint = ([r, g, bl]) => { const t = tone(r, g, bl), x = c => c[0] === c[1] && c[1] === c[2] ? '' : c; return /^[rg]$/.test(t) ? `bg-${t}${Math.max(r, g, bl) > 65 ? '2' : ''}` : x([r, g, bl]) && ''; };
+  for (const [i, part] of line.split('\x1b[').entries()) {
+    const m = i ? /^([0-9;?]*)([A-Za-z])/.exec(part) : null;
+    if (m && m[2] === 'm') {
+      const c = m[1].split(';').map(Number);
+      for (let j = 0; j < c.length; j++) {
+        const n = c[j];
+        if (n === 0) { fg = bg = ''; b = dim = false; } else if (n === 1) b = true; else if (n === 2) dim = true;
+        else if (n === 22) b = dim = false; else if (n === 39) fg = ''; else if (n === 49) bg = '';
+        else if (n >= 30 && n <= 37 || n >= 90 && n <= 97) fg = BASIC[n % 10];
+        else if (n === 41 || n === 42) bg = n === 41 ? 'bg-r' : 'bg-g';
+        else if (n === 38 || n === 48) {
+          const [v, k] = c[j + 1] === 5 && c[j + 2] < 16 ? [null, j + 2] : col(c, j + 1);
+          if (n === 38) fg = v ? tone(...v) : BASIC[c[j + 2] % 8]; else bg = v ? tint(v) : '';
+          j = k;
+        }
+      }
+    }
+    const t = m ? part.slice(m[0].length) : part;
+    const cls = [fg ? 't-' + fg : dim ? 't-m' : '', b ? 't-b' : '', bg].filter(Boolean).join(' ');
+    if (t && out.length && out[out.length - 1][1] === cls) out[out.length - 1][0] += t; else if (t) out.push([t, cls]);
   }
-  return d;
-});
+  return out;
+}
+const span = ([t, c], md) => {
+  if (md && c === 't-l') return `<code>${esc(t)}</code>`;
+  const h = md ? esc(t).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>') : esc(t);
+  return c ? `<span class="${c}">${h}</span>` : h;
+};
+// Prose (md): Claude's code runs (blue) and raw markdown's `code` become chips, `**bold**` bold; text is escaped first.
+const html = (rs, md) => rs.map(r => span(r, md)).join('');
+// Drop the first n characters of runs.
+const cut = (rs, n) => rs.flatMap(([t, c]) => { const k = Math.min(n, t.length); n -= k; return k < t.length ? [[t.slice(k), c]] : []; });
+const muted = rs => rs.some(([t]) => t.trim()) && rs.every(([t, c]) => !t.trim() || /\bt-m\b/.test(c));
+const pad = p => p.length - p.trimStart().length;
+// Lines to role runs: {k: me | ai | run | qs | gap, head, lines}.
+function group(lines) {
+  const out = []; let cur = null;
+  const add = (k, l) => out.push(cur = { k, head: l, lines: [], ind: pad(plain(l)) });
+  for (const l of lines) {
+    const p = plain(l), t = p.trim(), n = pad(p);
+    if (!t) { if (cur && /me|ai|run/.test(cur.k)) cur.lines.push(l); }
+    else if (t === GAP) add('gap', l);
+    else if (/^[❯›>]\s/.test(t)) add('me', l);
+    else if (/^[⏺•]\s*\w+\(/.test(t) || /^(\$|┊|💻)\s/.test(t)) add('run', l);
+    else if (cur && cur.k === 'run' && (t[0] === '⎿' || n > cur.ind + 2)) cur.lines.push(l);
+    else if (muted(runs(l))) add('qs', l);
+    else if (cur && !/^[⏺•]/.test(t) && (cur.k === 'ai' || cur.k === 'me' && n > cur.ind)) cur.lines.push(l);
+    else add('ai', l);
+  }
+  return out;
+}
+// Minimal markdown on prose: paragraphs (wrapped lines joined), `#` headings, `-`/`1.` lists.
+function prose(lines) {
+  const items = []; let last = null;
+  lines.forEach((l, i) => {
+    const rs0 = runs(l), lead = /^\s*([⏺❯›>•]\s*)?/.exec(plain(l))[0].length, rs = cut(rs0, i ? pad(plain(l)) : lead), t = rs.map(r => r[0]).join('');
+    let m;
+    if (!t.trim()) last = null;
+    else if ((m = /^#{1,6}\s+/.exec(t))) { items.push({ t: 'h', h: [html(cut(rs, m[0].length), true)] }); last = null; }
+    else if ((m = /^([-*•]|\d+[.)])\s+/.exec(t))) {
+      const tag = /\d/.test(m[1]) ? 'ol' : 'ul', end = items[items.length - 1];
+      last = end && end.t === tag ? end : (items.push({ t: tag, h: [] }), items[items.length - 1]);
+      last.h.push(html(cut(rs, m[0].length), true));
+    } else if (last) last.h[last.h.length - 1] += ' ' + html(rs, true);
+    else items.push(last = { t: 'p', h: [html(rs, true)] });
+  });
+  return items.map(x => x.t === 'p' ? `<p>${x.h[0]}</p>` : x.t === 'h' ? `<p class=h>${x.h[0]}</p>` : `<${x.t}>${x.h.map(h => `<li>${h}</li>`).join('')}</${x.t}>`).join('');
+}
+// A tool run's output: `⎿` and the output indent dropped, each line a hanging indent under its own start (past a diff
+// gutter `52 -`); over 20 lines, the first 20, or on a failure the first and last 10 around `⋯ N lines`.
+function output(lines, fail) {
+  while (lines.length && !plain(lines[lines.length - 1]).trim()) lines = lines.slice(0, -1);
+  const n0 = lines.length ? /^[\s⎿]*/.exec(plain(lines[0]))[0].length : 0;
+  const row = l => {
+    let rs = runs(l); rs = cut(rs, Math.min(n0, /^[\s⎿]*/.exec(plain(l))[0].length));
+    const t = rs.map(r => r[0]).join(''), bg = (rs.find(r => /bg-[rg]\b/.test(r[1])) || ['', ''])[1].match(/bg-[rg]\b/);
+    return `<span class="ol${bg ? ' ' + bg[0] : ''}" style="--i:${/^(\s*\d+ [-+ ]?)?\s*/.exec(t)[0].length}">${html(rs) || ' '}</span>`;
+  };
+  const n = lines.length, all = lines.map(row);
+  if (n <= 20) return `<div class=out><pre>${all.join('')}</pre></div>`;
+  fail = fail || lines.some(l => /FAILED|error/.test(plain(l)));
+  const [a, b] = fail ? [10, n - 10] : [20, n];
+  return `<div class="out cap"><pre>${all.slice(0, a).join('')}<span class=rest>${all.slice(a, b).join('')}</span>` +
+    (fail ? `<span class="ol cut t-m">⋯ ${n - 20} lines</span>${all.slice(b).join('')}` : '') +
+    `</pre><p class=more2><button type=button><span>show all</span></button><span class=m>20 of ${n} lines</span></p></div>`;
+}
+// Blocks as {key, k, html, open}: tool runs start collapsed, you and the assistant open (Q4); status is a quiet line.
+// `busy`: the live status line shows activity, so a last tool run with no output yet is `running`.
+function blocks(lines, harness, busy) {
+  const gs = group(lines);
+  return gs.map((g, i) => {
+    const head = plain(g.head).trim(), key = g.k + ':' + head + ':' + plain(g.lines[0] || '').trim();
+    if (g.k === 'qs' || g.k === 'gap') return { key, k: g.k, html: `<p class="qs${g.k === 'gap' ? ' gap' : ''}">${html(cut(runs(g.head), pad(plain(g.head))))}</p>` };
+    const sum = (k, rest) => `<summary><span class=k>${k}</span>${rest}<i class=cv></i></summary>`;
+    if (g.k !== 'run') {
+      const body = [g.head, ...g.lines], pv = esc(head.replace(/^[⏺❯›>•]\s*(#+\s+)?/, ''));
+      return { key, k: g.k, open: true, html: `<details class="blk ${g.k}">${sum(g.k === 'me' ? 'you' : esc(harness || 'agent'), `<span class=pv>${pv}</span>`)}<div class=md>${prose(body)}</div></details>` };
+    }
+    const m = /^(?:[⏺•]\s*(\w+)\((.*?)\)?(\s+·.*)?|(?:┊\s*)?(?:💻\s*)?(\$|terminal)?\s*(.*))$/.exec(head);
+    const name = m[1] || (m[4] ? '$' : ''), shell = !name || /^(\$|Bash|Shell|terminal)$/.test(name);
+    const cmd = m[1] ? m[2] : m[5], text = g.lines.map(plain).join('\n'), dot = runs(g.head).find(r => r[0].trim());
+    const fail = !!dot && /\bt-r\b/.test(dot[1]), code = /exit code (\d+)/i.exec(text);
+    const tag = fail ? `<span class=t-r>${code ? 'exit ' + code[1] : 'failed'}</span>` : busy && i === gs.length - 1 && !text.trim() ? '<span class=t-a>running</span>' : '';
+    return { key, k: 'run', html: `<details class="blk run">${sum(shell ? '$' : esc(name), `<span class=cmd>${esc(cmd)}</span>${tag}`)}${text.trim() ? output(g.lines, fail) : ''}</details>` };
+  });
+}
+// The longest suffix of a that is a prefix of b (as text): two reads' overlap.
+const overlap = (a, b) => { for (let k = Math.min(a.length, b.length); k > 0; k--) if (a.slice(-k).every((x, i) => plain(x) === plain(b[i]))) return k; return 0; };
+// chat:end
 const lane = q => fetch(DEMO ? 'lane/' + encodeURIComponent(agent) + '.json' : R + 'lane?agent=' + encodeURIComponent(agent) + '&lines=200' + q);
+// The settled lines seen (merged across reads by their overlap) plus the live block, drawn as blocks: a block whose key
+// and HTML are unchanged keeps its node (no scroll jump, #65), new lines land in the last block; open state per lane.
+let hist = [], tail = [], nlive = 0, harness = '', spin = false;
+const store = () => { try { return JSON.parse(sessionStorage.getItem('chat:' + agent)) || {}; } catch (e) { return {}; } };
+function paint() {
+  const seen = new Map([...now.children].map(n => [n.dataset.k, n])), keep = store(), end = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 8;
+  now.replaceChildren(...blocks(hist.concat(tail), harness, spin).map(b => {
+    const n = seen.get(b.key);
+    if (n && n.dataset.h === b.html) return n;
+    const t = document.createElement('template');
+    t.innerHTML = b.html;
+    const x = t.content.firstChild;
+    Object.assign(x.dataset, { k: b.key, h: b.html });
+    if (x.tagName === 'DETAILS') x.open = keep[b.key] ?? (n ? n.open : !!b.open);
+    return x;
+  }));
+  if (end) chat.scrollTop = chat.scrollHeight;
+}
 async function poll() {
   // #83: a lane with no pane has no transcript to read.
   if (nopane) return now.replaceChildren(el('p', 'm', 'no pane: the transcript closed with it'));
@@ -317,25 +454,37 @@ async function poll() {
       return now.replaceChildren(el('p', 'unp', 'Pair this phone to see the conversation'));
     }
     if (!r.ok) return now.replaceChildren(el('p', 'm', (await r.text()).trim()));
-    const j = await r.json(), end = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 8;
-    const open = new Set([...now.querySelectorAll('details[open] summary')].map(s => s.textContent));
+    const j = await r.json(), done = j.lines.slice(0, j.lines.length - j.live), k = overlap(hist, done);
     opane = j.pane;
-    now.replaceChildren(...render(j.turns));
-    now.querySelectorAll('summary').forEach(s => { if (open.has(s.textContent)) s.parentNode.open = true; });
-    if (!old.childElementCount) { cur = j.before; more.hidden = !j.more; }
-    if (end) chat.scrollTop = chat.scrollHeight;
+    if (!hist.length) more.hidden = !j.more;
+    hist = k || !hist.length || !done.length ? hist.concat(done.slice(k)) : done;
+    [tail, nlive, harness, spin] = [j.lines.slice(done.length), j.live, j.harness, !!j.status];
+    $('.live').hidden = !j.status;
+    if (j.status) $('.live').innerHTML = `<b>${esc([...j.status][0])}</b>${esc(j.status.slice([...j.status][0].length))}`;
+    paint();
   } catch (e) { now.textContent = 'no pane output'; }
 }
-// Older lines from the pane's scrollback, kept above the live part.
+// Older lines from the rolling transcript, joined above the seen ones by their overlap.
 more.onclick = async () => {
-  const r = await lane('&before=' + cur);
+  const r = await lane('&before=' + Math.max(0, hist.length + nlive - 20));
   if (!r.ok) return;
   const j = await r.json(), h = chat.scrollHeight;
-  old.prepend(...render(j.turns));
-  cur = j.before;
+  hist = j.lines.slice(0, j.lines.length - overlap(j.lines, hist)).concat(hist);
   more.hidden = !j.more;
+  paint();
   chat.scrollTop += chat.scrollHeight - h;
 };
+chat.addEventListener('toggle', e => {
+  const k = e.target.dataset && e.target.dataset.k, s = store();
+  if (!k) return;
+  s[k] = e.target.open;
+  try { sessionStorage.setItem('chat:' + agent, JSON.stringify(s)); } catch (err) {}
+}, true);
+// [show all] / [show less] on a capped tool output.
+chat.addEventListener('click', e => {
+  const b = e.target.closest('.more2 button'), o = b && b.closest('.out');
+  if (o) b.firstChild.textContent = o.classList.toggle('all') ? 'show less' : 'show all';
+});
 // `ok` null: a neutral note, e.g. why a control is disabled (#83).
 function say(msg, ok) { st.textContent = msg; st.className = 'st ' + (ok == null ? 'm' : ok ? 'g' : 'r'); }
 // Stop/Kill/Clean call `/act`; kill and clean dry-run first (kill shows what is lost, clean why it is unsafe).
@@ -383,7 +532,8 @@ function open(e) {
   $('[data-op=close]').hidden = !other || nopair;
   $$('.pairf, .cf, .cmds').forEach(x => x.hidden = true);
   now.replaceChildren();
-  old.replaceChildren();
+  hist = []; tail = [];
+  $('.live').hidden = true;
   say(rev ? 'reviewer lane: read-only' : other ? 'not a herdsman lane: herdsman can only close its pane' : '', other ? null : true);
   sh.classList.remove('lg');
   show(kb() ? 'full' : 'mid');

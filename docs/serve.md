@@ -56,12 +56,18 @@ opens a bottom sheet that slides up to 78 % and drags like an iOS sheet (it foll
 56 px handle, or from the conversation's top; snaps to 50 %, 78 % or full by position and flick; below 50 %, a
 down flick, the backdrop or Esc slide it closed) with
 its details card and a transcript: `/lane?agent=&lines=200&before=<n>` returns up to 200 masked
-pane lines (the cap is server-side) grouped per turn (a typed prompt opens one); tool calls
-(Claude `⏺ Bash(…)`/`Read(…)` plus their indented output, Hermes `┊` runs) collapse to one line
-that taps open, long lines wrap. Refreshed every 5 s; **Load more** at the top reads older lines
-(`herdr pane read --source recent --lines <before+200>`; herdr 0.9 has no scrollback source, only
-visible|recent|recent-unwrapped|detection, so history ends where herdr's recent window does, at most
-2,000 lines back: once a read comes back short the reply says `more: false` and the button goes).
+lines with their terminal colours (the cap is server-side), `live` (how many end lines are the screen's
+still-changing last block) and `status` (the spinner line, shown under the chat). #138: herdr keeps only
+the recent screen (Claude draws in the alternate screen), so herdsman keeps a **rolling transcript** per
+lane, `<state dir>/transcripts/<agent>.log` (mode 0600, the last 5,000 lines): every read (the sheet,
+`herdsman check`) appends the lines above the last block past their longest overlap with the file's tail,
+or after a `┄ not captured: scrolled past between reads ┄` line when the reads do not meet. `clean` and
+`kill` delete it. **Load more** pages back through it (`more` while older lines exist). The sheet groups
+the lines into Corral-style blocks (docs/design/chat-blocks): you, the assistant (minimal markdown:
+bold, `code`, lists, headings; escaped, never HTML), tool runs (`$ cmd` collapsed, output in a tinted
+panel capped at 20 lines, the head and tail on a failure, `exit N`, `running`) and quiet status lines;
+colours map to the board's tokens. Refreshed every 5 s; a block's open state is kept per lane in
+`sessionStorage`.
 Paired devices only, same Host/Origin checks; an unpaired phone sees "Pair this phone to see the
 conversation" with the code entry.
 

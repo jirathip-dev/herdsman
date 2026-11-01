@@ -1,0 +1,22 @@
+[
+ [
+  "ai",
+  "<details class=\"blk ai\"><summary><span class=k>dsh</span><span class=pv>✦ dsh-TUI  v0.17.0</span><i class=cv></i></summary><div class=md><p>✦ dsh-TUI  v0.17.0 ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓  ▓▓ ▓▓  ▓▓ ▓▓     ▓▓     ▓▓  ▓▓ ▓▓     ▓▓     ▓▓     ▓▓ ▓▓ ▓▓  ▓▓ ▓▓▒▒▒  ▓▓▒▒▒  ▓▓▒▒▒▒  ▒▒▒▒▒ ▓▓▒▒▒  ▓▓▒▒▒  ▓▓▓ ▄▀▄       ▄         ▓▓  ▓▓ ▓▓     ▓▓     ▓▓         ▓▓ ▓▓     ▓▓     ▓▓ ▓▓ ▀▀▀▀▄  ▄▄▀▀▀        ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓     ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓  ▓▓ ▄▄▄▄▄▄▄▄▄       ▀▀▀▀▀▀▀▀▀▀▀▀ ▄▀▀▀▀▀▀▀▀▀▀▀▀▄▄     ▀▀▀▀▀▀▀▀▀         ▓▓  ▓▓   ▒▒▒▒   ▓▓▒▒▒▒  ▓▓  ▓▓  ▓▓▒▒▒▒  ▓▓▒▒▒▒  ▓▓▒▒▒▒ ▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄  ▄▀▀▀▀▀            ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓▓ ▓▓  ▓▓      ▓▓      ▓▓ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀            ▓▓▒▒▓▓  ▓▓▒▒▓▓  ▓▓▒▒▒▒  ▓▓ ▓▓▓  ▓▓▒▒▒    ▒▒▒▒▒   ▒▒▒▒▒ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀             ▓▓  ▓▓  ▓▓  ▓▓  ▓▓ ▓▓   ▓▓  ▓▓  ▓▓          ▓▓      ▓▓ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀              ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓▒▒▒▒  ▓▓▒▒▒▒  ▓▓▒▒▒▒ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀               deepseek-flash · Max effort ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄              /private/tmp/claude-501/-Users-me--herdr-worktrees-herdsman-issue-105… ▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀              Tip: /restart is refused while a turn runs — Ctrl+C first · /tips more tips</p><p>Explore the uncharted!</p></div></details>"
+ ],
+ [
+  "me",
+  "<details class=\"blk me\"><summary><span class=k>you</span><span class=pv>Run the shell command `sleep 8; ls` and then tell me in one sentence what files are there.</span><i class=cv></i></summary><div class=md><p>Run the shell command <code>sleep 8; ls</code> and then tell me in one sentence what files are there.</p></div></details>"
+ ],
+ [
+  "ai",
+  "<details class=\"blk ai\"><summary><span class=k>dsh</span><span class=pv>⏵ Running the sleep-and-list command</span><i class=cv></i></summary><div class=md><p>⏵ Running the sleep-and-list command</p></div></details>"
+ ],
+ [
+  "run",
+  "<details class=\"blk run\"><summary><span class=k>$</span><span class=cmd>sleep 8; ls</span><i class=cv></i></summary><div class=out><pre><span class=\"ol\" style=\"--i:0\">scr</span></pre></div></details>"
+ ],
+ [
+  "ai",
+  "<details class=\"blk ai\"><summary><span class=k>dsh</span><span class=pv>⠦ Thinking…</span><i class=cv></i></summary><div class=md><p>⠦ Thinking… │ The output is &#34;scr&#34; — hmm, that&#39;s odd. Possibly a file named &#34;scr&#34;. Let me verify with a longer listing │ │</p></div></details>"
+ ]
+]
