@@ -230,6 +230,13 @@ pub fn merge(
     };
     let head = match res {
         Ok(h) => h,
+        // #148: CI not reported yet or still running is no block; the item stays ready, waiting for CI.
+        Err(rf)
+            if rf.code == "CI_NOT_GREEN"
+                && gh::ci(&gh::required(&pr["statusCheckRollup"], &f.required_checks)) == "pending" =>
+        {
+            return Err(rf.into());
+        }
         Err(rf) => {
             let kind = if rf.code == "ROUND_LIMIT" {
                 "needs-human"

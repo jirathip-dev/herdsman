@@ -107,7 +107,12 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
         let pr = gh::cached_pr(ctx, fleet, s.issue);
         let red = gh::ci(&gh::required(&pr["statusCheckRollup"], &f.required_checks)) == "failed";
         let n = s.issue.to_string();
-        if w.who == "orch" {
+        // #148: a head auto-updated this pass has no CI yet; its merge waits for the next pass.
+        let now = |e: &Event| e.is("auto-updated", fleet, s.issue) && e.ts == ctx.now;
+        if let Some(e) = read(&ctx.state)?.into_iter().rev().find(now) {
+            let to = e.str("to").unwrap_or_default();
+            writeln!(out, "{fleet} #{n} ready (CI pending at {to:.7})")?;
+        } else if w.who == "orch" {
             // `waiting` names the orch's exact next command; drive runs it instead.
             let Some(cmd) = &w.next_cmd else { continue };
             let args: Vec<&str> = cmd.split_whitespace().skip(1).collect();
