@@ -41,15 +41,11 @@ pub fn cached_title(ctx: &Ctx, fleet: &str, issue: u64) -> Option<String> {
     cached_spec(ctx, fleet, issue).and_then(|v| v["title"].as_str().map(String::from))
 }
 
-/// `(url, "\n\n" + text)` of a `**Amendment` comment by an owner, member or collaborator.
-/// Other authors are ignored: strangers can't steer a lane.
+/// `(url, text)` of a `**Amendment` comment by an OWNER, MEMBER or COLLABORATOR; strangers can't steer a lane.
 fn amendment(c: &Value) -> Option<(String, String)> {
     let s = |k: &str| c.pointer(k).and_then(Value::as_str).unwrap_or_default().trim();
-    if !matches!(s("/authorAssociation"), "OWNER" | "MEMBER" | "COLLABORATOR") {
-        return None;
-    }
     let body = s("/body");
-    if !body.starts_with("**Amendment") {
+    if !matches!(s("/authorAssociation"), "OWNER" | "MEMBER" | "COLLABORATOR") || !body.starts_with("**Amendment") {
         return None;
     }
     let url = s("/url");
@@ -57,8 +53,7 @@ fn amendment(c: &Value) -> Option<(String, String)> {
     Some((url.to_string(), text))
 }
 
-/// The issue's `{title, body + amendments, updatedAt, amended: last url}` (#101).
-/// `refresh` re-reads `updatedAt` first, else the cache is trusted.
+/// `{title, body + amendments, updatedAt, amended: last url}` (#101); `refresh` re-checks `updatedAt` first.
 pub fn spec(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, issue: u64, refresh: bool) -> Result<Value> {
     let p = cache_path(ctx, "issue", fleet, issue);
     let n = issue.to_string();
@@ -71,8 +66,7 @@ pub fn spec(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, issue: u64, refre
             return Ok(c);
         }
     }
-    let args = ["issue", "view", &n, "-R", &f.repo, "--json", SPEC_FIELDS];
-    let mut v = json(r, "gh", &args)?;
+    let mut v = json(r, "gh", &["issue", "view", &n, "-R", &f.repo, "--json", SPEC_FIELDS])?;
     let comments = v["comments"].as_array().cloned().unwrap_or_default();
     let amends: Vec<(String, String)> = comments.iter().filter_map(amendment).collect();
     if let Some((url, _)) = amends.last() {

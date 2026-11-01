@@ -28,10 +28,7 @@ fn amendment(ctx: &Ctx, r: &dyn Runner, cfg: &Config, s: &IssueState, wt: &str) 
     let f = cfg.fleet(&s.fleet).ok()?;
     let brief = std::fs::read_to_string(Path::new(wt).join(".brief.md")).ok()?;
     let spec = gh::spec(ctx, r, f, &s.fleet, s.issue, true).ok()?;
-    let url = spec["amended"].as_str()?;
-    if brief.contains(url) {
-        return None;
-    }
+    let url = spec["amended"].as_str().filter(|u| !brief.contains(*u))?;
     let n = s.issue;
     let fleet = &s.fleet;
     let line = format!("AMENDMENT on #{n} ({url}): run `herdsman brief {fleet} {n}` and apply it");
@@ -85,7 +82,6 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
                     capped = Some(name);
                 }
             }
-            // #101: an amendment newer than the lane's brief prompts the live lane once.
             if let Some(p) = pane.filter(|_| status.is_some()) {
                 if let Some((url, line)) = wt.and_then(|wt| amendment(ctx, r, cfg, s, wt)) {
                     let key = format!("{lane}:{url}");
