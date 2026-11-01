@@ -1135,7 +1135,7 @@ impl<'a> Server<'a> {
             let queued = |n: u64| q.iter().any(|i| i.issue == n);
             let rest: Vec<u64> = mine
                 .iter()
-                .filter(|s| !queued(s.issue) && s.state != "merged" && s.state != "queued")
+                .filter(|s| !queued(s.issue) && !s.done() && s.state != "queued")
                 .map(|s| s.issue)
                 .collect();
             let items: Vec<(u64, Option<u64>, Option<usize>)> = q
@@ -1202,7 +1202,7 @@ impl<'a> Server<'a> {
             }
             let mut done: Vec<&&IssueState> = mine
                 .iter()
-                .filter(|s| s.state == "merged" && now.saturating_sub(s.last_ts) < 86_400)
+                .filter(|s| s.done() && now.saturating_sub(s.last_ts) < 86_400)
                 .collect();
             done.sort_by_key(|s| std::cmp::Reverse(s.last_ts));
             if !done.is_empty() {
@@ -1224,8 +1224,9 @@ impl<'a> Server<'a> {
                             )
                         });
                         format!(
-                            "<p>#{} <span class=g>merged</span> {}{link}</p>",
+                            "<p>#{} <span class=g>{}</span> {}{link}</p>",
                             s.issue,
+                            s.state,
                             age(now.saturating_sub(s.last_ts))
                         )
                     })

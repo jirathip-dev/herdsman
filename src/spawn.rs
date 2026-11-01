@@ -451,10 +451,10 @@ pub fn spawn(
             ),
         ));
     }
-    let known = events
+    let prior = events
         .iter()
-        .any(|e| e.kind == "spawn" && e.str("worktree") == Some(&wt));
-    if role != "orch" && p.worktree.exists() && !known {
+        .rfind(|e| e.kind == "spawn" && e.str("worktree") == Some(&wt));
+    if role != "orch" && p.worktree.exists() && prior.is_none() {
         if let Some(why) = dirty(r, &p.worktree) {
             dup.push(("WORKTREE_DIRTY", format!("{wt} is no fleet lane and has {why}")));
         }
@@ -600,6 +600,13 @@ pub fn spawn(
     }
     event("spawn", d)?; // #107: logged even when the kick failed, so the running lane is tracked
     let confirmed = kicked?;
+    // #128: once confirmed, the superseded lane's pane goes (its folder is reused); live agents were handled above.
+    if let Some((agent, old)) = prior.and_then(|e| Some((e.str("agent")?, e.str("pane")?))) {
+        if o.supersede && confirmed && old != pane && !agents.iter().any(|a| a["pane_id"] == old) {
+            let _ = herdr::close(r, old);
+            event("lane-closed", json!({"agent": agent, "reason": "superseded"}))?;
+        }
+    }
     pj["pane"] = json!(pane);
     pj["confirmed"] = json!(confirmed);
     print_plan(out, &pj, o.json)?;
