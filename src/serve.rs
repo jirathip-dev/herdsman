@@ -1,4 +1,4 @@
-//! `herdsman serve`, the phone page (docs/serve.md): std `TcpListener`, a thread per request (at most 8);
+//! `herdsman serve`, the phone page (docs/serve.md): std `TcpListener`, a thread per request (at most 16, then 503);
 //! `/live` SSE clients get a thread each, fed by the 1 s watcher thread.
 use crate::config::{Config, Limits, Role};
 use crate::events::{age, append, fold, plain, read, Event, IssueState, States};
@@ -108,7 +108,7 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
             }
         });
         for mut st in l.incoming().flatten() {
-            if busy.fetch_add(1, Relaxed) < 8 {
+            if busy.fetch_add(1, Relaxed) < 16 {
                 sc.spawn(move || (drop(s.handle(st)), busy.fetch_sub(1, Relaxed)));
             } else {
                 busy.fetch_sub(1, Relaxed);

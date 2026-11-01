@@ -166,7 +166,7 @@
       href = location.href;
       const msg = o => o.body.get('op') === 'drive' ? 'drive started for ' + o.body.get('fleet') : 'moved #12 before #18';
       window.fetch = (u, o) => Promise.resolve(Object.defineProperties(new Response(''), { redirected: { value: true }, url: { value: location.origin + '/?msg=' + encodeURIComponent(msg(o)) } }));
-      const submit = op => { const f = [...$$('#queue form')].find(f => f.elements.op.value === op); f.inert = false; f.requestSubmit(); return f; };
+      const submit = op => { const f = $(`#queue input[name=op][value=${op}]`).form; f.inert = false; f.requestSubmit(); return f; };
       submit('mv');
       setTimeout(() => { toasted = $('.msg.g') && $('.msg.g').textContent; drove = 'drive started for ' + submit('drive').elements.fleet.value; }, 500);
       setTimeout(() => { drove = $('.msg.g') && $('.msg.g').textContent === drove; }, 1000);
