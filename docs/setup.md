@@ -73,25 +73,30 @@ The orchestrator picks issues off the queue and spawns the lanes. Check it worke
 
 ## 4. Watchdog
 
-`herdsman check` alerts once per stall, dead lane or unmerged ready issue. Run it every
-5 minutes. With cron (`crontab -e`):
+One command, safe to run again: `herdsman setup`. It writes and loads the tick job and the board
+job ([6](#6-board-on-the-phone-tailscale)), sets up `tailscale serve`, runs `herdsman profiles sync`,
+then runs `herdsman doctor` and exits with its code. Each step prints `✓ done`, `= already` or
+`✗ <error> → <fix>`; `--no-load` writes the jobs without loading them.
 
-```sh
-*/5 * * * * PATH=<home>/.local/share/herdsman/bin:<herdr-dir>:/usr/bin:/bin herdsman check
-```
+Run it every 5 minutes: `herdsman timer install`. That is the tick job alone: `herdsman tick` every
+5 minutes runs `herdsman check` (alerts once per stall, dead lane or unmerged ready issue), then
+`herdsman drive` (the loop of `driver = "herdsman"` fleets, [lanes.md](lanes.md#drive)). No cron and
+no Hermes needed.
 
-`<herdr-dir>` is the directory `command -v herdr` prints. Check it worked: `herdsman check`
-by hand exits 0 and prints nothing when all is well.
+- macOS: `~/Library/LaunchAgents/dev.herdsman.tick.plist` (`--label` picks another label),
+  `StartInterval 300`, `RunAtLoad`, loaded with `launchctl bootstrap gui/$(id -u) <plist>`.
+- Linux: `~/.config/systemd/user/dev.herdsman.tick.{service,timer}`, loaded with
+  `systemctl --user enable --now dev.herdsman.tick.timer`.
+- Its PATH is explicit: the directories of the harness binaries, `gh`, `herdr` and herdsman, then
+  `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` (`sysctl` and `vm_stat` live in `/usr/sbin`).
+- Both streams go to `~/.local/state/herdsman/tick.log`; the tick empties it past 1 MB.
+- A refusal (`HOST_BUSY`, …) is logged and the tick exits 0. A real error (config, herdr missing)
+  logs `tick-failed`, which notifiers send at most once an hour. A red row in the Host tab's Services
+  block sends one `service-red` an hour too.
 
-Fleets with `driver = "herdsman"` have no orchestrator lane: `herdsman drive` runs the loop
-([lanes.md](lanes.md#drive)). Run it right after `herdsman check`, in the same cron line:
-
-```sh
-PATH=<home>/.local/share/herdsman/bin:<herdr-dir>:/usr/bin:/bin
-*/5 * * * * herdsman check ; herdsman drive
-```
-
-`herdsman drive` by hand prints one line per action and nothing when no step is due.
+`herdsman timer status` prints loaded or not and the last tick. Undo: `herdsman timer remove`
+(unloads it and deletes its files). Check it worked: `herdsman doctor` shows `✓ timer` and a
+`watchdog check` that ran under 15 minutes ago.
 
 Optional: reinstall when staging goes green, so the binary never lags it. A short script
 you can add to the same crontab:
@@ -141,7 +146,15 @@ Check it worked: `echo hello | notify-telegram <chat>` arrives on your phone.
 
 ## 6. Board on the phone (Tailscale)
 
-Run `herdsman serve` as a service on `127.0.0.1:7777`. Its PATH must include the
+`herdsman setup` writes and loads this job for you: label `[serve] launchd_label` (default
+`dev.herdsman.serve`), address `[serve] addr` (default `127.0.0.1:7777`), `KeepAlive`, the tick's PATH,
+logs to `~/.local/state/herdsman/serve.log`. If a job under another label already runs
+`herdsman serve`, setup adopts it (`= adopted <plist>`) and never makes a second one. Re-labelling is
+manual: `launchctl bootout gui/$(id -u)/<old label>`, delete its plist, run `herdsman setup` again.
+Undo: `launchctl bootout gui/$(id -u)/dev.herdsman.serve` and delete the plist (Linux:
+`systemctl --user disable --now dev.herdsman.serve.service` and delete the unit).
+
+By hand: run `herdsman serve` as a service on `127.0.0.1:7777`. Its PATH must include the
 directory that holds `herdr`; without it the Lanes tab says `herdr agent list failed`.
 
 macOS, `~/Library/LaunchAgents/dev.herdsman.serve.plist`:
@@ -200,6 +213,9 @@ Tailscale admin console first. Point Tailscale at `127.0.0.1`, not at the tailne
 ```sh
 tailscale serve --bg --https=8443 http://127.0.0.1:7777
 ```
+
+`herdsman setup` runs this for you when `[serve] tailscale_https_port` is set (and `tailscale` is on
+PATH; otherwise it skips the step with a note). Undo: `tailscale serve --https=8443 off`.
 
 Tell herdsman that name is allowed. Without it, every button answers
 `forbidden: foreign Host or Origin`:

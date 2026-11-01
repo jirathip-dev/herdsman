@@ -1,0 +1,9 @@
+[Unit]
+Description=herdsman dev.herdsman.tick
+
+[Service]
+Environment=PATH=/opt/hermes/bin:/usr/bin:/bin:/usr/sbin:/sbin
+ExecStart=/x/herdsman tick
+StandardOutput=append:<dir>/state/tick.log
+StandardError=append:<dir>/state/tick.log
+Type=oneshot

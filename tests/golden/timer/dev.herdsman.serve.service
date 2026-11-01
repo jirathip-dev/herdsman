@@ -1,0 +1,12 @@
+[Unit]
+Description=herdsman dev.herdsman.serve
+
+[Service]
+Environment=PATH=/opt/hermes/bin:/usr/bin:/bin:/usr/sbin:/sbin
+ExecStart=/x/herdsman serve --addr 127.0.0.1:7777
+StandardOutput=append:<dir>/state/serve.log
+StandardError=append:<dir>/state/serve.log
+Restart=always
+
+[Install]
+WantedBy=default.target

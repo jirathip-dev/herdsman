@@ -8,8 +8,8 @@ A move is copy, regenerate, then `herdsman doctor` until every line is ✓. Path
 - Let lanes finish, or push their work: `herdsman kill <agent> --yes` pushes a lane's unpushed or dirty
   work to `wip/<agent>-<stamp>`.
 - `herdsman clean --yes` removes merged and closed lanes' worktrees.
-- Stop the old watchdog and page so both hosts never drive the same fleet: remove the cron line and
-  `launchctl bootout gui/$(id -u)/<label>` the serve job.
+- Stop the old watchdog and page so both hosts never drive the same fleet: `herdsman timer remove`
+  (or remove the old cron line) and `launchctl bootout gui/$(id -u)/<label>` the serve job.
 
 ## Copy
 
@@ -29,16 +29,14 @@ Copy the secret files with their mode (`scp -p` or `rsync -a`), never through ch
 
 - `~/.config/herdsman/claude/` (the per-role Claude profiles) and the Hermes profiles' hooks:
   `herdsman profiles sync`.
-- The launchd serve job: the plist in [setup.md](setup.md) under `~/Library/LaunchAgents`, then
-  `launchctl bootstrap gui/$(id -u) <plist>`.
-- `tailscale serve --bg --https=8443 http://127.0.0.1:7777`.
-- The cron line from [setup.md](setup.md#4-watchdog): `herdsman check` (and `herdsman drive`).
 - `gh auth login`, `herdr`, and each fleet's `local` checkout (`gh repo clone <repo> <local>`).
+- Then `herdsman setup` ([setup.md](setup.md#4-watchdog)): the tick and serve jobs, `tailscale serve`
+  (with `[serve] tailscale_https_port` set) and the profiles, then doctor.
 
 ## Don't copy
 
 - Worktrees (`~/.herdr/worktrees/`): their branches are on GitHub; new lanes make fresh ones.
-- Lock files and `check.at` / `drive.at`: the new host writes its own.
+- Lock files, `check.at` / `drive.at` and `tick.log`: the new host writes its own.
 
 ## New hostname
 
