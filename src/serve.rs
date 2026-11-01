@@ -855,22 +855,24 @@ impl<'a> Server<'a> {
         Ok(String::from_utf8_lossy(&out).trim().replace('\n', "; "))
     }
 
-    /// The sheet's transcript: up to 200 masked lines `before` the newest (load more), grouped per turn, as JSON.
+    /// The sheet's transcript: up to 200 masked ANSI lines `before` the newest (load more) of the lane's rolling
+    /// transcript (#138; the export reads the screen only), the live block's length and the status line, as JSON.
     fn transcript(&self, ctx: &Ctx, q: &BTreeMap<String, String>) -> Option<String> {
         let n = |k: &str, d: usize| q.get(k).and_then(|v| v.parse().ok()).unwrap_or(d);
-        let (lines, before) = (n("lines", 200).min(200), n("before", 0).min(2000));
+        let (lines, before) = (n("lines", 200).min(200), n("before", 0));
         let (cfg, events) = (Config::load(&ctx.config).ok()?, read(&ctx.state).ok()?);
         let l = self
             .lanes(ctx.now, &cfg, &events, &fold(&events))?
             .into_iter()
             .find(|l| Some(&l.name) == q.get("agent"))?;
-        let want = (before + lines).to_string();
-        let screen = herdr::recent(&self.cached(ctx.now, 5), l.pane.as_deref()?, &want).ok()?;
-        let all = lanes::tail(&lanes::chat(&screen).0.join("\n"), before + lines);
-        let page = &all[..all.len().saturating_sub(before)];
-        // `recent` is herdr's whole window: a short read (or the 2000 clamp) means nothing older.
-        let more = all.len() == before + lines && before + lines <= 2000;
-        Some(serde_json::json!({"harness": l.harness, "acts": if l.role == "other" { &["close"][..] } else { &["stop", "kill", "clean"] }, "pane": (l.role == "other").then_some(&l.pane), "turns": lanes::turns(page), "before": before + page.len(), "more": more}).to_string())
+        let screen = herdr::recent(&self.cached(ctx.now, 5), l.pane.as_deref()?, "200").ok()?;
+        let body = lanes::body(&screen);
+        let file = lanes::log(&ctx.state, &l.name).filter(|_| self.export.is_none());
+        let (all, live) = file.map_or((body.clone(), body.len()), |f| lanes::roll(&f, &body));
+        let end = all.len().saturating_sub(before);
+        let page = &all[end.saturating_sub(lines)..end];
+        let status = lanes::chat(&screen).1.map(lanes::strip);
+        Some(serde_json::json!({"harness": l.harness, "acts": if l.role == "other" { &["close"][..] } else { &["stop", "kill", "clean"] }, "pane": (l.role == "other").then_some(&l.pane), "lines": page, "live": if before == 0 { live.min(page.len()) } else { 0 }, "status": status, "before": before + page.len(), "more": end > page.len()}).to_string())
     }
 
     /// Run one form write; the line shown on the page (CLI output, or `REFUSED <CODE>: …` via `shown`).

@@ -463,6 +463,12 @@ fn clean_reclaims_lanes_whose_issue_closed_outside_merge() {
         "no GitHub writes"
     );
 
+    // #138: a removed lane's rolling transcript goes with it; a kept lane's stays.
+    let log = |a: &str| herdsman::lanes::log(&c.state, a).unwrap();
+    std::fs::create_dir_all(log("impl-21").parent().unwrap()).unwrap();
+    for a in ["impl-21", "impl-22"] {
+        std::fs::write(log(a), "⏺ hi\n").unwrap();
+    }
     let r1 = r();
     let (code, out) = run(&c, &r1, &["clean", "--yes"]);
     assert_eq!(code, 0, "{out}");
@@ -470,6 +476,7 @@ fn clean_reclaims_lanes_whose_issue_closed_outside_merge() {
         out.contains(&format!("removed {done} (sendmeter#21 issue closed)")),
         "{out}"
     );
+    assert!(!log("impl-21").exists() && log("impl-22").exists());
     assert!(r1.called("herdr worktree remove --workspace w21") && r1.called("herdr pane close w21:p1"));
     assert!(!r1.called("herdr worktree remove --workspace w22") && !r1.called("herdr worktree remove --workspace w23"));
     assert_eq!(r1.count("gh "), 0, "the closed-issue read is cached");

@@ -1,0 +1,148 @@
+<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Chat blocks mockup</title>
+<!-- #138 design mockup: the lane sheet's chat as Corral-style role blocks. serve.css is the board's, unchanged; the
+     block rules below are the only additions (tokens only, plus two proposed colour tokens) and move to serve.css in
+     phase 2. Static: blocks open natively (<details>); one line of script toggles [show all]. -->
+<link rel=stylesheet href=../../../assets/serve.css>
+<style>
+/* Mockup only: the sheet drawn in the page flow at its full detent, so the screenshot shows the whole chat. */
+body{padding:0 var(--s3)}
+#sheet{position:static}
+.sh{position:static;transform:none;border:0;border-radius:0;padding:0}
+.chat{overflow:visible}
+
+/* ---- proposed for serve.css (#138) ---- */
+/* Q1: two colour tokens next to --g/--a/--r/--l, from the same GitHub dark palette: --p (purple: the assistant edge,
+   ANSI magenta) and --c (cyan: ANSI cyan). */
+:root{--p:#bc8cff;--c:#39c5cf}
+/* A block per role run: a rounded surface with a 2 px left edge in the role colour --k (you blue, assistant purple,
+   tool run amber); a status block is quiet, recessed toward the base colour. */
+.blk{--k:var(--mute);margin:0;border:0;border-left:2px solid var(--k);border-radius:6px;background:#161b22;padding:0 var(--s2) var(--s2)}
+.blk:not([open]){padding-bottom:0}
+.blk.me{--k:var(--l)}.blk.ai{--k:var(--p)}.blk.run{--k:var(--a)}
+/* The header is the whole width: 28 px visible plus an 8 px ring above and below, a 44 px tap (#58). The role in its
+   colour; collapsed, a one-line preview; the chevron right. A tool run's header is its call: `$ cmd` or `Tool path`. */
+.blk>summary{position:relative;display:flex;align-items:center;gap:var(--s2);min-height:var(--ctl);font-size:var(--fs-meta);color:var(--mute);white-space:nowrap}
+.blk>summary::after{content:"";position:absolute;inset:calc(-1 * var(--s2)) 0}
+.blk>summary .k{flex:none;color:var(--k)}
+.blk>summary :is(.pv,.cmd){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.blk[open]>summary .pv{visibility:hidden}
+.blk>summary .cv{flex:none;margin-left:auto;font-style:normal}
+.blk>summary .cv::before{content:"▸"}.blk[open]>summary .cv::before{content:"▾"}
+.blk.run>summary .cmd{color:var(--fg)}
+.blk.run[open]>summary{align-items:flex-start;white-space:normal;padding-top:calc((var(--ctl) - 1.5em) / 2)}
+.blk.run[open]>summary .cmd{white-space:pre-wrap;overflow:visible}
+/* Prose (you, assistant): 13 px, minimal markdown as escaped text plus spans: bold, inline code, lists, headings. */
+.md{font-size:var(--fs)}
+.md>*{margin:0 0 var(--s2)}.md>:last-child{margin-bottom:0}
+.md .h{font-weight:700;color:var(--fg)}
+.md :is(ul,ol){padding-left:3ch}
+.md li+li{margin-top:var(--s1)}
+.md code,.md .c{color:var(--l);background:color-mix(in srgb,var(--l) 12%,transparent);border-radius:3px;padding:0 .3ch;font:inherit}
+/* Tool output: a tinted panel, 11 px, lines wrap inside it (never sideways); capped at 20 lines plus
+   [show all]: lines past the 20th (logical, before wrapping) sit in .rest. A line with a gutter (`52 -`) is a grid, so wrapped code stays right of its number. */
+.out{margin-top:var(--s1);border-radius:4px;background:color-mix(in srgb,var(--a) 6%,var(--bg));font-size:var(--fs-meta)}
+.out pre{margin:0;padding:var(--s1) var(--s2);white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}
+.out.cap:not(.all) .rest{display:none}
+.out .ln{display:grid;grid-template-columns:4ch 2ch minmax(0,1fr)}
+.out .ln>i{font-style:normal;color:var(--mute)}
+.more2{display:flex;align-items:center;gap:var(--s4);margin:var(--s2) 0 0;font-size:var(--fs-meta)}
+/* ANSI SGR mapped to the nearest board token (no terminal hex): fg, bold, dim, and two background tints. Green is --g's
+   hex, as .pairp.g: `@property --g` (the gait angle) voids the colour token (Q2). */
+.t-r{color:var(--r)}.t-g{color:#3fb950}.t-a{color:var(--a)}.t-l{color:var(--l)}.t-p{color:var(--p)}.t-c{color:var(--c)}.t-m{color:var(--mute)}.t-b{font-weight:700}
+.bg-r{background:color-mix(in srgb,var(--r) 15%,transparent)}.bg-g{background:color-mix(in srgb,#3fb950 15%,transparent)}
+.bg-r2{background:color-mix(in srgb,var(--r) 35%,transparent)}.bg-g2{background:color-mix(in srgb,#3fb950 35%,transparent)}
+/* Status (`Ran 2 shell commands`, `✻ Cogitated for 37s`): one quiet 11 px line, no header. */
+.qs{margin:0;padding:var(--s1) var(--s2);border-left:2px solid color-mix(in srgb,var(--mute) 40%,var(--bg));border-radius:6px;background:color-mix(in srgb,#161b22 40%,var(--bg));color:var(--mute);font-size:var(--fs-meta)}
+/* A gap in the rolling transcript: two reads with no overlap (the lane scrolled past unread). */
+.qs.gap{border-left-style:dashed;text-align:center}
+/* #105's live status line: the spinner, under the chat and above the composer, one line. */
+.live{flex:none;margin:0;padding-top:var(--s1);color:var(--mute);font-size:var(--fs-meta);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.live b{font-weight:400;color:var(--a)}
+</style></head>
+<body>
+<div id=sheet><div class="sh full" role=dialog>
+<div class=hd><p><b>herdsman-impl-129</b></p></div>
+<div class=top><p>#129 Fewer merge conflicts, any repo: rebase every open lane branch when its base moves</p><p class=a>working</p><p>impl · round 0 · claude · opus · xhigh · 41m</p><p>PR #136 · CI pending</p></div>
+<div class=acts><button type=button data-op=stop><span>Stop</span></button><button type=button data-op=kill><span>Kill</span></button><button type=button data-op=clean disabled><span>Clean</span></button></div>
+<div class=chat>
+<button type=button class=more><span>Load more</span></button>
+
+<details class="blk me" open><summary><span class=k>you</span><span class=pv>Read ~/.herdr/worktrees/herdsman/issue-129/.brief.md and execute it fully.</span><i class=cv></i></summary>
+<div class=md><p>Read ~/.herdr/worktrees/herdsman/issue-129/.brief.md and execute it fully.</p></div></details>
+
+<p class=qs>Read 1 file, ran 3 shell commands</p>
+
+<details class="blk ai"><summary><span class=k>claude</span><span class=pv>I read the brief. The overlap check skips merged issues only, so a closed issue's branch still counts as in flight.</span><i class=cv></i></summary>
+<div class=md><p>I read the brief. The overlap check skips merged issues only, so a closed issue's branch still counts as in flight.</p></div></details>
+
+<details class="blk run"><summary><span class=k>$</span><span class=cmd>cargo test --locked</span><i class=cv></i></summary>
+<div class=out><pre>test result: <span class=t-g>ok</span>. 218 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out</pre></div></details>
+
+<p class="qs gap">┄ not captured: scrolled past between reads ┄</p>
+
+<details class="blk ai" open><summary><span class=k>claude</span><span class=pv>Plan</span><i class=cv></i></summary>
+<div class=md><p class=h>Plan</p>
+<p>Base is green. The bug is in <code>src/overlap.rs</code>: the lane list keeps every issue that is not <b>merged</b>, so a closed one still blocks a rebase.</p>
+<ol><li>Swap <code>s.state != "merged"</code> for <code>!s.done()</code>, which the board already uses.</li>
+<li>Add <code>skips_closed</code> next to <code>skips_merged</code>.</li>
+<li>Run the gates: <code>cargo test</code>, <code>cargo fmt --check</code>, <code>cargo clippy</code>.</li></ol>
+<p><b>Not touching:</b></p>
+<ul><li>the merge path and its refusal codes;</li><li><code>herdsman clean</code>, which has its own done check.</li></ul></div></details>
+
+<details class="blk run" open><summary><span class=k>Update</span><span class=cmd>src/overlap.rs</span><i class=cv></i></summary>
+<div class=out><pre><span class=t-m>Updated src/overlap.rs (+1 -1)</span>
+<span class=ln><i>49</i><i></i><span>    <span class=t-g>git</span>(r, &amp;dir, &amp;[<span class=t-a>"fetch"</span>, <span class=t-a>"-q"</span>, <span class=t-a>"origin"</span>])?;</span></span><span class=ln><i>50</i><i></i><span>    <span class=t-c>let</span> st: <span class=t-g>Vec</span>&lt;IssueState&gt; = <span class=t-g>fold</span>(events)</span></span><span class=ln><i>51</i><i></i><span>        .<span class=t-g>into_values</span>()</span></span><span class="ln bg-r"><i class=t-r>52</i><i class=t-r>-</i><span>        .filter(|s| s.fleet == fleet &amp;&amp; s.<span class=bg-r2>state != "merged"</span>)</span></span><span class="ln bg-g"><i class=t-g>52</i><i class=t-g>+</i><span>        .<span class=t-g>filter</span>(|s| s.fleet == fleet &amp;&amp; <span class=bg-g2>!</span>s.<span class="t-g bg-g2">done</span><span class=bg-g2>()</span>)</span></span><span class=ln><i>53</i><i></i><span>        .<span class=t-g>collect</span>();</span></span><span class=ln><i>54</i><i></i><span>    <span class=t-c>let</span> pushed = st</span></span><span class=ln><i>55</i><i></i><span>        .<span class=t-g>iter</span>()</span></span></pre></div></details>
+
+<details class="blk run" open><summary><span class=k>$</span><span class=cmd>cargo test --locked overlap</span><span class=t-r>exit 101</span><i class=cv></i></summary>
+<div class="out cap"><pre>   <span class="t-g t-b">Compiling</span> herdsman v0.1.0 (~/.herdr/worktrees/herdsman/issue-129)
+    <span class="t-g t-b">Finished</span> `test` profile [unoptimized + debuginfo] target(s) in 6.12s
+     <span class="t-g t-b">Running</span> unittests src/main.rs (target/debug/deps/herdsman-3f1c0a9e)
+
+running 6 tests
+test overlap::tests::fetch_failure_is_reported ... <span class=t-g>ok</span>
+test overlap::tests::rebases_behind_lane ... <span class=t-g>ok</span>
+test overlap::tests::skips_dirty_worktree ... <span class=t-g>ok</span>
+test overlap::tests::skips_merged ... <span class=t-g>ok</span>
+test overlap::tests::skips_unpushed ... <span class=t-g>ok</span>
+test overlap::tests::skips_closed ... <span class=t-r>FAILED</span>
+
+failures:
+
+---- overlap::tests::skips_closed stdout ----
+
+<span class=t-r>thread 'overlap::tests::skips_closed' panicked at src/overlap.rs:214:9:</span>
+<span class=t-r>assertion `left == right` failed: a closed issue's branch is not in flight</span>
+  left: ["issue-7", "issue-9"]
+ right: ["issue-7"]
+<span class=rest>note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    overlap::tests::skips_closed
+
+test result: <span class=t-r>FAILED</span>. 5 passed; 1 failed; 0 ignored; 0 measured; 212 filtered out; finished in 0.04s
+
+<span class="t-r t-b">error</span>: test failed, to rerun pass `--bin herdsman`</span></pre>
+<p class=more2><button type=button onclick="this.closest('.out').classList.toggle('all');this.firstChild.textContent=this.closest('.out').classList.contains('all')?'show less':'show all'"><span>show all</span></button><span class=m>20 of 29 lines</span></p></div></details>
+
+<details class="blk ai" open><summary><span class=k>claude</span><span class=pv>One failure: <code>skips_closed</code>.</span><i class=cv></i></summary>
+<div class=md><p>One failure: <code>skips_closed</code>. <code>IssueState::done()</code> reads <b>merged</b> only, so the closed fixture stays in the list. Fixing <code>done()</code> rather than the filter, so <code>clean</code> gets it too.</p></div></details>
+
+<details class="blk run"><summary><span class=k>Update</span><span class=cmd>src/state.rs</span><i class=cv></i></summary>
+<div class=out><pre><span class=t-m>Updated src/state.rs (+1 -1)</span></pre></div></details>
+
+<p class=qs>Ran 2 shell commands</p>
+
+<details class="blk ai" open><summary><span class=k>claude</span><span class=pv>Now run the gates.</span><i class=cv></i></summary>
+<div class=md><p>Now run the gates.</p></div></details>
+
+<details class="blk run"><summary><span class=k>$</span><span class=cmd>L=…/scratchpad; cargo build --release --locked &gt;$L/build.log 2&gt;&amp;1; echo build=$?; cargo fmt --check &gt;$L/fmt.log 2&gt;&amp;1; echo fmt=$?; cargo clippy --all-targets --locked -- -D warnings &gt;$L/…</span><span class=m>2m 15s</span><i class=cv></i></summary>
+<div class=out><pre><span class=t-m>(2m 15s · 4 lines)</span></pre></div></details>
+</div>
+<p class=live><b>✽</b> Gusting… (2m 47s · ↓ 1.8k tokens)</p>
+<form class=reply onsubmit="return false"><textarea name=text rows=1 placeholder="Message, or / for commands" aria-label=message></textarea><button><span>Send</span></button></form>
+<p class=st></p>
+</div></div>
+</body></html>

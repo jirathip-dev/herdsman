@@ -52,15 +52,20 @@ fn demo_export_writes_the_file_set_without_running_anything() {
     assert_eq!(lanes.len(), 12, "{lanes:?}");
     for l in &lanes {
         let j: Value = serde_json::from_str(&std::fs::read_to_string(site.join("lane").join(l)).unwrap()).unwrap();
-        assert!(!j["turns"].as_array().unwrap().is_empty(), "{l}: no turns");
+        assert!(!j["lines"].as_array().unwrap().is_empty(), "{l}: no lines");
     }
     let dsh: Value =
         serde_json::from_str(&std::fs::read_to_string(site.join("lane/acme-api-impl-17.json")).unwrap()).unwrap();
     assert_eq!(dsh["harness"], "dsh");
     // #105 gate 2: the sheet's lane has a titled input divider and a spinner on screen; neither is chat.
-    let sheet =
-        std::fs::read_to_string(site.join("lane/acme-web-impl-48-contrast-audit-for-every-settings-pane-abxx.json"))
-            .unwrap();
+    // #138: the spinner is the sheet's live status line, sent beside the lines.
+    let j: Value = serde_json::from_str(
+        &std::fs::read_to_string(site.join("lane/acme-web-impl-48-contrast-audit-for-every-settings-pane-abxx.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(j["status"].as_str().unwrap().contains("Combobulating"), "{j}");
+    let sheet = j["lines"].to_string();
     for gone in [
         "────",
         "acme-web · impl #48",

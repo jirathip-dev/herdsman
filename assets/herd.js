@@ -89,7 +89,7 @@ function scene() {
 }
 
 // Corral's horses (#30's port, horses.svg next to this script) as <use> symbols, shared with the Lanes
-// avatars: legs rotate by the inherited `--g` (gait), manes skew by `--mane` (storm), so instances need no per-leaf DOM.
+// avatars: legs rotate by the inherited `--gait`, manes skew by `--mane` (storm), so instances need no per-leaf DOM.
 const defs = document.createElementNS(NS, 'svg');
 defs.setAttribute('class', 'hdefs');
 defs.innerHTML = '<defs><linearGradient id=hgr gradientUnits=userSpaceOnUse x1=0 y1=250 x2=0 y2=640><stop offset=0 stop-color="#bcc17b"/><stop offset=".5" stop-color="#8e9c58"/><stop offset=1 stop-color="#485e3b"/></linearGradient>' +
@@ -107,7 +107,7 @@ src.querySelectorAll('g.horse').forEach((g, k) => {
   s.append(g.cloneNode(true));
   s.querySelectorAll('.leg').forEach(l => {
     const a = l.style.getPropertyValue('--a') || '0deg', sign = /leg-(nf|fh)/.test(l.getAttribute('class')) ? 1 : -1;
-    l.setAttribute('style', `transform-box:fill-box;transform-origin:50% 0;transform:rotate(calc(${a} + ${sign} * var(--g, 0deg)))`);
+    l.setAttribute('style', `transform-box:fill-box;transform-origin:50% 0;transform:rotate(calc(${a} + ${sign} * var(--gait, 0deg)))`);
   });
   s.querySelectorAll('[fill="var(--m)"],[stroke="var(--m)"]').forEach(m => m.setAttribute('style', 'transform-box:fill-box;transform-origin:100% 100%;transform:skewX(var(--mane, 0deg))'));
   defs.append(s);
@@ -303,7 +303,7 @@ function frame(ms) {
     // Working horses trot (diagonal leg pairs, Corral's 0.4 s stride) and roam a little.
     p._walk.forEach((s, i) => {
       const g = Math.sin(t * Math.PI / 0.4 + i * 1.3);
-      s.style.setProperty('--g', (g * 16).toFixed(1) + 'deg');
+      s.style.setProperty('--gait', (g * 16).toFixed(1) + 'deg');
       s.style.transform = `translate(${(Math.sin(t * 0.5 + i * 2.1) * 10).toFixed(1)}px, ${(-Math.abs(g) * 1.5).toFixed(1)}px)`;
     });
   }

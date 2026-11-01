@@ -63,12 +63,10 @@ pub fn read(r: &dyn Runner, pane: &str) -> Result<String> {
     ok(r, &read_argv(pane))
 }
 
-/// The pane's last `lines` lines (herdr's whole `recent` window when shorter).
+/// The pane's last `lines` lines (herdr's whole `recent` window when shorter), with their SGR colours (#138).
 pub fn recent(r: &dyn Runner, pane: &str, lines: &str) -> Result<String> {
-    ok(
-        r,
-        &argv(&["pane", "read", pane, "--source", "recent", "--lines", lines]),
-    )
+    let a = format!("pane read {pane} --source recent --lines {lines} --format ansi");
+    ok(r, &argv(&a.split(' ').collect::<Vec<_>>()))
 }
 
 pub fn keys_argv(pane: &str, key: &str) -> Vec<String> {

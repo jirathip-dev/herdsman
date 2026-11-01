@@ -1,0 +1,18 @@
+[
+  " ▐▛███▛█   Claude Code v2.1.309",
+  "▝▜██████▀  Sonnet 5.5 · Claude API",
+  " ▝▝   ▝▝   ~/.herdr/worktrees/herdsman/rev-97-r1",
+  "❯ Read /Users/me/.herdr/worktrees/herdsman/rev-97-r1/.brief.md and execute it fully.",
+  "  Read 1 file, ran 2 shell commands",
+  "❯ Also read /Users/me/.herdr/worktrees/herdsman/rev-97-r1/.addendum.md (exact head, cap commit authorised by q24,",
+  "  read-only checks). Context, not a relaxation.",
+  "  Ran 2 shell commands",
+  "⏺ Running fmt, clippy and tests on the exact head; the build is slow, so I'm waiting on it.",
+  "  Read 1 file, ran 1 shell command",
+  "  ⎿  Invalid tool parameters",
+  "⏺ That was a wasted call; I'll just wait for the background task notification and meanwhile inspect the tests diff.",
+  "⏺ Running cd /Users/me/.herdr/worktrees/herdsman/rev-… · 16s",
+  "  ⎿  $ cd /Users/me/.herdr/worktrees/herdsman/rev-97-r1; ./target/debug/herdsman doctor; echo exit $?; ps aux|grep",
+  "     -c '[c]argo' (17s)",
+  "     (ctrl+b to run in background)"
+]

@@ -1,4 +1,4 @@
-:root{--bg:#0d1117;--fg:#c9d1d9;--mute:#8b949e;--line:#21262d;--g:#3fb950;--a:#d29922;--r:#f85149;--l:#58a6ff;color-scheme:dark;
+:root{--bg:#0d1117;--fg:#c9d1d9;--mute:#8b949e;--line:#21262d;--g:#3fb950;--a:#d29922;--r:#f85149;--l:#58a6ff;--p:#bc8cff;--c:#39c5cf;color-scheme:dark;
   --fs:13px;--fs-meta:11px;--fs-input:16px;--fs-code:32px;--ctl:28px;--hit:44px;--s1:4px;--s2:8px;--s3:12px;--s4:16px}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -89,10 +89,10 @@ main{transition:transform .2s}
 .run b:last-child{animation:f .5s steps(1) infinite}
 .run b:first-child{animation:f .5s steps(1) -.25s infinite}
 @keyframes f{0%{visibility:hidden}50%{visibility:visible}}
-/* Corral's gait: herd.js's symbols swing diagonal leg pairs in opposition by the inherited --g. */
-@property --g{syntax:'<angle>';inherits:true;initial-value:0deg}
+/* Corral's gait: herd.js's symbols swing diagonal leg pairs in opposition by the inherited --gait. */
+@property --gait{syntax:'<angle>';inherits:true;initial-value:0deg}
 .av.working .px{animation:gt .4s ease-in-out infinite alternate}
-@keyframes gt{from{--g:-16deg}to{--g:16deg}}
+@keyframes gt{from{--gait:-16deg}to{--gait:16deg}}
 .av.done .px{opacity:.5}
 .av.r .px{filter:sepia(1) saturate(6) hue-rotate(-50deg)}
 @media (prefers-reduced-motion:reduce){.run b,.av .px{animation:none!important}.run b:last-child{visibility:hidden}}
@@ -113,14 +113,11 @@ main{transition:transform .2s}
 .top{flex:none;max-height:40%;overflow:hidden auto;overscroll-behavior:contain;touch-action:pan-y;border-bottom:1px solid var(--line);padding-bottom:var(--s2)}
 .top p{margin:var(--s1) 0}
 .chat{flex:1;overflow:hidden auto;overscroll-behavior:contain;touch-action:pan-y;display:flex;flex-direction:column;gap:var(--s2);padding:var(--s2) 0}
-.b{margin:0;padding:var(--s1) var(--s2);border-radius:10px;background:#161b22;white-space:pre-wrap;font-size:var(--fs-meta);max-width:92%}
-.b.me{align-self:flex-end;background:#1f3a5f}
 .reply,.pairf{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s4);padding:var(--s2) 0;flex:none}
 .reply textarea{flex:1;min-width:0;font:inherit;color:var(--fg);background:#161b22;border:1px solid #30363d;border-radius:6px;padding:var(--s2);min-height:var(--hit);resize:none;font-size:var(--fs-input)}
 /* #59: the pairing panel in the flow under the header (or the sheet's Pair button): the code large, how to approve it under it. */
 .pairp{flex:none;margin:var(--s2) 0;padding:var(--s3);border:1px solid var(--a);border-radius:8px;cursor:pointer;scroll-margin-top:calc(var(--hit) + var(--s3))}
-/* Green as --g's hex: `@property --g` (the gait angle below) voids the colour token. */
-.pairp.g{border-color:#3fb950;color:#3fb950}.pairp.r{border-color:var(--r)}.pairp p{margin:0}
+.pairp.g{border-color:var(--g);color:var(--g)}.pairp.r{border-color:var(--r)}.pairp p{margin:0}
 .pairp .code{font-size:var(--fs-code);letter-spacing:.2em;text-align:center}
 .st{flex:none;margin:0;font-size:var(--fs-meta);min-height:1.5em}
 .ask{border:1px solid var(--r);background:color-mix(in srgb,var(--r) 15%,transparent);border-radius:8px;padding:var(--s2);margin:var(--s2) 0}
@@ -144,10 +141,49 @@ button[name=choice]>span,button.pick>span{display:-webkit-box;-webkit-line-clamp
 .cf{border:1px solid var(--r);border-radius:8px;padding:var(--s2)}.cf p{flex-basis:100%;margin:0;font-size:var(--fs-meta)}
 .cmds{flex:none;list-style:none;margin:0;padding:0;border:1px solid #30363d;border-radius:6px}
 .cmds li{padding:var(--s3);min-height:var(--hit);border-bottom:1px solid var(--line);cursor:pointer}
-.turn{display:flex;flex-direction:column;gap:var(--s1)}
-.tool{border:0;font-size:var(--fs-meta)}.tool summary{display:block;min-height:0;padding:var(--s2);line-height:var(--ctl);color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tool summary::before{content:"▸ "}.tool[open] summary::before{content:"▾ "}
-.tool pre{margin:0;padding:0 var(--s2) var(--s1);white-space:pre-wrap;color:var(--mute)}
+.chat>.now{display:flex;flex-direction:column;gap:var(--s2)}
+/* #138 (docs/design/chat-blocks): a block per role run, a rounded surface with a 2 px left edge in the role colour --k
+   (you blue, assistant purple, tool run amber); status is a quiet line recessed toward the base colour. */
+.blk{--k:var(--mute);margin:0;border:0;border-left:2px solid var(--k);border-radius:6px;background:#161b22;padding:0 var(--s2) var(--s2)}
+.blk:not([open]){padding-bottom:0}
+.blk.me{--k:var(--l)}.blk.ai{--k:var(--p)}.blk.run{--k:var(--a)}
+/* The header is the whole width: 28 px visible plus an 8 px ring above and below, a 44 px tap (#58). The role in its
+   colour; collapsed, a one-line preview; the chevron right. A tool run's header is its call: `$ cmd` or `Tool path`. */
+.blk>summary{position:relative;display:flex;align-items:center;gap:var(--s2);min-height:var(--ctl);font-size:var(--fs-meta);color:var(--mute);white-space:nowrap}
+.blk>summary::after{content:"";position:absolute;inset:calc(-1 * var(--s2)) 0}
+.blk>summary .k{flex:none;color:var(--k)}
+.blk>summary :is(.pv,.cmd){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.blk[open]>summary .pv{visibility:hidden}
+.blk>summary .cv{flex:none;margin-left:auto;font-style:normal}
+.blk>summary .cv::before{content:"▸"}.blk[open]>summary .cv::before{content:"▾"}
+.blk.run>summary .cmd{color:var(--fg)}
+.blk.run[open]>summary{align-items:flex-start;white-space:normal;padding-top:calc((var(--ctl) - 1.5em) / 2)}
+.blk.run[open]>summary .cmd{white-space:pre-wrap;overflow:visible}
+/* Prose (you, assistant): 13 px, minimal markdown as escaped text plus spans: bold, inline code, lists, headings. */
+.md{font-size:var(--fs)}
+.md>*{margin:0 0 var(--s2)}.md>:last-child{margin-bottom:0}
+.md .h{font-weight:700;color:var(--fg)}
+.md :is(ul,ol){padding-left:3ch}
+.md li+li{margin-top:var(--s1)}
+/* A code chip is neutral (not link blue) and stays whole up to the line width, then wraps anywhere. */
+.md code{display:inline-block;max-width:100%;vertical-align:bottom;color:var(--fg);background:color-mix(in srgb,var(--mute) 18%,transparent);border-radius:3px;padding:0 .3ch;font:inherit;overflow-wrap:anywhere}
+/* Tool output: a tinted panel, 11 px, lines wrap inside it (never sideways) under their own start (--i: the gutter
+   plus the line's indent, in ch); capped at 20 lines plus [show all] (on a failure the head and tail, `⋯ N lines` between). */
+.out{margin-top:var(--s1);border-radius:4px;background:color-mix(in srgb,var(--a) 6%,var(--bg));font-size:var(--fs-meta)}
+.out pre{margin:0;padding:var(--s1) var(--s2);white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}
+.out .ol{display:block;padding-left:calc(var(--i) * 1ch);text-indent:calc(var(--i) * -1ch)}
+.out.cap:not(.all) .rest,.out.all .cut{display:none}
+.more2{display:flex;align-items:center;gap:var(--s4);margin:var(--s2) 0 0;font-size:var(--fs-meta)}
+/* ANSI SGR mapped to the nearest board token (no terminal hex): fg, bold, dim, and two background tints. */
+.t-r{color:var(--r)}.t-g{color:var(--g)}.t-a{color:var(--a)}.t-l{color:var(--l)}.t-p{color:var(--p)}.t-c{color:var(--c)}.t-m{color:var(--mute)}.t-b{font-weight:700}
+.bg-r{background:color-mix(in srgb,var(--r) 15%,transparent)}.bg-g{background:color-mix(in srgb,var(--g) 15%,transparent)}
+.bg-r2{background:color-mix(in srgb,var(--r) 35%,transparent)}.bg-g2{background:color-mix(in srgb,var(--g) 35%,transparent)}
+/* Status (`Ran 2 shell commands`, `✻ Cogitated for 37s`): one quiet 11 px line, no header; dashed: a gap in the transcript. */
+.qs{margin:0;padding:var(--s1) var(--s2);border-left:2px solid color-mix(in srgb,var(--mute) 40%,var(--bg));border-radius:6px;background:color-mix(in srgb,#161b22 40%,var(--bg));color:var(--mute);font-size:var(--fs-meta)}
+.qs.gap{border-left-style:dashed;text-align:center}
+/* #105's live status line: the spinner, under the chat and above the composer, one line. */
+.live{flex:none;margin:0;padding-top:var(--s1);color:var(--mute);font-size:var(--fs-meta);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.live b{font-weight:400;color:var(--a)}
 .more{align-self:center}
 .unp{margin:auto;padding:var(--s3);text-align:center;border:1px solid var(--a);border-radius:8px;color:var(--a)}
 #dot.demo{color:var(--l)}
@@ -173,5 +209,5 @@ details.q[open]{padding-bottom:var(--s2)}
 .gt .k::before{top:calc(var(--y) + var(--fs) * .4)}
 /* #115 amendment A: the [?] legend, right-aligned over the queue; it opens in the lane sheet with the lane parts hidden. */
 .qh{display:flex;justify-content:flex-end;margin:var(--s2) 0 0}
-.sh.lg :is(.acts,.cf,.chat,.pairf,.cmds,.reply,.st){display:none}
+.sh.lg :is(.acts,.cf,.chat,.live,.pairf,.cmds,.reply,.st){display:none}
 .sh.lg .top{max-height:none;border:0}

@@ -256,10 +256,12 @@ fn chrome(l: &str) -> bool {
 
 /// A screen's transcript and live status. Not transcript: the frame from the second-last divider down, and the line
 /// above it opening with a glyph and holding a timer (`(25m 52s`: a spinner, a status bar) plus blank/detail lines.
+/// #138: an ANSI screen parses on its text (SGR codes dropped) and keeps its codes.
 pub fn chat(screen: &str) -> (Vec<&str>, Option<&str>) {
     let lines: Vec<&str> = screen.lines().collect();
-    let rule = |l: &&str| l.split(|c| !GLYPHS[0].contains(c)).any(|r| r.chars().count() >= 20);
-    let rules: Vec<usize> = (0..lines.len()).filter(|&i| rule(&lines[i])).collect();
+    let text: Vec<String> = lines.iter().map(|l| strip(l)).collect();
+    let rule = |l: &str| l.split(|c| !GLYPHS[0].contains(c)).any(|r| r.chars().count() >= 20);
+    let rules: Vec<usize> = (0..lines.len()).filter(|&i| rule(&text[i])).collect();
     let cut = rules.len().checked_sub(2).map_or(lines.len(), |i| rules[i]);
     let after = |l: &str| {
         let (t, pad) = (l.trim(), l.len() - l.trim_start().len());
@@ -267,10 +269,67 @@ pub fn chat(screen: &str) -> (Vec<&str>, Option<&str>) {
     };
     let timer = |w: &str| matches!(w.strip_suffix(['h', 'm', 's']).map(str::parse::<u32>), Some(Ok(_)));
     let live = |t: &str| t.starts_with(|c: char| !c.is_alphanumeric()) && t.split(['(', ' ', ')']).any(timer);
-    let i = lines[..cut].iter().rposition(|l| !after(l));
-    let status = i.filter(|&i| live(lines[i].trim()));
-    let body = lines[..status.unwrap_or(cut)].iter().copied().filter(|l| !rule(l));
+    let i = text[..cut].iter().rposition(|l| !after(l));
+    let status = i.filter(|&i| live(text[i].trim()));
+    let body = (0..status.unwrap_or(cut))
+        .filter(|&i| !rule(&text[i]))
+        .map(|i| lines[i]);
     (body.collect(), status.map(|i| lines[i].trim()))
+}
+
+/// `f(code, text)` per run of an ANSI line: the first run has no code, every later one its ESC-led CSI code.
+fn sgr(l: &str, f: impl Fn(&str, &str) -> String) -> String {
+    let mut parts = l.split('\x1b');
+    let first = f("", parts.next().unwrap_or_default());
+    let run = |p: &str| {
+        let (c, t) = p.split_at(p.find(|c: char| c.is_ascii_alphabetic()).map_or(0, |j| j + 1));
+        f(&format!("\x1b{c}"), t)
+    };
+    first + &parts.map(run).collect::<String>()
+}
+
+/// An ANSI line's text.
+pub fn strip(l: &str) -> String {
+    sgr(l, |_, t| t.into())
+}
+
+/// #138: a screen's transcript lines, masked run by run (an SGR code never glues onto a secret).
+pub fn body(screen: &str) -> Vec<String> {
+    let lines = chat(screen).0.into_iter();
+    lines
+        .map(|l| sgr(l.trim_end(), |c, t| format!("{c}{}", mask(t))))
+        .collect()
+}
+
+/// #138: a lane's rolling transcript, `<state dir>/transcripts/<agent>.log`; None for a name that is no plain file name.
+pub fn log(state: &Path, agent: &str) -> Option<std::path::PathBuf> {
+    let plain = !agent.starts_with('.') && agent.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+    plain.then(|| state.with_file_name("transcripts").join(format!("{agent}.log")))
+}
+
+/// The line where two reads had no overlap: the lane scrolled past between them.
+pub const GAP: &str = "┄ not captured: scrolled past between reads ┄";
+
+/// #138: append a read's settled lines (above its last block head, which a re-render still changes) to `file` past
+/// their longest overlap with its tail (compared as text), else after a `GAP` line; the last 5,000 lines, mode 0600.
+/// The file's lines plus the live block, and the live block's length.
+pub fn roll(file: &Path, body: &[String]) -> (Vec<String>, usize) {
+    let head = |l: &String| strip(l).trim_start().starts_with(|c| "⏺❯›>$•┊💻".contains(c));
+    let (new, live) = body.split_at(body.iter().rposition(head).unwrap_or(0));
+    let mut all: Vec<String> = std::fs::read_to_string(file).map_or(vec![], |s| s.lines().map(String::from).collect());
+    let same = |a: &[String], b: &[String]| a.iter().zip(b).all(|(x, y)| strip(x) == strip(y));
+    let m = new.len().min(all.len());
+    let k = (0..=m).rfind(|&k| same(&all[all.len() - k..], &new[..k])).unwrap_or(0);
+    if k < new.len() {
+        if k == 0 && !all.is_empty() {
+            all.push(GAP.into());
+        }
+        all.extend_from_slice(&new[k..]);
+        all.drain(..all.len().saturating_sub(5000));
+        let _ = crate::devices::write0600(file, (all.join("\n") + "\n").as_bytes());
+    }
+    all.extend_from_slice(live);
+    (all, live.len())
 }
 
 /// The live status line, else the latest action (Claude `⏺`, Hermes `💻`/`┊`, else non-chrome), masked, ≤ 60 chars.
@@ -368,38 +427,4 @@ pub fn prompt(screen: &str) -> Option<Value> {
     let card = json!({"title": title, "reason": why.join(" "), "command": cmd.join("\n"), "countdown": cd,
         "question": mask(&question), "options": options, "push": cd.is_none_or(|s| s == 0)});
     Some(card)
-}
-
-/// Transcript lines per turn (a typed `❯`/`>`/`›` prompt opens one, as `me`): text runs, and tool calls
-/// (Claude `⏺ Name(…)` plus its indented/`⎿` output, Hermes `┊` runs) as `{"tool": head, "body": …}`.
-pub fn turns(lines: &[String]) -> Vec<Value> {
-    let mut out: Vec<Value> = vec![];
-    for l in lines {
-        let t = l.trim_start();
-        let typed = t.starts_with(['❯', '>', '›']);
-        if out.is_empty() || typed {
-            out.push(serde_json::json!({"me": typed.then_some(t), "items": []}));
-            if typed {
-                continue;
-            }
-        }
-        let items = out.last_mut().and_then(|t| t["items"].as_array_mut()).expect("a turn");
-        let head = t
-            .strip_prefix("⏺ ")
-            .and_then(|r| r.split_once('('))
-            .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(char::is_alphanumeric));
-        let tool = items.last().is_some_and(|i| i.get("tool").is_some());
-        let (k, v) = match items.last_mut() {
-            Some(i) if tool && !head && (l.starts_with(' ') || t.starts_with(['⎿', '┊'])) => ("body", i),
-            Some(i) if !tool && !head && !t.starts_with('┊') => ("text", i),
-            _ => {
-                let k = if head || t.starts_with('┊') { "tool" } else { "text" };
-                items.push(serde_json::json!({k: t}));
-                continue;
-            }
-        };
-        let s = v[k].as_str().unwrap_or_default();
-        v[k] = Value::from(if s.is_empty() { l.clone() } else { format!("{s}\n{l}") });
-    }
-    out
 }
