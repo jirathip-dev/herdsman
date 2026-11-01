@@ -184,7 +184,8 @@ if ($('.msg.g, .msg.r')) toast($('.msg.g, .msg.r').textContent);
 // ▲/▼ and Set POST with fetch (same checks), toast the redirect's `msg` and patch in place: the scroll stays (#65).
 // The plain form POST is the no-JS fallback.
 document.addEventListener('submit', async e => {
-  const f = e.target, op = f.elements.op && f.elements.op.value;
+  const f = e.target, op = f.elements.op && f.elements.op.value, c = e.submitter && e.submitter.dataset.confirm;
+  if (c && !confirm(c)) return e.preventDefault(); // #130: merge anyway
   if (op !== 'mv' && op !== 'set') return;
   e.preventDefault();
   try {

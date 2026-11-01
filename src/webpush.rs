@@ -2,7 +2,7 @@
 //! VAPID JWT (RFC 8292), sent by `curl` with the body on stdin. The VAPID key and the subscriptions
 //! are secrets: 0600 files, never logged, printed or served (only the public key and labels are).
 use crate::devices::{random, save, write0600};
-use crate::events::{plain, Event};
+use crate::events::{finding, plain, read, Event};
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::Aes128Gcm;
 use anyhow::{anyhow, bail, Result};
@@ -221,7 +221,16 @@ pub fn send(log: &Path, sub: &str, ev: &Event, only: Option<&str>) -> Result<Str
         "queue"
     };
     let url = ev.issue.map_or(String::new(), |n| format!("?issue={n}")) + "#" + tab;
-    let payload = serde_json::json!({"title": "herdsman", "body": plain(ev), "url": format!("/{url}")}).to_string();
+    // #130: needs-human says who and why in the title; the body adds the last verdict's first finding.
+    let n = ev.issue.filter(|_| ev.kind == "needs-human");
+    let why = ev.str("reason").unwrap_or("?");
+    let evs = n.map(|_| read(log)).transpose()?.unwrap_or_default();
+    let first = n.and_then(|n| finding(&evs, &ev.fleet, n)).unwrap_or("");
+    let (title, body) = match n {
+        Some(n) => (format!("#{n} needs you: {why}"), format!("{why}\n{first}")),
+        None => ("herdsman".into(), plain(ev)),
+    };
+    let payload = serde_json::json!({"title": title, "body": body.trim(), "url": format!("/{url}")}).to_string();
     let (mut sent, mut gone, mut errs) = (0, vec![], vec![]);
     for s in &all {
         let one = || -> Result<u16> {

@@ -92,6 +92,20 @@ does one pass, from cron after `herdsman check` ([setup.md](setup.md)) or the bo
 | a lane killed | `spawn impl` (respawn) |
 | merged lanes left | `clean --yes` |
 
+**`needs-human` is the owner's** (#130). It pushes to phones (`#96 needs you: review rounds ran out (4/3)`,
+then the last verdict's first finding), and the page shows a needs-you card for it on the Queue tab and in the
+Herd strip (the issue's horse, or a gate horse when it has no lane, wears a red `!`). A paired phone's buttons:
+
+- **merge anyway** (PASS at the PR head, CI green, mergeable; confirmed) runs
+  `herdsman merge <fleet> <issue> --owner-override`. The flag lifts **only** `ROUND_LIMIT`: an exact-head
+  PASS, green CI and the serial gate still apply. The `merged` event records `by: owner, override: "ROUND_LIMIT"`
+  and the closing comment says `Owner override: ROUND_LIMIT`.
+- **one more round** logs `round-extended` (this issue's limit is `review_rounds` + 1 per extension) and
+  spawns `impl --supersede`.
+- **park** logs `parked`: the issue leaves `needs-human` and shows as parked.
+
+This replaces raising `review_rounds` in fleet.toml, merging and restoring it by hand.
+
 Paused fleets are skipped (no pass, no `last pass`); one fleet's error doesn't skip the others. drive never answers asks (a lane's question stays a needs-you card),
 never passes `--force`, and never bypasses a refusal: `REFUSED` (e.g. `HOST_BUSY`, `CAP`,
 `SERIAL_BUSY`) is printed and logged once per item an hour (cron stays quiet), and the step is retried

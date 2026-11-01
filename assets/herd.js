@@ -129,11 +129,23 @@ let data = null, wind = 0, storm = false, saved = get('herdp'), placed = false;
 
 // #65: Corral's label card, 2 lines: the name, then state mark + word + age (the issue title is the tooltip).
 function horse(l, k) {
-  return `<button type=button class="hh ${hx(l.state)}" data-agent="${hx(l.name)}" data-k=${k}${l.title ? ` title="${hx(l.title)}"` : ''}><svg viewBox="0 0 132 100" style="${hx(l.coat)}"><use href="#hp${POSE[l.state] || 2}"/></svg>` +
+  return `<button type=button class="hh ${hx(l.state)}" data-agent="${hx(l.name)}" data-k=${k}${l.needs ? ` data-n=${l.issue}` : ''}${l.title ? ` title="${hx(l.title)}"` : ''}><svg viewBox="0 0 132 100" style="${hx(l.coat)}"><use href="#hp${POSE[l.state] || 2}"/></svg>` +
     `<span class=hl><b>${hx(l.name)}</b><span><i class=${hx(l.tone)}>${MARK[l.state] || '?'} ${hx(l.shown)}</i>${l.age ? ' · ' + hx(l.age) : ''}</span></span></button>`;
 }
 const queued = q => `<button type=button class=hqh data-i=${q.issue}><svg viewBox="0 0 132 100" style="${hx(q.coat)}"><use href="#hp2"/></svg>` +
-  `<span>#${q.issue}${q.blocked_by ? `<br><i class=r>⛔#${q.blocked_by}</i>` : ''}</span></button>`;
+  `<span>#${q.issue}${q.needs ? '<br><i class=r>! needs you</i>' : q.blocked_by ? `<br><i class=r>⛔#${q.blocked_by}</i>` : ''}</span></button>`;
+// #130: a fleet's `needs` (its needs-human issues): their horses wear a red `!` in the blocked band, an issue
+// with no lane waits at the gate; a tap opens its needs-you card.
+function nh(f) {
+  const n = f.needs || [], lanes = f.lanes.map(l => n.includes(l.issue) ? Object.assign({}, l, { needs: true, state: 'blocked', tone: 'r', shown: 'needs you' }) : l);
+  const queue = f.queue.filter(q => !n.includes(q.issue) || !f.lanes.some(l => l.issue === q.issue)).map(q => Object.assign({}, q, { needs: n.includes(q.issue) }));
+  return [f.name, lanes, queue];
+}
+function card(n) {
+  const c = here().querySelector(`.hn .ask[data-n="${n}"]`);
+  if (c) { c.scrollIntoView({ block: 'nearest' }); c.animate([{ outline: '2px solid var(--r)' }, { outline: 'none' }], 1500); }
+  return c;
+}
 const tpl = h => { const t = document.createElement('template'); t.innerHTML = h; return t.content.firstElementChild; };
 // #65: the horse keyed `key` (taken from `have`), patched in place to `h`: button and coat attributes, pose, label.
 function keyed(have, key, h) {
@@ -194,7 +206,7 @@ function page(key) {
 
 function draw() {
   if (!data) return;
-  const list = data.fleets.map(f => [f.name, f.lanes, f.queue]);
+  const list = data.fleets.map(nh);
   if (data.others.length) list.push(['Others', data.others, []]);
   for (const [k, p] of pages) if (!list.some(x => x[0] === k)) { p.remove(); pages.delete(k); }
   list.forEach(([key, lanes, queue], n) => {
@@ -313,10 +325,10 @@ H.addEventListener('click', e => {
   const h = e.target.closest('.hh'), q = e.target.closest('.hqh');
   if (h) {
     const l = laneOf(h.dataset.agent);
-    if (l) open(l);
+    if (l && !(h.dataset.n && card(h.dataset.n))) open(l);
   } else if (q) {
     const it = (here()._queue || []).find(x => String(x.issue) === q.dataset.i);
-    if (!it) return;
+    if (!it || it.needs && card(it.issue)) return;
     info.innerHTML = `<p><b>#${it.issue}</b> queued</p>${it.title ? `<p>${hx(it.title)}</p>` : ''}${it.blocked_by ? `<p class=r>⛔ blocked by #${it.blocked_by}</p>` : ''}<p class=m>tap to close</p>`;
     info.hidden = false;
   } else if (e.target.closest('.hq')) info.hidden = true;

@@ -214,6 +214,8 @@ pub struct IssueState {
     /// The latest lane's reasoning effort, as spawned.
     pub effort: Option<String>,
     pub rounds: u32,
+    /// Extra rounds the owner allowed (`round-extended`, #130).
+    pub extra: u32,
     pub last_ts: u64,
     pub last_event: String,
     /// Latest agent per role (impl, rev).
@@ -267,6 +269,12 @@ pub fn closed(events: &[Event], a: &Event) -> Option<&'static str> {
     answered
         .or(on("merged").then_some("closed: merged"))
         .or((gone || on("clean")).then_some("closed: lane gone"))
+}
+
+/// The first finding of `fleet` #`issue`'s last verdict (the line after `PASS`/`FAIL`).
+pub fn finding<'a>(events: &'a [Event], fleet: &str, issue: u64) -> Option<&'a str> {
+    let v = events.iter().rev().find(|e| e.is("verdict", fleet, issue))?;
+    v.str("body")?.lines().skip(1).map(str::trim).find(|l| !l.is_empty())
 }
 
 /// `needs-decision` events not yet closed, oldest first.
@@ -334,7 +342,8 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
                     format!("fix({})", s.rounds)
                 };
             }
-            "merged" | "blocked" | "needs-human" => s.state.clone_from(&e.kind),
+            "merged" | "blocked" | "needs-human" | "parked" => s.state.clone_from(&e.kind),
+            "round-extended" => s.extra += 1,
             // Back to the state before the killed lane: queued / fix(n) for an impl, impl / fix(n) for a review.
             "lane-killed" if e.str("role").and_then(|r| s.lanes.get(r)).map(String::as_str) == e.str("agent") => {
                 let role = e.str("role").unwrap_or_default();

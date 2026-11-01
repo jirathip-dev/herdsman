@@ -323,6 +323,39 @@ fn phones_hear_owner_asks_and_defaults_never_a_waiting_routine_ask() {
     );
 }
 
+/// #130: `needs-human` pushes with the default `on`: who and why in the title, the last verdict's first finding below.
+#[test]
+fn needs_human_push_names_the_issue_the_reason_and_the_finding() {
+    let dir = tmpdir("wp-nh");
+    let _path = fake_curl(&dir);
+    std::fs::write(dir.join("code"), "201").unwrap();
+    let c = ctx(&dir, CONFIG);
+    let cfg = Config::parse(PUSH).unwrap();
+    let ua = SecretKey::from_slice(&d(UA_PRIVATE)).unwrap();
+    let f: std::collections::BTreeMap<String, String> = sub_form(&ua, "https://push.example/ep")
+        .split('&')
+        .map(|kv| kv.split_once('=').unwrap())
+        .map(|(k, v)| (k.into(), v.into()))
+        .collect();
+    webpush::subscribe(&c.state, &f, "Mac", 1, None).unwrap();
+    let ev = |kind: &str, d: serde_json::Value| Event::new(1, "sendmeter", Some(96), kind, d);
+    let v = serde_json::json!({"verdict": "FAIL", "sha": "a", "body": "FAIL\n\nblocking: src/x.rs:9 wrong\n"});
+    emit(&c.state, &cfg, ev("verdict", v)).unwrap();
+    emit(
+        &c.state,
+        &cfg,
+        ev(
+            "needs-human",
+            serde_json::json!({"reason": "review rounds ran out (4/3)"}),
+        ),
+    )
+    .unwrap();
+    let body = std::fs::read(dir.join("body")).unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&decrypt(&body, &ua, &d(AUTH)).expect("decrypts")).unwrap();
+    assert_eq!(json["title"], "#96 needs you: review rounds ran out (4/3)");
+    assert_eq!(json["body"], "review rounds ran out (4/3)\nblocking: src/x.rs:9 wrong");
+}
+
 #[test]
 fn webpush_notifier_needs_sub() {
     assert!(Config::parse("[[notify]]\ntype = \"webpush\"\n").is_err());
