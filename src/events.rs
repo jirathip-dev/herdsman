@@ -227,7 +227,7 @@ pub fn last_spawn<'a>(events: &'a [Event], agent: &str) -> Option<&'a Event> {
 }
 
 /// Events `herdsman check` and notifiers write about an issue; they are not activity.
-pub const PASSIVE: [&str; 13] = [
+pub const PASSIVE: &[&str] = &[
     "stall",
     "orphan-lane",
     "lane-dead",

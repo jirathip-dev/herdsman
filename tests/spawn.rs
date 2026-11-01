@@ -86,6 +86,25 @@ fn fleet_env_is_exported_into_the_lane() {
     );
 }
 
+/// #103: `clone_node_modules` needs some lockfile, and every lockfile identical in both checkouts.
+#[test]
+fn lockfiles_match_needs_an_identical_lockfile() {
+    let d = tmpdir("lockfiles");
+    let (local, wt) = (d.join("local"), d.join("wt"));
+    std::fs::create_dir_all(&local).unwrap();
+    std::fs::create_dir_all(&wt).unwrap();
+    let m = || herdsman::spawn::lockfiles_match(&local, &wt);
+    assert!(!m(), "no lockfile anywhere is no match");
+    std::fs::write(local.join("package-lock.json"), "a").unwrap();
+    assert!(!m(), "missing in the lane");
+    std::fs::write(wt.join("package-lock.json"), "a").unwrap();
+    assert!(m());
+    std::fs::write(wt.join("pnpm-lock.yaml"), "b").unwrap();
+    assert!(!m(), "a lockfile only the lane has");
+    std::fs::write(local.join("pnpm-lock.yaml"), "c").unwrap();
+    assert!(!m(), "differing lockfiles");
+}
+
 #[test]
 fn hermes_role_dry_run_kicks_prompt_after_boot() {
     let d = tmpdir("spawn-hermes");

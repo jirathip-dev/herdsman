@@ -347,6 +347,13 @@ pub fn changes(st: &str) -> usize {
         .count()
 }
 
+/// #103: some lockfile exists, and each one reads the same in the local checkout and the new lane.
+pub fn lockfiles_match(local: &Path, wt: &Path) -> bool {
+    let locks = ["package-lock.json", "pnpm-lock.yaml"];
+    let read = |dir: &Path, l: &str| std::fs::read(dir.join(l)).ok();
+    locks.iter().any(|l| read(local, l).is_some()) && locks.iter().all(|l| read(local, l) == read(wt, l))
+}
+
 /// Why a worktree must not be reused or removed: uncommitted changes (`OWN_FILES` aside) or unpushed commits.
 pub fn dirty(r: &dyn Runner, wt: &Path) -> Option<String> {
     let wt = wt.to_string_lossy();
@@ -498,9 +505,10 @@ pub fn spawn(
             let open = herdr::worktree_open_argv(&local, &wt);
             let reopen = p.worktree.exists();
             let created = herdr::json(r, &if reopen { open } else { create_argv(&local, &p) })?;
-            let same = |l: &str| std::fs::read(f.local_path().join(l)).ok() == std::fs::read(p.worktree.join(l)).ok();
-            if f.clone_node_modules && !reopen && ["package-lock.json", "pnpm-lock.yaml"].map(same) == [true; 2] {
-                let _ = ok(r, "cp", &["-cR", &format!("{local}/node_modules"), &wt]);
+            if f.clone_node_modules && !reopen && lockfiles_match(&f.local_path(), &p.worktree) {
+                if let Err(e) = ok(r, "cp", &["-cR", &format!("{local}/node_modules"), &wt]) {
+                    eprintln!("clone_node_modules: {e:#}");
+                }
             }
             if role == "rev" {
                 // #92: a re-review of the same round moves its worktree to the fetched head; the spawn logs that head.

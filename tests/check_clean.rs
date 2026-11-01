@@ -245,6 +245,7 @@ fn clean_removes_only_merged_clean_idle_lanes() {
             .reply(&git(&unpushed, "rev-list"), "2\n")
             .reply(&git(&a, "rev-list"), "0\n")
             .reply(&git(&b, "rev-list"), "0\n")
+            .once(&git(&unpushed, "check-ignore -q dist"), 1, "")
             .reply("git -C", "")
             .reply("herdr", "{}")
     };
@@ -279,7 +280,8 @@ fn clean_removes_only_merged_clean_idle_lanes() {
     );
     let (code, dry) = run(&c, &r(), &["clean"]);
     assert_eq!(code, 0, "{dry}");
-    let all = [&gone, &kept_wt, &live_dir, &open_dir];
+    let tracked = build(&unpushed, "dist");
+    let all = [&gone, &kept_wt, &live_dir, &open_dir, &tracked];
     assert!(
         all.iter().all(|p| p.exists()) && !dry.contains("freed"),
         "a dry run frees nothing: {dry}"
@@ -291,6 +293,11 @@ fn clean_removes_only_merged_clean_idle_lanes() {
     assert!(
         live_dir.exists() && open_dir.exists(),
         "live and unmerged lanes keep theirs: {done}"
+    );
+    assert!(tracked.exists(), "a dist/ git does not ignore (tracked) stays");
+    assert!(
+        done.contains(&format!("keep {unpushed}/dist: not git-ignored")),
+        "{done}"
     );
     assert!(done.contains("freed 2000 bytes of build folders"), "{done}");
     assert!(r1.called("herdr worktree remove --workspace wA") && r1.called("herdr worktree remove --workspace wB"));
