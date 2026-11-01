@@ -80,9 +80,11 @@ pub struct Fleet {
     pub repo: String,
     pub local: String,
     pub integration: String,
-    /// Globs only one lane at a time may touch: `--serial` issues (SERIAL_BUSY, SERIAL_UNMARKED).
+    /// Globs only `serial_max` lanes at a time may touch: `--serial` issues (SERIAL_BUSY, SERIAL_UNMARKED).
     #[serde(default)]
     pub serial_paths: Vec<String>,
+    /// How many `--serial` issues may be in flight at once (SERIAL_BUSY); unset = 1.
+    pub serial_max: Option<usize>,
     /// The only checks merge, `check` and `wait` look at (latest run of each); empty = all.
     #[serde(default)]
     pub required_checks: Vec<String>,

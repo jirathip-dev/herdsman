@@ -83,6 +83,27 @@ fn second_serial_impl_waits_until_first_merges() {
     assert!(ls.contains("#2     impl  serial"), "{ls}");
 }
 
+#[test]
+fn serial_max_two_admits_a_second_serial_and_refuses_a_third() {
+    let d = tmpdir("serial-max");
+    let c = ctx(&d, &config(&format!("{SERIAL}\nserial_max = 2")));
+    assert_eq!(run(&c, &Fake::default(), &["queue", "sendmeter", "add", "1", "2", "3", "--serial"]).0, 0);
+    assert_eq!(spawn(&c, 1, "impl").0, 0);
+    let (exit, out) = spawn(&c, 2, "impl");
+    assert_eq!(exit, 0, "second serial admitted: {out}");
+    let (_, board) = run(&c, &Fake::default(), &["board", "sendmeter"]);
+    assert!(board.starts_with("sendmeter: 3 queued, 2 active, serial 2/2\n"), "{board}");
+    let (_, status) = run(&c, &Fake::default(), &["status", "sendmeter"]);
+    assert!(status.contains("sendmeter: serial 2/2\n"), "{status}");
+    let (exit, out) = spawn(&c, 3, "impl");
+    assert_eq!(exit, 3, "{out}");
+    assert!(out.contains("REFUSED SERIAL_BUSY") && out.contains("#1 is unmerged (impl)") && out.contains("#2 is unmerged (impl)"), "names both: {out}");
+    // A merged one frees a slot.
+    log(&c, 1, "merged", json!({}));
+    let (exit, out) = spawn(&c, 3, "impl");
+    assert_eq!(exit, 0, "allowed once #1 merged: {out}");
+}
+
 // --- SERIAL_UNMARKED ---
 
 fn merge_fake(files: &str) -> Fake {

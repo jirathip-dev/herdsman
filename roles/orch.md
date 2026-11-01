@@ -36,7 +36,7 @@ and `herdsman wait` (cached) — not `gh issue view` / `gh pr checks` / `gh run`
 ## Serial paths, caps, design
 
 - DB issues (the fleet's `serial_paths`, e.g. migrations) are queued `--serial` by the
-  owner. `SERIAL_BUSY`: another serial issue is in flight; wait for it to merge.
+  owner. `SERIAL_BUSY`: `serial_max` serial issues are in flight; wait for one to merge.
   `SERIAL_UNMARKED` on merge: report it; the owner marks the issue.
 - `CAP`: the fleet's `max_impl` / `max_rev` is reached; wait for a lane to finish.
 - Design is owner-only: never run `herdsman spawn … design` (the hook denies it in
