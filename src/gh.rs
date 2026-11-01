@@ -12,7 +12,7 @@ pub const PR_FIELDS: &str = "number,title,state,baseRefName,headRefOid,mergeable
 pub const PR_TTL: u64 = 60;
 const SPEC_FIELDS: &str = "title,body,updatedAt,comments";
 
-fn cache_path(ctx: &Ctx, kind: &str, fleet: &str, issue: u64) -> PathBuf {
+pub(crate) fn cache_path(ctx: &Ctx, kind: &str, fleet: &str, issue: u64) -> PathBuf {
     ctx.state
         .parent()
         .unwrap_or(&ctx.state)
@@ -26,7 +26,7 @@ fn fresh(c: &Value, now: u64) -> bool {
     now >= ts && now - ts < PR_TTL
 }
 
-fn store(p: &Path, v: &Value) -> Result<()> {
+pub(crate) fn store(p: &Path, v: &Value) -> Result<()> {
     std::fs::create_dir_all(p.parent().unwrap_or(p))?;
     crate::config::write_atomic(p, &v.to_string())
 }

@@ -331,7 +331,7 @@ fn plan_json(ctx: &Ctx, f: &Fleet, p: &Plan) -> Value {
 }
 
 /// Lane scratch: untracked files fleet itself writes into a worktree (some gitignored). Never dirty work.
-pub const OWN_FILES: [&str; 6] = [
+pub const OWN_FILES: &[&str] = &[
     ".brief.md",
     ".addendum.md",
     ".role-prompt.md",

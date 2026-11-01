@@ -182,6 +182,12 @@ enum Cmd {
     },
     /// One pass of the loop for `driver = "herdsman"` fleets: do every step that's due, then exit; safe from cron
     Drive { fleet: Option<String> },
+    /// CI: formatted lines of src/**/*.rs against `line_cap` in --config; exit 1 over it
+    #[command(hide = true)]
+    CapCheck {
+        #[arg(long)]
+        config: std::path::PathBuf,
+    },
     /// Write and load the tick and board jobs, tailscale serve, profiles sync, then doctor (its exit code); safe to rerun
     Setup {
         /// Write the jobs without loading them
@@ -349,6 +355,9 @@ enum ProfilesCmd {
     },
 }
 
+/// Line budget of `help --agent` (tests/spawn.rs): raise it here, next to the text it counts (+1 for #130's `--owner-override`).
+pub const HELP_AGENT_MAX: usize = 195;
+
 /// The one usage doc both harnesses get: the commands generated from the CLI definition, the rest from `roles/usage-*.md`.
 pub fn usage_doc() -> String {
     let mut cmd = Cli::command();
@@ -429,6 +438,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
             bail!("HERDSMAN_HOME is set but empty; unset it or point it at a home tree")
         }
         Cmd::Migrate => migrate(&ctx.home, out)?,
+        Cmd::CapCheck { config } => return crate::overlap::cap_check(&config, out),
         Cmd::Help { agent: true } => write!(out, "{}", usage_doc())?,
         Cmd::Help { agent: false } => write!(out, "{}", Cli::command().render_long_help())?,
         Cmd::Hook {
@@ -447,7 +457,15 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 .filter(|s| fleet.as_ref().is_none_or(|f| *f == s.fleet))
                 .collect();
             if json {
-                writeln!(out, "{}", serde_json::to_string_pretty(&rows)?)?;
+                // #129: `conflicts`: [(other issue, 0 = integration, [files])] from the last merge-tree preview.
+                let rows = rows.iter().map(|s| {
+                    let mut v = json!(s);
+                    if let Some(c) = crate::overlap::cached(ctx, &s.fleet).remove(&s.issue) {
+                        v["conflicts"] = json!(c);
+                    }
+                    v
+                });
+                writeln!(out, "{}", serde_json::to_string_pretty(&rows.collect::<Vec<_>>())?)?;
             } else if rows.is_empty() {
                 writeln!(out, "no tracked issues")?;
             } else {
@@ -519,7 +537,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
             let cfg = Config::load(&ctx.config).ok();
             let boards: Vec<_> = all
                 .iter()
-                .map(|f| queue::board(&events, f, ctx.now, cfg.as_ref()))
+                .map(|f| queue::board(&events, f, ctx.now, cfg.as_ref(), &crate::overlap::cached(ctx, f)))
                 .collect();
             write!(out, "{}", boards.join("\n"))?;
         }

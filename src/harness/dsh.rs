@@ -14,7 +14,7 @@ pub const DSH_TUI_VERSION: &str = "0.17.0";
 /// The agent label dsh-TUI reports to herdr.
 const LABEL: &str = "dsh-tui";
 /// The first-run wizard's title (en, zh); it reports idle but eats the prompt.
-const WIZARD: [&str; 2] = ["Welcome to dsh-TUI", "欢迎使用 dsh-TUI"];
+const WIZARD: &[&str] = &["Welcome to dsh-TUI", "欢迎使用 dsh-TUI"];
 
 pub struct Dsh;
 
