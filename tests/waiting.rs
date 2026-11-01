@@ -305,3 +305,77 @@ fn a_long_reason_never_squeezes_the_name() {
     assert!(page.contains("<span class=\"nw el\">synergy-rev-2859-r2</span><span class=\"nw m\">idle 33m</span><span class=\"why m\">superseded by synergy-impl-2859</span>"), "{page}");
     assert_eq!(page.matches(&format!("{reason}</span>")).count(), 1, "the older lane does not repeat it; no `(10m)` suffix in the row");
 }
+
+/// #89: a fleet with only a queue; herdr shows the orch as `orch` (absent when empty).
+fn queued(name: &str, orch: &str) -> (herdsman::Ctx, Fake) {
+    let c = ctx(&tmpdir(name), CONFIG);
+    let rows: Vec<_> = [(ORCH, orch, "/x", "w1:p9")].into_iter().filter(|_| !orch.is_empty()).collect();
+    (c, Fake::default().reply("herdr agent list", &agents(&rows)).reply("herdr agent prompt", "").reply("herdr pane send-keys", ""))
+}
+
+#[test]
+fn queue_add_wakes_a_done_orch_exactly_once() {
+    let (mut c, r) = queued("wake", "done");
+    let (code, out) = run(&c, &r, &["queue", "sendmeter", "add", "88"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("sendmeter #88 orch-woken: QUEUE: #88 is next (herdsman next sendmeter). Spawn it."), "{out}");
+    assert_eq!(r.count(&format!("herdr agent prompt {ORCH} QUEUE: #88 is next (herdsman next sendmeter). Spawn it.")), 1);
+    assert_eq!(r.count("herdr pane send-keys w1:p9 Enter"), 1);
+    run(&c, &r, &["queue", "sendmeter", "add", "90"]);
+    run(&c, &r, &["queue", "sendmeter", "mv", "--top", "88"]);
+    assert_eq!((r.count("herdr agent prompt"), kinds(&c, "orch-woken")), (1, 1), "once per item");
+    // The check backstop shares the item's prompt: no second one, `orch-stuck` 10 min after the wake.
+    c.now = NOW + 6 * 60;
+    assert_eq!(check(&c, &r), "");
+    c.now = NOW + 11 * 60;
+    assert!(check(&c, &r).contains("sendmeter #88 orch-stuck: still waiting: #88 waiting for orch to spawn #88"));
+    assert_eq!(r.count("herdr agent prompt"), 1);
+}
+
+#[test]
+fn check_prompts_an_idle_orch_after_5_min_then_alerts_after_15() {
+    let (mut c, r) = queued("backstop", "working");
+    run(&c, &r, &["queue", "sendmeter", "add", "88"]);
+    assert!(!r.called("herdr agent prompt"), "a working orch is not woken");
+    let (_, r) = queued("backstop-idle", "idle");
+    c.now = NOW + 4 * 60;
+    assert_eq!(check(&c, &r), "", "not before 5 min");
+    c.now = NOW + 6 * 60;
+    let line = "#88 waiting for orch to spawn #88 6m ago: run herdsman spawn sendmeter 88 impl";
+    assert!(check(&c, &r).contains(&format!("sendmeter #88 orch-nudged: {line}")));
+    assert_eq!(r.count(&format!("herdr agent prompt {ORCH} {line}")), 1);
+    let (_, waiting) = run(&c, &r, &["waiting", "sendmeter"]);
+    assert!(waiting.contains("sendmeter #88 orch: waiting for orch to spawn #88 (6m) → herdsman spawn sendmeter 88 impl"), "{waiting}");
+    c.now = NOW + 15 * 60;
+    assert!(!check(&c, &r).contains("orch-stuck"));
+    c.now = NOW + 17 * 60;
+    assert!(check(&c, &r).contains("sendmeter #88 orch-stuck: still waiting: #88 waiting for orch to spawn #88"));
+    assert_eq!(r.count("herdr agent prompt"), 1);
+}
+
+#[test]
+fn no_prompt_when_next_has_an_impl_lane_or_the_fleet_is_paused() {
+    let (mut c, r) = queued("wake-lane", "done");
+    spawn(&c, NOW, 88, "impl", "sendmeter-impl-88");
+    run(&c, &r, &["queue", "sendmeter", "add", "88"]);
+    c.now = NOW + 20 * 60;
+    check(&c, &r);
+    assert!(!r.called("herdr agent prompt"));
+    let (mut c, r) = queued("wake-paused", "done");
+    assert_eq!(run(&c, &r, &["pause", "sendmeter"]).0, 0);
+    run(&c, &r, &["queue", "sendmeter", "add", "88"]);
+    c.now = NOW + 20 * 60;
+    check(&c, &r);
+    assert!(!r.called("herdr agent prompt"));
+    assert_eq!((kinds(&c, "orch-woken"), kinds(&c, "orch-nudged"), kinds(&c, "orch-stuck")), (0, 0, 0));
+}
+
+#[test]
+fn no_orch_at_all_alerts_with_the_spawn_command_and_spawns_nothing() {
+    let (mut c, r) = queued("no-orch", "");
+    run(&c, &r, &["queue", "sendmeter", "add", "88"]);
+    c.now = NOW + 6 * 60;
+    assert!(check(&c, &r).contains("sendmeter #88 orch-stuck: no orch: herdsman spawn sendmeter - orch"));
+    assert_eq!(check(&c, &r), "");
+    assert!(!r.called("herdr agent prompt") && !r.called("herdr pane split") && kinds(&c, "spawn") == 0);
+}

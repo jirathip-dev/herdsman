@@ -96,7 +96,8 @@ fn ready_unmerged_fires_once_and_again_after_state_change() {
     let c2 = ctx(&d2, CONFIG);
     spawn_ev(&c2, NOW - 7200, 12, LANE);
     ev(&c2, NOW - 3600, 12, "verdict", json!({"verdict": "PASS", "sha": "2".repeat(40)}));
-    assert_eq!(check(&c2, &r), "");
+    // #89: no orch running at all is its own alert.
+    assert_eq!(check(&c2, &r), "sendmeter #12 orch-stuck: no orch: herdsman spawn sendmeter - orch\n");
     // New PASS (state change) → fires again once stale.
     let head2 = "3".repeat(40);
     ev(&c, NOW + 5, 12, "verdict", json!({"verdict": "PASS", "sha": head2}));

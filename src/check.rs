@@ -9,7 +9,7 @@ use crate::runner::{ok, Runner};
 use crate::spawn::{changes, dirty, OWN_FILES};
 use crate::Ctx;
 use anyhow::{Context, Result};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
@@ -81,23 +81,26 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
         fire(ctx, cfg, out, &events, (&a.fleet, a.issue), "ask-waiting", json!({"key": a.str("id"), "reason": why}))?;
     }
     // #46: an item waiting > 5 min on an idle orch prompts it once per (issue, head, state); 10 min on, `orch-stuck`.
-    let waits = crate::waiting::scan(ctx, cfg, r, &events, agents.as_deref().unwrap_or_default(), true);
+    let live = agents.as_deref().unwrap_or_default();
+    let waits = crate::waiting::scan(ctx, cfg, r, &events, live, true);
     for (s, w) in waits.iter().filter(|(s, w)| w.who == "orch" && s.lane.as_ref() == Some(&w.lane) && ctx.now.saturating_sub(w.since) > 300 && agents.is_some()) {
         let Some(next) = &w.next_cmd else { continue };
         let (orch, key) = (format!("{}-orch", s.fleet), format!("{}:{}", s.last_ts, w.what));
         let line = format!("#{} {} {} ago: run {next}", s.issue, w.what, age(ctx.now - w.since));
         let at = (s.fleet.as_str(), Some(s.issue));
-        match events.iter().find(|e| e.is("orch-nudged", &s.fleet, s.issue) && e.str("key") == Some(&key)) {
+        let no_orch = !live.iter().any(|a| a["name"] == orch.as_str());
+        match events.iter().find(|e| prompted(e, at, &key)) {
             Some(e) if ctx.now.saturating_sub(e.ts) > 600 => fire(ctx, cfg, out, &events, at, "orch-stuck", json!({"key": key, "reason": format!("still waiting: {line}")}))?,
             Some(_) => {}
+            // #89: never auto-spawned; the alert names the command.
+            None if no_orch && cfg.fleet[&s.fleet].role.contains_key("orch") => {
+                let why = format!("no orch: herdsman spawn {} - orch", s.fleet);
+                fire(ctx, cfg, out, &events, at, "orch-stuck", json!({"key": format!("no-orch:{key}"), "reason": why}))?
+            }
             None => {
-                // The pane as herdr shows it now; logged before the Enter, so a failed Enter never types the line twice.
-                let a = agents.iter().flatten().find(|a| a["name"] == orch.as_str() && matches!(a["agent_status"].as_str(), Some("idle" | "done")));
-                let Some(pane) = a.and_then(|a| a["pane_id"].as_str()).or_else(|| last_spawn(&events, &orch).and_then(|e| e.str("pane")).filter(|_| a.is_some())) else { continue };
-                if herdr::prompt(r, &orch, &line).is_ok() {
-                    fire(ctx, cfg, out, &events, at, "orch-nudged", json!({"key": key, "reason": line}))?;
-                    let _ = herdr::keys(r, pane, "Enter"); // unsent: `orch-stuck` follows
-                }
+                let Some(pane) = prompt_orch(r, &events, live, &s.fleet, &line) else { continue };
+                fire(ctx, cfg, out, &events, at, "orch-nudged", json!({"key": key, "reason": line}))?;
+                let _ = herdr::keys(r, &pane, "Enter");
             }
         }
     }
@@ -127,6 +130,38 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
             }
             emit(&ctx.state, cfg, ev)?;
         }
+    }
+    Ok(())
+}
+
+/// An `orch-nudged` (check) or `orch-woken` (queue change) prompt with this key: once per item.
+fn prompted(e: &Event, at: (&str, Option<u64>), key: &str) -> bool {
+    let kind = matches!(e.kind.as_str(), "orch-nudged" | "orch-woken");
+    kind && e.fleet == at.0 && e.issue == at.1 && e.str("key") == Some(key)
+}
+
+/// Type `line` into an idle or done `<fleet>-orch`; its pane as herdr shows it now, for the Enter. The caller logs
+/// before the Enter, so a failed Enter never types the line twice (unsent: `orch-stuck` follows).
+fn prompt_orch(r: &dyn Runner, events: &[Event], agents: &[Value], fleet: &str, line: &str) -> Option<String> {
+    let orch = format!("{fleet}-orch");
+    let idle = |a: &&Value| a["name"] == orch.as_str() && matches!(a["agent_status"].as_str(), Some("idle" | "done"));
+    let a = agents.iter().find(idle)?;
+    let pane = a["pane_id"].as_str().or_else(|| last_spawn(events, &orch).and_then(|e| e.str("pane")))?.to_string();
+    herdr::prompt(r, &orch, line).ok().map(|_| pane)
+}
+
+/// #89: after a queue change, an idle orch is prompted once for the startable `next` issue (unless paused).
+pub fn wake(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &str) -> Result<()> {
+    let events = read(&ctx.state)?;
+    let Some(w) = crate::waiting::next(&events, &[], fleet).filter(|_| !cfg.fleet[fleet].paused) else { return Ok(()) };
+    let (key, at) = (format!("0:{}", w.what), (fleet, Some(w.issue)));
+    if events.iter().any(|e| prompted(e, at, &key)) {
+        return Ok(());
+    }
+    let line = format!("QUEUE: #{} is next (herdsman next {fleet}). Spawn it.", w.issue);
+    if let Some(pane) = prompt_orch(r, &events, &host::agents(r).unwrap_or_default(), fleet, &line) {
+        fire(ctx, cfg, out, &events, at, "orch-woken", json!({"key": key, "reason": line}))?;
+        let _ = herdr::keys(r, &pane, "Enter");
     }
     Ok(())
 }

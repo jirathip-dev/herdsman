@@ -517,6 +517,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                         QueueCmd::Ls { .. } => unreachable!(),
                     };
                     writeln!(out, "{}", queue_change(ctx, &cfg, &fleet, d, None)?)?;
+                    check::wake(ctx, &cfg, r, out, &fleet)?;
                 }
                 _ => unreachable!(),
             }

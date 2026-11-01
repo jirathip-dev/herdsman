@@ -1,6 +1,6 @@
 //! #46: what an idle lane waits on (orch | owner | ci | none), worked out from the log, git and the cached PR.
 use crate::config::Config;
-use crate::events::{age, fold, last_spawn, open_asks, Event, IssueState};
+use crate::events::{age, fold, last_spawn, open_asks, Event, IssueState, PASSIVE};
 use crate::runner::{ok, Runner};
 use crate::{gh, Ctx};
 use serde::Serialize;
@@ -114,7 +114,22 @@ pub fn scan(ctx: &Ctx, cfg: &Config, r: &dyn Runner, events: &[Event], agents: &
         out.extend(s.lanes.values().filter(|l| **l != lane && !busy(l)).map(|l| (s.clone(), Waiting { lane: l.clone(), ..w.clone() })));
         out.push((s, w));
     }
+    for w in cfg.fleet.iter().filter(|f| !f.1.paused).filter_map(|f| next(events, agents, f.0)) {
+        let (fleet, lane) = (w.fleet.clone(), Some(w.lane.clone()));
+        let s = IssueState { fleet, issue: w.issue, state: "queued".into(), lane, ..Default::default() };
+        out.push((s, w));
+    }
     out
+}
+
+/// #89: the queue's startable `next` issue waits on the orch lane to spawn it, unless the orch is working.
+pub fn next(events: &[Event], agents: &[Value], fleet: &str) -> Option<Waiting> {
+    let (issue, lane): (u64, _) = (crate::queue::next(events, fleet).1.parse().ok()?, format!("{fleet}-orch"));
+    (!agents.iter().any(|a| a["name"] == lane.as_str() && a["agent_status"] == "working")).then_some(())?;
+    let since = events.iter().filter(|e| e.fleet == fleet && !PASSIVE.contains(&e.kind.as_str())).map(|e| e.ts).max()?;
+    let what = format!("waiting for orch to spawn #{issue}");
+    let next_cmd = format!("herdsman spawn {fleet} {issue} impl");
+    Some(Waiting { fleet: fleet.into(), issue, lane, who: "orch", what, since, next_cmd: Some(next_cmd) })
 }
 
 /// The orch lane's reason: the items waiting on it, if any.
