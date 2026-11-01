@@ -169,17 +169,21 @@
     },
     'herd-scroll': () => herd(true),
     'queue-scroll': () => { tab('queue'); $$('#queue details.q').forEach(d => { d.open = true; }); },
-    toast: () => { // #66: a fixture ▲ POST (the redirect a live server sends), through the page's fetch-submit path
+    // #66: a fixture ▲ POST (the redirect a live server sends), through the page's fetch-submit path;
+    // #140: then [Drive now], which must toast too and never navigate.
+    toast: () => {
       tab('queue');
-      const r = Object.defineProperties(new Response(''), { redirected: { value: true }, url: { value: location.origin + '/?msg=moved%20%2312%20before%20%2318' } });
-      window.fetch = () => Promise.resolve(r);
-      const f = [...$$('#queue form')].find(f => f.elements.op.value === 'mv');
-      f.inert = false;
-      f.requestSubmit();
-      setTimeout(() => { toasted = $('.msg.g') && $('.msg.g').textContent; }, 500);
+      href = location.href;
+      const msg = o => ({ drive: 'drive started for ' + o.body.get('fleet'), mv: 'moved #12 before #18' })[o.body.get('op')] || 'error: empty POST body';
+      window.fetch = (u, o) => Promise.resolve(Object.defineProperties(new Response(''), { redirected: { value: true }, url: { value: location.origin + '/?msg=' + encodeURIComponent(msg(o)) } }));
+      // The demo disables every input (no writes), which would leave the POST body empty: enable the form's, as live.
+      const submit = op => { const f = $(`#queue input[name=op][value=${op}]`).form; f.inert = false; [...f.elements].forEach(e => { e.disabled = false; }); f.requestSubmit(); return f; };
+      submit('mv');
+      setTimeout(() => { toasted = $('.msg.g') && $('.msg.g').textContent; drove = 'drive started for ' + submit('drive').elements.fleet.value; }, 500);
+      setTimeout(() => { const m = $('.msg.g, .msg.r'); drove = m && m.textContent === drove || `want "${drove}", saw "${m && m.textContent}"`; }, 1000);
     },
   };
-  let toasted = null;
+  let toasted = null, drove = null, href = null;
   const dragged = [];
   const HP = { herd1: 0, herd2: 1, 'herd-night': 0, 'herd-night-storm': 0 }; // the views measuring one Herd page
   const ROOTS = { sheet: () => [$('#sheet')], 'sheet-parked': () => [$('#sheet')], 'sheet-other': () => [$('#sheet')], ...Object.fromEntries(Object.entries(HP).map(([v, n]) => [v, () => [hp(n), $('.hlt'), $('.hx'), $('.hwx')]])) };
@@ -336,6 +340,8 @@
     toast: () => {
       const bad = [];
       if (toasted !== 'moved #12 before #18') bad.push(`toast after the POST: ${toasted}`);
+      if (drove !== true) bad.push(`[Drive now] gave no toast: ${drove}`);
+      if (location.href !== href) bad.push(`[Drive now] navigated: ${location.href}`);
       if ($('.msg.g, .msg.r')) bad.push('.msg still shown 5 s after the POST');
       if (/[?&]msg=/.test(location.search)) bad.push(`location.search keeps msg: ${location.search}`);
       return { view: V, controls: 0, outliers: bad };
@@ -380,7 +386,7 @@
     setTimeout(() => {
       if (V === 'herd2') PG.scrollLeft = PG.clientWidth;
       setTimeout(() => { if (DBG.get('check')) check(); }, 1000);
-    }, V === 'toast' ? 4500 : 2000);
+    }, V === 'toast' ? 5000 : 2000);
   };
   if (document.readyState === 'complete') go(); else addEventListener('load', go);
 })();

@@ -71,7 +71,8 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
    day → night → auto → day → night (label, icon, stored value, scene each time), then loads the page again in an
    iframe (virtual time runs no reload) and fails unless it comes back at night.
    `toast` (#66) submits a ▲ form through the page's fetch path with a fixture redirect and fails unless the
-   one-line toast showed, is gone 5 s later, and `location.search` has no `msg`.
+   one-line toast showed, is gone 5 s later, and `location.search` has no `msg`; then (#140) `[Drive now]`, which
+   must toast `drive started for <fleet>` with `location` unchanged (no navigation).
    `sheet-parked` (#83) opens the demo's parked lane (no pane, its work on an open PR) and fails unless the card
    has its `parked · work on PR #n` line, `[clean]` is disabled with its reason in `p.st`, `[stop]` and `[kill]`
    are hidden, the chat says there is no pane, and nothing in the sheet is in the red (danger) colour.

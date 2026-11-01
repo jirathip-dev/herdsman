@@ -465,11 +465,100 @@ fn drive_now_on_the_board_is_paired_only_and_toasts_its_line() {
     assert!(!r.called("herdr agent start"));
     let res = post("127.0.0.1:7777", &cookie);
     assert!(
-        res.starts_with("HTTP/1.1 303") && res.contains("sendmeter%20%2312%20start"),
+        res.starts_with("HTTP/1.1 303") && res.contains("sendmeter%3A%20started%20%2312"),
         "{res}"
     );
     assert!(r.called("herdr agent start sendmeter-impl-12"));
     assert!(get(&s).contains("driver: herdsman · last pass 0s ago"));
+}
+
+/// #140: a drive pass's lines as one toast, per action, then the refusals by code.
+#[test]
+fn the_drive_summary_groups_per_action() {
+    let out = "sendmeter #2752 merge: merged #2752 into staging\nsendmeter #2755 start: spawned sendmeter-impl-2755\n\
+        sendmeter #2781 merge: merged\nsendmeter #9 review: spawned\nsendmeter #2756 start: REFUSED SERIAL_BUSY: x\n\
+        sendmeter #2757 start: REFUSED HOST_BUSY: y\nsendmeter #3 fix: error: boom\nsendmeter #4 start: REFUSED HOST_BUSY: z\n\
+        sendmeter clean: removed 1\n";
+    assert_eq!(
+        herdsman::drive::summary("sendmeter", out),
+        "sendmeter: clean · merged #2752, #2781 · reviewed #9 · started #2755 · 4 skipped (HOST_BUSY, SERIAL_BUSY, error)"
+    );
+    assert_eq!(herdsman::drive::summary("sendmeter", ""), "sendmeter: nothing due");
+}
+
+/// Sleeps 3 s on each agent start: a slow drive pass.
+struct Slow(Fake);
+impl herdsman::runner::Runner for Slow {
+    fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<herdsman::runner::Out> {
+        if prog == "herdr" && args.join(" ").starts_with("agent start") {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+        }
+        self.0.run(prog, args)
+    }
+}
+
+/// #140: `[Drive now]` replies at once and runs on the job thread; a second tap is DRIVE_RUNNING, and the
+/// board (a thread per connection) answers a GET meanwhile; the result reaches `/live` as a toast.
+#[test]
+fn drive_now_runs_in_the_background_and_the_board_keeps_answering() {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+    let c = setup("drive-bg");
+    assert_eq!(run(&c, &Fake::default(), &["queue", "sendmeter", "add", "12"]).0, 0);
+    let cookie = pair(
+        &herdsman::serve::Server::new(&c, &Fake::default(), Some("127.0.0.1:7777".into())),
+        &c,
+        "",
+        c.now,
+    );
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let c2 = c.clone();
+    std::thread::spawn(move || herdsman::serve::serve_on(&c2, &Slow(fake(NO_AGENTS).reply("git -C", "")), l, false));
+    let send = |req: String| {
+        let mut s = std::net::TcpStream::connect(addr).unwrap();
+        s.write_all(req.as_bytes()).unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).unwrap();
+        out
+    };
+    let get = |path: &str, extra: &str| send(format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\n{extra}\r\n"));
+    let page = get("/", &cookie);
+    let i = page.find("name=mtime value=").unwrap() + 17;
+    let mtime: String = page[i..].chars().take_while(char::is_ascii_digit).collect();
+    let body = format!("op=drive&fleet=sendmeter&mtime={mtime}");
+    let post = || {
+        let t = Instant::now();
+        let req = format!(
+            "POST / HTTP/1.1\r\nHost: {addr}\r\n{cookie}Content-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        (send(req), t.elapsed())
+    };
+    let mut live = std::net::TcpStream::connect(addr).unwrap();
+    live.write_all(format!("GET /live HTTP/1.1\r\nHost: {addr}\r\n{cookie}\r\n").as_bytes())
+        .unwrap();
+    let (res, took) = post();
+    assert!(res.contains("drive%20started%20for%20sendmeter"), "{res}");
+    assert!(took < Duration::from_millis(200), "the POST took {took:?}");
+    let (res, _) = post();
+    assert!(res.contains("REFUSED%20DRIVE%5FRUNNING"), "{res}");
+    let t = Instant::now();
+    assert!(get("/", "").starts_with("HTTP/1.1 200"));
+    assert!(t.elapsed() < Duration::from_secs(1), "GET / waited {:?}", t.elapsed());
+    // The pass ends: its summary reaches the board as a toast, and a new tap starts another pass.
+    live.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    let (mut seen, mut b) = (String::new(), [0u8; 65_536]);
+    while !seen.contains("event: toast") {
+        let n = live.read(&mut b).unwrap();
+        assert!(n > 0, "the stream closed: {seen}");
+        seen += &String::from_utf8_lossy(&b[..n]);
+    }
+    assert!(
+        seen.contains("event: toast\ndata: \"sendmeter: started #12\""),
+        "{seen}"
+    );
+    assert!(post().0.contains("drive%20started"), "the flag is cleared");
 }
 
 /// A PR view whose `mergeable` / `mergeStateStatus` are set (CI green).

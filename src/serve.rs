@@ -1,4 +1,4 @@
-//! `herdsman serve`, the phone page (docs/serve.md): std `TcpListener`, one request at a time;
+//! `herdsman serve`, the phone page (docs/serve.md): std `TcpListener`, a thread per request (at most 16, then 503);
 //! `/live` SSE clients get a thread each, fed by the 1 s watcher thread.
 use crate::config::{Config, Limits, Role};
 use crate::events::{age, append, fold, plain, read, Event, IssueState, States};
@@ -8,13 +8,12 @@ use crate::runner::{Out, Runner};
 use crate::{devices, gh, herdr, lanes, queue, Ctx};
 use anyhow::{bail, Context, Result};
 use serde_json::json;
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 use std::io::ErrorKind::{TimedOut, WouldBlock};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -55,6 +54,8 @@ const VER: u32 = {
 
 type Clients = Arc<Mutex<Vec<(Sender<String>, Option<String>)>>>;
 type Cache = Arc<Mutex<BTreeMap<String, (u64, Option<String>)>>>;
+/// A form op for `serve_on`'s job thread: (ctx, form, fleet).
+type Job = (Ctx, BTreeMap<String, String>, String);
 /// When this board started (the Services board row's uptime).
 static STARTED: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
 
@@ -67,13 +68,14 @@ pub fn serve(ctx: &Ctx, r: &dyn Runner, addr: &str, read_only: bool) -> Result<(
 
 #[allow(clippy::needless_pass_by_value)] // public API: the listener is handed over and lives as long as the server
 pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> Result<()> {
-    let s = Server::new(
-        ctx,
-        r,
-        (!read_only)
-            .then(|| l.local_addr().map(|a| a.to_string()))
-            .transpose()?,
-    );
+    let addr = (!read_only)
+        .then(|| l.local_addr().map(|a| a.to_string()))
+        .transpose()?;
+    let (tx, rx) = channel();
+    let s = Server {
+        jobs: Some(tx),
+        ..Server::new(ctx, r, addr)
+    };
     let (h, w) = (
         s.host.clone(),
         Server {
@@ -85,6 +87,7 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
             ..Server::new(ctx, r, s.addr.clone())
         },
     );
+    let (s, busy) = (&s, &AtomicUsize::new(0));
     STARTED.get_or_init(|| ctx.now);
     std::thread::scope(|sc| {
         // #57: the host every 10 s (its 2 s vm_stat delta included) here, never on a request.
@@ -96,7 +99,22 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
             w.tick();
             std::thread::sleep(Duration::from_secs(1));
         });
-        l.incoming().flatten().for_each(|st| drop(s.handle(st)));
+        // #140: drive and the needs-human ops run here, one at a time; the board toasts the result.
+        sc.spawn(move || {
+            for (c, f, fleet) in rx {
+                let msg = json!(s.write(&c, &f).unwrap_or_else(|e| shown(&e)));
+                s.kick.store(lock(&s.running).remove(&fleet), Relaxed);
+                lock(&s.clients).retain(|c| c.0.send(format!("event: toast\ndata: {msg}\n\n")).is_ok());
+            }
+        });
+        for mut st in l.incoming().flatten() {
+            if busy.fetch_add(1, Relaxed) < 16 {
+                sc.spawn(move || (drop(s.handle(st)), busy.fetch_sub(1, Relaxed)));
+            } else {
+                busy.fetch_sub(1, Relaxed);
+                drop(st.write_all(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\n\r\n"));
+            }
+        }
     });
     Ok(())
 }
@@ -168,12 +186,15 @@ pub struct Server<'a> {
     /// The background sampler's last host read (`serve_on`); a request only reads it.
     pub host: Arc<Mutex<Host>>,
     /// Reply-box send times per device hash (10 a minute).
-    sent: RefCell<BTreeMap<String, Vec<u64>>>,
+    sent: Mutex<BTreeMap<String, Vec<u64>>>,
     /// `/live` client threads (at most 8; the paired device's hash, shared with the watcher), the
     /// watcher's state, and `kick`: an answer was tapped, the watcher re-reads panes and pushes now.
     clients: Clients,
     kick: Arc<AtomicBool>,
-    watch: RefCell<Watch>,
+    watch: Mutex<Watch>,
+    /// `serve_on`'s background queue for ops that can spawn or merge, and the fleets with one in flight.
+    jobs: Option<Sender<Job>>,
+    running: Mutex<BTreeSet<String>>,
     /// `serve --export` (#39): Some(demo), static files with relative URLs; `true` is the inert demo.
     export: Option<bool>,
 }
@@ -429,10 +450,12 @@ impl<'a> Server<'a> {
             cache: Arc::default(),
             fresh: false,
             host: Arc::default(),
-            sent: RefCell::default(),
+            sent: Mutex::default(),
             clients: Arc::default(),
             kick: Arc::default(),
-            watch: RefCell::default(),
+            watch: Mutex::default(),
+            jobs: None,
+            running: Mutex::default(),
             export: None,
         }
     }
@@ -508,7 +531,7 @@ impl<'a> Server<'a> {
 
     /// The watcher's 1 s tick (docs/serve.md): on a change, re-render per audience and push only the changed fragments.
     fn tick(&self) {
-        let mut w = self.watch.borrow_mut();
+        let mut w = lock(&self.watch);
         let now = crate::now();
         let known: Vec<String> = devices::load(self.ctx).into_iter().map(|d| d.hash).collect();
         lock(&self.clients).retain(|c| c.1.as_ref().is_none_or(|h| known.contains(h)));
@@ -645,7 +668,14 @@ impl<'a> Server<'a> {
                 ("401 Unauthorized", "text/plain", text("only a paired device may unpair, answer or drive\n"))
             }
             ("POST", "/") => {
-                let msg = self.write(ctx, &form(body.trim())).unwrap_or_else(|e| shown(&e));
+                // #140: an op that can spawn or merge runs on `serve_on`'s job thread; the reply is at once.
+                let f = form(body.trim());
+                let [op, fleet] = ["op", "fleet"].map(|k| f.get(k).cloned().unwrap_or_default());
+                let msg = match self.jobs.as_ref().filter(|_| ["drive", "override", "extend"].contains(&op.as_str())) {
+                    Some(_) if !lock(&self.running).insert(fleet.clone()) => format!("REFUSED DRIVE_RUNNING: {fleet} has a {op} running"),
+                    Some(tx) => (format!("{op} started for {fleet}"), drop(tx.send((ctx.clone(), f, fleet)))).0,
+                    None => self.write(ctx, &f).unwrap_or_else(|e| shown(&e)),
+                };
                 return see(&format!("/?msg={}", enc(&msg)));
             }
             // #59: the request's `hd=` token (10 min) works once `serve approve` clears its code; `/pair/claim` then keeps it a year.
@@ -726,7 +756,7 @@ impl<'a> Server<'a> {
         let Some(dev) = self.device(ctx, head) else {
             return ("401 Unauthorized", "pair this device: tap Pair this phone".into());
         };
-        let mut sent = self.sent.borrow_mut();
+        let mut sent = lock(&self.sent);
         let times = sent.entry(dev.hash.clone()).or_default();
         times.retain(|t| ctx.now < t + 60);
         if times.len() >= 10 {
@@ -930,12 +960,7 @@ impl<'a> Server<'a> {
             }
             "drive" => {
                 crate::drive::drive(ctx, &Config::load(&ctx.config)?, self.r, &mut out, Some(fleet))?;
-                let line = String::from_utf8_lossy(&out).lines().collect::<Vec<_>>().join("; ");
-                if line.is_empty() {
-                    format!("{fleet}: nothing due")
-                } else {
-                    line
-                }
+                crate::drive::summary(fleet, &String::from_utf8_lossy(&out))
             }
             // #130: a needs-human card's buttons.
             op @ ("override" | "extend" | "park") => {
