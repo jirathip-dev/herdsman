@@ -164,14 +164,12 @@
     toast: () => {
       tab('queue');
       href = location.href;
-      const msg = o => o.body.get('op') === 'drive' ? 'drive started for ' + o.body.get('fleet') : 'moved #12 before #18';
+      const msg = o => ({ drive: 'drive started for ' + o.body.get('fleet'), mv: 'moved #12 before #18' })[o.body.get('op')] || 'error: empty POST body';
       window.fetch = (u, o) => Promise.resolve(Object.defineProperties(new Response(''), { redirected: { value: true }, url: { value: location.origin + '/?msg=' + encodeURIComponent(msg(o)) } }));
-      const submit = op => { const f = $(`#queue input[name=op][value=${op}]`).form; f.inert = false; f.requestSubmit(); return f; };
+      // The demo disables every input (no writes), which would leave the POST body empty: enable the form's, as live.
+      const submit = op => { const f = $(`#queue input[name=op][value=${op}]`).form; f.inert = false; [...f.elements].forEach(e => { e.disabled = false; }); f.requestSubmit(); return f; };
       submit('mv');
-      setTimeout(() => {
-        toasted = $('.msg.g') && $('.msg.g').textContent;
-        try { drove = 'drive started for ' + submit('drive').elements.fleet.value; } catch (err) { drove = 'threw: ' + err.message; }
-      }, 500);
+      setTimeout(() => { toasted = $('.msg.g') && $('.msg.g').textContent; drove = 'drive started for ' + submit('drive').elements.fleet.value; }, 500);
       setTimeout(() => { const m = $('.msg.g, .msg.r'); drove = m && m.textContent === drove || `want "${drove}", saw "${m && m.textContent}"`; }, 1000);
     },
   };
