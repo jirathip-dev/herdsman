@@ -13,7 +13,10 @@ fn branch(r: &dyn Runner, repo: &str, b: &str) -> (Option<bool>, Vec<String>) {
     };
     let body: Value = serde_json::from_str(&o.stdout).unwrap_or(Value::Null);
     if o.code == 0 {
-        let parts = [("required status checks", "required_status_checks"), ("required PR reviews", "required_pull_request_reviews")];
+        let parts = [
+            ("required status checks", "required_status_checks"),
+            ("required PR reviews", "required_pull_request_reviews"),
+        ];
         let missing: Vec<_> = parts.iter().filter(|p| !body[p.1].is_object()).map(|p| p.0).collect();
         let mut lines = vec![if missing.is_empty() {
             "✓ protected (required status checks, required PR reviews)".to_string()
@@ -36,10 +39,21 @@ fn branch(r: &dyn Runner, repo: &str, b: &str) -> (Option<bool>, Vec<String>) {
         (Some("404"), "Branch not protected") => (Some(false), vec!["✗ not protected (HTTP 404)".into()]),
         (Some(s), _) => {
             let err = o.stderr.split(" (HTTP ").next().unwrap_or("").trim();
-            let why = if msg.is_empty() { err.trim_start_matches("gh: ") } else { &msg };
+            let why = if msg.is_empty() {
+                err.trim_start_matches("gh: ")
+            } else {
+                &msg
+            };
             (Some(false), vec![format!("✗ unavailable: {why} (HTTP {s})")])
         }
-        (None, _) => (Some(false), vec![format!("✗ unavailable: no HTTP status (gh exit {}: {})", o.code, o.stderr.trim())]),
+        (None, _) => (
+            Some(false),
+            vec![format!(
+                "✗ unavailable: no HTTP status (gh exit {}: {})",
+                o.code,
+                o.stderr.trim()
+            )],
+        ),
     }
 }
 
@@ -64,7 +78,11 @@ pub fn protection(cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Result<i
         }
         if !seen {
             code = 1;
-            writeln!(out, "{}: ✗ no branch verified: none of the checked branches exists", f.repo)?;
+            writeln!(
+                out,
+                "{}: ✗ no branch verified: none of the checked branches exists",
+                f.repo
+            )?;
         }
     }
     Ok(code)

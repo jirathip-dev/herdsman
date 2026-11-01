@@ -2,7 +2,10 @@
 use crate::config::{self, home, Config};
 use crate::events::{fold, read, status_line};
 use crate::runner::{self, Runner};
-use crate::{access, check, devices, gate, gh, harness, hook, migrate, pause, protection, queue, queue_change, serve, set, spawn, Ctx};
+use crate::{
+    access, check, devices, gate, gh, harness, hook, migrate, pause, protection, queue, queue_change, serve, set,
+    spawn, Ctx,
+};
 use anyhow::{bail, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use serde_json::json;
@@ -10,7 +13,12 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "herdsman", version, about = "State, gates and harness toggle over herdr", disable_help_subcommand = true)]
+#[command(
+    name = "herdsman",
+    version,
+    about = "State, gates and harness toggle over herdr",
+    disable_help_subcommand = true
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -306,7 +314,6 @@ enum ProfilesCmd {
     },
 }
 
-
 /// The one usage doc both harnesses get: the commands generated from the CLI definition, the rest from `roles/usage-*.md`.
 pub fn usage_doc() -> String {
     let mut cmd = Cli::command();
@@ -314,14 +321,27 @@ pub fn usage_doc() -> String {
     let mut s = String::from(include_str!("../roles/usage-head.md"));
     // The owner's commands; the sections below name them.
     let owner = ["accounts", "drive", "pause", "resume", "serve"];
-    let subs = cmd.get_subcommands().filter(|c| !c.is_hide_set() && !owner.contains(&c.get_name()));
-    let subs: Vec<_> = subs.flat_map(|c| if c.has_subcommands() { c.get_subcommands().collect() } else { vec![c] }).collect();
+    let subs = cmd
+        .get_subcommands()
+        .filter(|c| !c.is_hide_set() && !owner.contains(&c.get_name()));
+    let subs: Vec<_> = subs
+        .flat_map(|c| {
+            if c.has_subcommands() {
+                c.get_subcommands().collect()
+            } else {
+                vec![c]
+            }
+        })
+        .collect();
     for sub in subs {
         let mut sub = sub.clone();
         let about = sub.get_about().map(|a| a.to_string()).unwrap_or_default();
         let usage = sub.render_usage().to_string().replace("Usage: ", "");
         s += &format!("\n`{}`\n  {about}\n", usage.trim());
-        for a in sub.get_arguments().filter(|a| a.get_long().is_some_and(|l| l != "help")) {
+        for a in sub
+            .get_arguments()
+            .filter(|a| a.get_long().is_some_and(|l| l != "help"))
+        {
             let h = a.get_help().map(|h| h.to_string()).unwrap_or_default();
             s += &format!("  --{}  {h}\n", a.get_long().unwrap());
         }
@@ -372,12 +392,21 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
         Cmd::Migrate => migrate(&ctx.home, out)?,
         Cmd::Help { agent: true } => write!(out, "{}", usage_doc())?,
         Cmd::Help { agent: false } => write!(out, "{}", Cli::command().render_long_help())?,
-        Cmd::Hook { role, git_pre_push: true } => return pre_push(ctx, out, stdin, role.as_deref() == Some("rev")),
-        Cmd::Hook { role, git_pre_push: false } => run_hook(ctx, r, out, stdin, role.as_deref() == Some("rev"))?,
+        Cmd::Hook {
+            role,
+            git_pre_push: true,
+        } => return pre_push(ctx, out, stdin, role.as_deref() == Some("rev")),
+        Cmd::Hook {
+            role,
+            git_pre_push: false,
+        } => run_hook(ctx, r, out, stdin, role.as_deref() == Some("rev"))?,
         Cmd::Status(Scope { fleet, json }) => {
             let events = read(&ctx.state)?;
             let all = fold(&events);
-            let rows: Vec<_> = all.values().filter(|s| fleet.as_ref().is_none_or(|f| *f == s.fleet)).collect();
+            let rows: Vec<_> = all
+                .values()
+                .filter(|s| fleet.as_ref().is_none_or(|f| *f == s.fleet))
+                .collect();
             if json {
                 writeln!(out, "{}", serde_json::to_string_pretty(&rows)?)?;
             } else if rows.is_empty() {
@@ -387,18 +416,47 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 let serial = |f: &str| queue::serial_use(&events, &all, f, cfg.as_ref()).map(|s| format!("{f}: {s}\n"));
                 let mut serial: Vec<_> = rows.iter().filter_map(|s| serial(&s.fleet)).collect();
                 serial.dedup();
-                let waits = cfg.map(|c| crate::waiting::scan(ctx, &c, r, &events, &crate::host::agents(r).unwrap_or_default(), false));
-                writeln!(out, "{:<12} {:<6} {:<12} {:<24} {:<5} WAITING", "FLEET", "ISSUE", "STATE", "LANE", "AGE")?;
+                let waits = cfg.map(|c| {
+                    crate::waiting::scan(ctx, &c, r, &events, &crate::host::agents(r).unwrap_or_default(), false)
+                });
+                writeln!(
+                    out,
+                    "{:<12} {:<6} {:<12} {:<24} {:<5} WAITING",
+                    "FLEET", "ISSUE", "STATE", "LANE", "AGE"
+                )?;
                 for s in rows {
-                    let w = waits.iter().flatten().find(|(x, _)| x.fleet == s.fleet && x.issue == s.issue).map_or("-", |w| w.1.what.as_str());
+                    let w = waits
+                        .iter()
+                        .flatten()
+                        .find(|(x, _)| x.fleet == s.fleet && x.issue == s.issue)
+                        .map_or("-", |w| w.1.what.as_str());
                     writeln!(out, "{:<5} {w}", status_line(s, ctx.now))?;
                 }
                 write!(out, "{}", serial.concat())?;
             }
         }
-        Cmd::Set { fleet, role, harness, model, profile, effort } => {
-            let wanted = [("harness", harness), ("model", model), ("profile", profile), ("effort", effort)];
-            set(ctx, out, &fleet, &role, wanted.into_iter().filter_map(|(k, v)| Some((k, v?))).collect(), None)?
+        Cmd::Set {
+            fleet,
+            role,
+            harness,
+            model,
+            profile,
+            effort,
+        } => {
+            let wanted = [
+                ("harness", harness),
+                ("model", model),
+                ("profile", profile),
+                ("effort", effort),
+            ];
+            set(
+                ctx,
+                out,
+                &fleet,
+                &role,
+                wanted.into_iter().filter_map(|(k, v)| Some((k, v?))).collect(),
+                None,
+            )?
         }
         Cmd::Pause { fleet } => pause(ctx, out, &fleet, true, None)?,
         Cmd::Resume { fleet } => pause(ctx, out, &fleet, false, None)?,
@@ -415,14 +473,41 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
             let events = read(&ctx.state)?;
             let all = fleet.map_or_else(|| queue::fleets(&events), |f| vec![f]);
             let cfg = Config::load(&ctx.config).ok();
-            let boards: Vec<_> = all.iter().map(|f| queue::board(&events, f, ctx.now, cfg.as_ref())).collect();
+            let boards: Vec<_> = all
+                .iter()
+                .map(|f| queue::board(&events, f, ctx.now, cfg.as_ref()))
+                .collect();
             write!(out, "{}", boards.join("\n"))?;
         }
-        Cmd::Asks { scope: Scope { fleet, json }, all } => crate::asks(ctx, out, fleet.as_deref(), json, all)?,
-        Cmd::Serve { cmd: Some(ServeCmd::Pair), .. } => writeln!(out, "now: open the page, tap Pair, then run serve approve <code>")?,
-        Cmd::Serve { cmd: Some(ServeCmd::Approve { code }), .. } => writeln!(out, "paired {}", devices::approve(ctx, &code)?)?,
-        Cmd::Serve { cmd: Some(ServeCmd::Pending), .. } => devices::pending(ctx).iter().try_for_each(|d| writeln!(out, "{} {} {}m left", d.code.as_deref().unwrap_or_default(), d.label, (d.created + 600 - ctx.now).div_ceil(60)))?,
-        Cmd::Serve { export: Some(dir), demo, .. } => serve::export(ctx, r, &dir, demo)?,
+        Cmd::Asks {
+            scope: Scope { fleet, json },
+            all,
+        } => crate::asks(ctx, out, fleet.as_deref(), json, all)?,
+        Cmd::Serve {
+            cmd: Some(ServeCmd::Pair),
+            ..
+        } => writeln!(out, "now: open the page, tap Pair, then run serve approve <code>")?,
+        Cmd::Serve {
+            cmd: Some(ServeCmd::Approve { code }),
+            ..
+        } => writeln!(out, "paired {}", devices::approve(ctx, &code)?)?,
+        Cmd::Serve {
+            cmd: Some(ServeCmd::Pending),
+            ..
+        } => devices::pending(ctx).iter().try_for_each(|d| {
+            writeln!(
+                out,
+                "{} {} {}m left",
+                d.code.as_deref().unwrap_or_default(),
+                d.label,
+                (d.created + 600 - ctx.now).div_ceil(60)
+            )
+        })?,
+        Cmd::Serve {
+            export: Some(dir),
+            demo,
+            ..
+        } => serve::export(ctx, r, &dir, demo)?,
         Cmd::Serve { addr, read_only, .. } => serve::serve(ctx, r, &addr, read_only)?,
         Cmd::Push { cmd: PushCmd::Test } => {
             let cfg = Config::load(&ctx.config)?;
@@ -432,60 +517,122 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
             let ev = crate::events::Event::new(ctx.now, "herdsman", None, "push-test", json!({"reason": "test alert"}));
             writeln!(out, "{}", crate::webpush::send(&ctx.state, sub, &ev, None)?)?;
         }
-        Cmd::Queue { fleet, cmd: QueueCmd::Ls { json } } => {
+        Cmd::Queue {
+            fleet,
+            cmd: QueueCmd::Ls { json },
+        } => {
             let rows = queue::ls_json(&read(&ctx.state)?, &fleet);
             if json {
                 writeln!(out, "{}", serde_json::to_string_pretty(&rows)?)?;
             }
             for r in rows.as_array().into_iter().flatten().filter(|_| !json) {
-                let mut on = r["blocked_by"].as_u64().map_or(String::new(), |b| format!("  blocked by #{b}"));
+                let mut on = r["blocked_by"]
+                    .as_u64()
+                    .map_or(String::new(), |b| format!("  blocked by #{b}"));
                 if r["serial"] == true {
                     on += "  serial";
                 }
                 let n = |k: &str| r[k].as_u64().unwrap_or_default();
-                writeln!(out, "{:>2} #{:<5} {}{on}", n("pos"), n("issue"), r["state"].as_str().unwrap_or_default())?;
+                writeln!(
+                    out,
+                    "{:>2} #{:<5} {}{on}",
+                    n("pos"),
+                    n("issue"),
+                    r["state"].as_str().unwrap_or_default()
+                )?;
             }
         }
         cmd => {
             let cfg = Config::load(&ctx.config)?;
             match cmd {
-                Cmd::Profiles { cmd: ProfilesCmd::Sync { check: true } } => {
+                Cmd::Profiles {
+                    cmd: ProfilesCmd::Sync { check: true },
+                } => {
                     if !spawn::profiles_check(ctx, &cfg, r, out)? {
                         return Ok(1);
                     }
                 }
-                Cmd::Profiles { cmd: ProfilesCmd::Sync { check: false } } => spawn::profiles_sync(ctx, &cfg, &usage_doc(), out)?,
+                Cmd::Profiles {
+                    cmd: ProfilesCmd::Sync { check: false },
+                } => spawn::profiles_sync(ctx, &cfg, &usage_doc(), out)?,
                 Cmd::Spawn { fleet, issue, role, o } => {
                     let issue = lane(&issue)?;
                     if !spawn::spawn(ctx, &cfg, r, out, (&fleet, issue, &role), &o)? {
                         return Ok(4);
                     }
                 }
-                Cmd::Adopt { fleet, issue, role, pane } => {
+                Cmd::Adopt {
+                    fleet,
+                    issue,
+                    role,
+                    pane,
+                } => {
                     let issue = lane(&issue)?;
                     spawn::adopt(ctx, &cfg, r, out, (&fleet, issue, &role), &pane)?
                 }
-                Cmd::Ask { fleet, issue, question, options, recommend } => crate::ask(ctx, &cfg, out, (&fleet, lane(&issue)?), &question, &options, recommend)?,
-                Cmd::Answer { fleet, id, choice, by } => crate::answer(ctx, &cfg, r, out, (&fleet, &id), &choice, (&by, None))?,
+                Cmd::Ask {
+                    fleet,
+                    issue,
+                    question,
+                    options,
+                    recommend,
+                } => crate::ask(ctx, &cfg, out, (&fleet, lane(&issue)?), &question, &options, recommend)?,
+                Cmd::Answer { fleet, id, choice, by } => {
+                    crate::answer(ctx, &cfg, r, out, (&fleet, &id), &choice, (&by, None))?
+                }
                 Cmd::Check => check::check(ctx, &cfg, r, out)?,
                 Cmd::Drive { fleet } => crate::drive::drive(ctx, &cfg, r, out, fleet.as_deref())?,
                 Cmd::Waiting(Scope { fleet, json }) => {
-                    let all = crate::waiting::scan(ctx, &cfg, r, &read(&ctx.state)?, &crate::host::agents(r).unwrap_or_default(), true);
-                    let rows: Vec<_> = all.into_iter().filter(|(s, w)| s.lane.as_ref() == Some(&w.lane)).map(|x| x.1).filter(|w| matches!(w.who, "orch" | "owner") && fleet.as_ref().is_none_or(|f| *f == w.fleet)).collect();
+                    let all = crate::waiting::scan(
+                        ctx,
+                        &cfg,
+                        r,
+                        &read(&ctx.state)?,
+                        &crate::host::agents(r).unwrap_or_default(),
+                        true,
+                    );
+                    let rows: Vec<_> = all
+                        .into_iter()
+                        .filter(|(s, w)| s.lane.as_ref() == Some(&w.lane))
+                        .map(|x| x.1)
+                        .filter(|w| matches!(w.who, "orch" | "owner") && fleet.as_ref().is_none_or(|f| *f == w.fleet))
+                        .collect();
                     if json {
                         writeln!(out, "{}", serde_json::to_string_pretty(&rows)?)?;
                     }
                     for w in rows.iter().filter(|_| !json) {
-                        writeln!(out, "{} #{} {}: {} ({}){}", w.fleet, w.issue, w.who, w.what, crate::events::age(ctx.now.saturating_sub(w.since)), w.next_cmd.as_deref().or((w.who == "orch").then_some("?")).map_or(String::new(), |c| format!(" → {c}")))?;
+                        writeln!(
+                            out,
+                            "{} #{} {}: {} ({}){}",
+                            w.fleet,
+                            w.issue,
+                            w.who,
+                            w.what,
+                            crate::events::age(ctx.now.saturating_sub(w.since)),
+                            w.next_cmd
+                                .as_deref()
+                                .or((w.who == "orch").then_some("?"))
+                                .map_or(String::new(), |c| format!(" → {c}"))
+                        )?;
                     }
                 }
                 Cmd::Accounts { cmd: None } => access::list(ctx, &cfg, r, out)?,
-                Cmd::Accounts { cmd: Some(AccountsCmd::Reset { name }) } => access::reset(ctx, &cfg, out, &name)?,
+                Cmd::Accounts {
+                    cmd: Some(AccountsCmd::Reset { name }),
+                } => access::reset(ctx, &cfg, out, &name)?,
                 Cmd::Protection => return protection::protection(&cfg, r, out),
-                Cmd::Clean { fleet, lane, yes } => check::clean(ctx, &cfg, r, out, fleet.as_deref(), (None, lane.as_deref()), yes)?,
+                Cmd::Clean { fleet, lane, yes } => {
+                    check::clean(ctx, &cfg, r, out, fleet.as_deref(), (None, lane.as_deref()), yes)?
+                }
                 Cmd::Stop { agent } => check::stop(ctx, &cfg, r, out, &agent)?,
                 Cmd::Kill { agent, yes } => check::kill(ctx, &cfg, r, out, &agent, yes)?,
-                Cmd::Verdict { fleet, issue, verdict, sha, file } => {
+                Cmd::Verdict {
+                    fleet,
+                    issue,
+                    verdict,
+                    sha,
+                    file,
+                } => {
                     let pass = verdict == "PASS";
                     gate::verdict(ctx, &cfg, r, out, (&fleet, issue), pass, &sha, &file)?
                 }
@@ -501,27 +648,55 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     if json {
                         writeln!(out, "{}", serde_json::to_string_pretty(&pr)?)?;
                     } else {
-                        writeln!(out, "{}", gh::summary(&pr, &branch, &cfg.fleet(&fleet)?.required_checks))?;
+                        writeln!(
+                            out,
+                            "{}",
+                            gh::summary(&pr, &branch, &cfg.fleet(&fleet)?.required_checks)
+                        )?;
                     }
                     if pr.is_null() {
                         return Ok(1);
                     }
                 }
-                Cmd::Wait { fleet, issue, until, timeout } => {
+                Cmd::Wait {
+                    fleet,
+                    issue,
+                    until,
+                    timeout,
+                } => {
                     let branch = gate::branch_of(gate::issue_state(ctx, &fleet, issue)?.as_ref(), issue);
-                    return gh::wait(ctx, r, out, cfg.fleet(&fleet)?, (&fleet, issue), &branch, until, timeout);
+                    return gh::wait(
+                        ctx,
+                        r,
+                        out,
+                        cfg.fleet(&fleet)?,
+                        (&fleet, issue),
+                        &branch,
+                        until,
+                        timeout,
+                    );
                 }
                 Cmd::Queue { fleet, cmd } => {
                     cfg.fleet(&fleet)?;
                     let d = match cmd {
-                        QueueCmd::Add { issues, top, after, serial } => {
+                        QueueCmd::Add {
+                            issues,
+                            top,
+                            after,
+                            serial,
+                        } => {
                             let mut d = queue::op("add", &issues, top, None, after, None);
                             if serial {
                                 d["serial"] = json!(true);
                             }
                             d
                         }
-                        QueueCmd::Mv { issue, top, before, after } => queue::op("mv", &[issue], top, before, after, None),
+                        QueueCmd::Mv {
+                            issue,
+                            top,
+                            before,
+                            after,
+                        } => queue::op("mv", &[issue], top, before, after, None),
                         QueueCmd::Rm { issue } => queue::op("rm", &[issue], false, None, None, None),
                         QueueCmd::Block { issue, on } => queue::op("block", &[issue], false, None, None, Some(on)),
                         QueueCmd::Ls { .. } => unreachable!(),
@@ -539,7 +714,11 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
 fn lane(issue: &str) -> Result<Option<u64>> {
     match issue {
         "-" => Ok(None),
-        n => Ok(Some(n.parse().map_err(|_| anyhow::anyhow!("issue must be a number or `-`, not `{n}`"))?)),
+        n => {
+            Ok(Some(n.parse().map_err(|_| {
+                anyhow::anyhow!("issue must be a number or `-`, not `{n}`")
+            })?))
+        }
     }
 }
 
@@ -564,9 +743,15 @@ fn run_hook(ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mut dyn Read
         h.join(".config/fleet-operations").to_string_lossy().into(),
         h.join(".hermes/profiles").to_string_lossy().into(),
     ];
-    let policy = hook::Policy { branches, paths, reviewer };
+    let policy = hook::Policy {
+        branches,
+        paths,
+        reviewer,
+    };
     let cur = |d: &str| {
-        runner::ok(r, "git", &["-C", d, "rev-parse", "--abbrev-ref", "HEAD"]).ok().map(|s| s.trim().to_string())
+        runner::ok(r, "git", &["-C", d, "rev-parse", "--abbrev-ref", "HEAD"])
+            .ok()
+            .map(|s| s.trim().to_string())
     };
     if let Some(reason) = hook::decide(&input, &policy, &cur) {
         writeln!(out, "{}", hook::deny_json(&input, &reason))?;
@@ -591,11 +776,17 @@ fn pre_push(ctx: &Ctx, out: &mut dyn Write, stdin: &mut dyn Read, reviewer: bool
     for dst in buf.lines().filter_map(|l| l.split_whitespace().nth(2)) {
         let b = dst.trim_start_matches("refs/heads/");
         if reviewer {
-            writeln!(out, "herdsman: reviewers are read-only: no `git push` (to `{b}`); write verdict.md and report in your pane")?;
+            writeln!(
+                out,
+                "herdsman: reviewers are read-only: no `git push` (to `{b}`); write verdict.md and report in your pane"
+            )?;
             return Ok(1);
         }
         if branches.iter().any(|x| x == b) {
-            writeln!(out, "herdsman: pushing to `{b}` is blocked; integration branches change only via `herdsman merge`")?;
+            writeln!(
+                out,
+                "herdsman: pushing to `{b}` is blocked; integration branches change only via `herdsman merge`"
+            )?;
             return Ok(1);
         }
     }

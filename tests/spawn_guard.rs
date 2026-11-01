@@ -94,9 +94,15 @@ fn many_live_agents_with_normal_signals_admit() {
     let d = tmpdir("host-many");
     let c = ctx(&d, &format!("{CONFIG}max_agents = 12\n"));
     let rows: Vec<String> = (0..50).map(|i| format!("other-{i}")).collect();
-    let list: Vec<_> = rows.iter().map(|n| (n.as_str(), "idle", "/elsewhere", "w1:p1")).collect();
+    let list: Vec<_> = rows
+        .iter()
+        .map(|n| (n.as_str(), "idle", "/elsewhere", "w1:p1"))
+        .collect();
     let (exit, out) = spawn(&c, &happy(&c, &agents(&list)), &[]);
-    assert_eq!(exit, 0, "a leftover max_agents key is ignored and there is no count cap: {out}");
+    assert_eq!(
+        exit, 0,
+        "a leftover max_agents key is ignored and there is no count cap: {out}"
+    );
 }
 
 #[test]
@@ -106,7 +112,10 @@ fn host_under_every_threshold_admits() {
     let r = happy(&c, NO_AGENTS);
     let (exit, out) = spawn(&c, &r, &[]);
     assert_eq!(exit, 0, "{out} {:?}", r.calls.borrow());
-    assert!(r.called("sysctl -n kern.memorystatus_vm_pressure_level"), "the host was probed");
+    assert!(
+        r.called("sysctl -n kern.memorystatus_vm_pressure_level"),
+        "the host was probed"
+    );
     let ev = read(&c.state).unwrap();
     assert!(ev.iter().any(|e| e.kind == "spawn"));
     assert!(ev.iter().all(|e| e.kind != "override"));
@@ -122,7 +131,11 @@ fn force_admits_busy_host_and_logs_override() {
     let ev = read(&c.state).unwrap();
     let o = ev.iter().find(|e| e.kind == "override").expect("override event");
     assert_eq!(o.str("code"), Some("HOST_BUSY"));
-    assert!(o.str("reason").unwrap().contains("memory pressure critical"), "{:?}", o.data);
+    assert!(
+        o.str("reason").unwrap().contains("memory pressure critical"),
+        "{:?}",
+        o.data
+    );
     assert!(ev.iter().any(|e| e.kind == "spawn"));
 }
 
@@ -199,7 +212,13 @@ impl Runner for Hermes {
     fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<Out> {
         let o = self.fake.run(prog, args)?;
         let line = format!("{prog} {}", args.join(" "));
-        let out = |code: i32, s: &str| Ok(Out { code, stdout: s.into(), stderr: String::new() });
+        let out = |code: i32, s: &str| {
+            Ok(Out {
+                code,
+                stdout: s.into(),
+                stderr: String::new(),
+            })
+        };
         if line.starts_with("herdr pane wait-output") {
             self.ready.set(true);
         }
@@ -216,7 +235,14 @@ impl Runner for Hermes {
             return out(if self.landed.get() { 0 } else { 1 }, "");
         }
         if line.starts_with("herdr pane read") {
-            return out(0, if self.landed.get() { "fleet-impl ❯  ctx 52K" } else { "fleet-impl ❯  ctx --" });
+            return out(
+                0,
+                if self.landed.get() {
+                    "fleet-impl ❯  ctx 52K"
+                } else {
+                    "fleet-impl ❯  ctx --"
+                },
+            );
         }
         Ok(o)
     }
@@ -229,13 +255,29 @@ impl Runner for Hermes {
 fn hermes_kick_retries_after_dropped_first_prompt() {
     let d = tmpdir("kick-retry");
     let c = ctx(&d, CONFIG);
-    let h = Hermes { fake: happy(&c, NO_AGENTS), ready: Shared::new(false), dropped: Shared::new(false), landed: Shared::new(false) };
+    let h = Hermes {
+        fake: happy(&c, NO_AGENTS),
+        ready: Shared::new(false),
+        dropped: Shared::new(false),
+        landed: Shared::new(false),
+    };
     let (exit, out) = spawn(&c, &h, &[]);
     assert_eq!(exit, 0, "{out} {:?}", h.fake.calls.borrow());
     let f = &h.fake;
-    assert!(f.index("herdr pane wait-output w9:p1").unwrap() < f.index("herdr agent prompt").unwrap(), "waits for input");
-    assert_eq!(f.count("herdr agent prompt sendmeter-impl-12"), 2, "landed on attempt 2");
-    assert_eq!(f.count("herdr pane send-keys w9:p1 Enter"), 2, "explicit Enter each attempt");
+    assert!(
+        f.index("herdr pane wait-output w9:p1").unwrap() < f.index("herdr agent prompt").unwrap(),
+        "waits for input"
+    );
+    assert_eq!(
+        f.count("herdr agent prompt sendmeter-impl-12"),
+        2,
+        "landed on attempt 2"
+    );
+    assert_eq!(
+        f.count("herdr pane send-keys w9:p1 Enter"),
+        2,
+        "explicit Enter each attempt"
+    );
     assert_eq!(f.count("sleep 10"), 1);
     assert_eq!(read(&c.state).unwrap().last().unwrap().data["confirmed"], true);
 }
@@ -253,7 +295,10 @@ fn orch_lane_spawns_without_issue() {
     assert!(r.called("herdr agent start sendmeter-orch --kind hermes --pane w9:p1 --timeout 90000 -- -p fleet-orch"));
     assert!(!r.called("gh issue view") && !r.called("herdr worktree"));
     let brief = std::fs::read_to_string(c.state.parent().unwrap().join("orch-sendmeter.md")).unwrap();
-    assert!(brief.contains("# ROLE: ORCHESTRATOR") && brief.contains("integration branch: `staging`"), "{brief}");
+    assert!(
+        brief.contains("# ROLE: ORCHESTRATOR") && brief.contains("integration branch: `staging`"),
+        "{brief}"
+    );
     let ev = read(&c.state).unwrap();
     let s = ev.iter().find(|e| e.kind == "spawn").unwrap();
     assert_eq!((s.issue, s.str("role")), (None, Some("orch")));
@@ -263,8 +308,14 @@ fn orch_lane_spawns_without_issue() {
     assert_eq!(exit, 3, "{out}");
     assert!(out.contains("REFUSED LANE_LIVE"), "{out}");
     // orch takes no issue; impl needs one.
-    assert_eq!(run(&c, &happy(&c, NO_AGENTS), &["spawn", "sendmeter", "12", "orch"]).0, 1);
-    assert_eq!(run(&c, &happy(&c, NO_AGENTS), &["spawn", "sendmeter", "-", "impl"]).0, 1);
+    assert_eq!(
+        run(&c, &happy(&c, NO_AGENTS), &["spawn", "sendmeter", "12", "orch"]).0,
+        1
+    );
+    assert_eq!(
+        run(&c, &happy(&c, NO_AGENTS), &["spawn", "sendmeter", "-", "impl"]).0,
+        1
+    );
 }
 
 #[test]
@@ -279,7 +330,10 @@ fn fix_round_brief_carries_fail_findings() {
     let (exit, out) = spawn(&c, &happy(&c, NO_AGENTS), &["--supersede"]);
     assert_eq!(exit, 0, "{out}");
     let brief = std::fs::read_to_string(wt(&c).join(".brief.md")).unwrap();
-    assert!(brief.contains("Review findings to fix") && brief.contains("src/x.rs:3 off by one"), "{brief}");
+    assert!(
+        brief.contains("Review findings to fix") && brief.contains("src/x.rs:3 off by one"),
+        "{brief}"
+    );
 }
 
 #[test]
@@ -291,7 +345,10 @@ fn a_new_lane_brief_carries_the_issue_decisions() {
     let (exit, out) = spawn(&c, &happy(&c, NO_AGENTS), &[]);
     assert_eq!(exit, 0, "{out}");
     let brief = std::fs::read_to_string(wt(&c).join(".brief.md")).unwrap();
-    assert!(brief.contains("sendmeter #12 decision q3 by owner: per API key"), "{brief}");
+    assert!(
+        brief.contains("sendmeter #12 decision q3 by owner: per API key"),
+        "{brief}"
+    );
 }
 
 // --- #13: herdr start timeout under load ---
@@ -310,10 +367,17 @@ fn start_timeout_with_running_harness_registers_lane() {
         .once("herdr agent rename w9:p1 sendmeter-impl-12", 0, "{}");
     let (exit, out) = spawn(&c, &r, &[]);
     assert_eq!(exit, 0, "{out} {:?}", r.calls.borrow());
-    assert!(r.called("herdr agent rename w9:p1 sendmeter-impl-12"), "{:?}", r.calls.borrow());
+    assert!(
+        r.called("herdr agent rename w9:p1 sendmeter-impl-12"),
+        "{:?}",
+        r.calls.borrow()
+    );
     let ev = read(&c.state).unwrap();
     let s = ev.iter().find(|e| e.kind == "spawn").expect("spawn logged");
-    assert_eq!((s.str("agent"), s.str("pane")), (Some("sendmeter-impl-12"), Some("w9:p1")));
+    assert_eq!(
+        (s.str("agent"), s.str("pane")),
+        (Some("sendmeter-impl-12"), Some("w9:p1"))
+    );
     assert_eq!(s.data["confirmed"], true);
     let (_, st) = run(&c, &Fake::default(), &["status"]);
     assert!(st.contains("sendmeter-impl-12"), "{st}");
@@ -354,12 +418,18 @@ fn adopt_records_running_lane() {
     assert_eq!(exit, 0, "{out} {:?}", r.calls.borrow());
     let ev = read(&c.state).unwrap();
     let s = ev.iter().find(|e| e.kind == "spawn").expect("spawn logged");
-    assert_eq!((s.str("agent"), s.str("pane"), s.str("workspace")), (Some("sendmeter-impl-12"), Some("w9:p1"), Some("w9")));
+    assert_eq!(
+        (s.str("agent"), s.str("pane"), s.str("workspace")),
+        (Some("sendmeter-impl-12"), Some("w9:p1"), Some("w9"))
+    );
     assert_eq!(s.data["adopted"], true);
     let (_, st) = run(&c, &Fake::default(), &["status"]);
     assert!(st.contains("sendmeter-impl-12"), "{st}");
     // A pane with no harness is not a lane.
     let r = Fake::default().reply("herdr pane get w9:p1", PANE_SHELL);
-    assert_eq!(run(&c, &r, &["adopt", "sendmeter", "13", "impl", "--pane", "w9:p1"]).0, 1);
+    assert_eq!(
+        run(&c, &r, &["adopt", "sendmeter", "13", "impl", "--pane", "w9:p1"]).0,
+        1
+    );
     assert!(!r.called("herdr agent rename"));
 }

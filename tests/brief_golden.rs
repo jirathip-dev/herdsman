@@ -12,11 +12,20 @@ const DESIGN: &str = "\n[fleet.api.role.design]\nharness = \"hermes\"\nprofile =
 fn fake() -> Fake {
     Fake::default()
         .reply("herdr agent list", NO_AGENTS)
-        .reply("gh issue view 12", r#"{"title":"Fix the meter","body":"AC: it {works} \\ `ok`"}"#)
+        .reply(
+            "gh issue view 12",
+            r#"{"title":"Fix the meter","body":"AC: it {works} \\ `ok`"}"#,
+        )
         .reply("git -C", "0\n")
         .reply("herdr worktree", r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#)
-        .reply("herdr workspace create", r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#)
-        .reply("herdr pane list", r#"{"result":{"panes":[{"pane_id":"w9:p1","agent":null}]}}"#)
+        .reply(
+            "herdr workspace create",
+            r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#,
+        )
+        .reply(
+            "herdr pane list",
+            r#"{"result":{"panes":[{"pane_id":"w9:p1","agent":null}]}}"#,
+        )
         .reply("herdr pane run", "{}")
         .reply("herdr agent start", "{}")
         .reply("herdr pane wait-output", "{}")
@@ -27,7 +36,13 @@ fn fake() -> Fake {
 /// Spawn one lane and return its brief, with the temp dir replaced by `<TMP>`.
 fn brief(name: &str, issue: &str, role: &str, fail: bool) -> String {
     let d = tmpdir(&format!("brief-{name}"));
-    let c = ctx(&d, &(CONFIG.replace("jirathip-dev/sendmeter", "acme/api").replace("sendmeter", "api") + DESIGN));
+    let c = ctx(
+        &d,
+        &(CONFIG
+            .replace("jirathip-dev/sendmeter", "acme/api")
+            .replace("sendmeter", "api")
+            + DESIGN),
+    );
     if fail {
         let body = "FAIL\n\n1. **blocking**: src/x.rs:3 off by {one}.";
         let data = json!({"verdict": "FAIL", "sha": "a".repeat(40), "body": body});
@@ -41,7 +56,9 @@ fn brief(name: &str, issue: &str, role: &str, fail: bool) -> String {
         "design" => c.worktrees.join("api/design-12/.brief.md"),
         _ => c.worktrees.join("api/issue-12/.brief.md"),
     };
-    std::fs::read_to_string(path).unwrap().replace(d.to_str().unwrap(), "<TMP>")
+    std::fs::read_to_string(path)
+        .unwrap()
+        .replace(d.to_str().unwrap(), "<TMP>")
 }
 
 #[test]
@@ -61,6 +78,10 @@ fn lane_briefs_match_staging() {
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(&file, &got).unwrap();
         }
-        assert_eq!(got, std::fs::read_to_string(&file).unwrap(), "{name} brief differs from staging's");
+        assert_eq!(
+            got,
+            std::fs::read_to_string(&file).unwrap(),
+            "{name} brief differs from staging's"
+        );
     }
 }

@@ -9,17 +9,71 @@ use std::path::PathBuf;
 
 /// (file, selector, property, reason).
 const EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
-    ("serve.css", ".gl", "font-size", "glyph-mode avatar: a 20 px emoji picture, not text"),
-    ("serve.css", ".av .asc", "font", "ascii-mode avatar: 10 px character art, not text"),
-    ("serve.css", "#herd-on svg", "height", "header horse icon: 19×14 px picture geometry"),
-    ("serve.css", ".av", "height", "lane avatar box: 48×40 px picture geometry"),
-    ("serve.css", ".px", "height", "lane horse drawing: 48×36 px picture geometry"),
-    ("herd.css", ".hr", "height", "ranch strip: never shorter than 120 px of sky on a short screen"),
-    ("herd.css", ".hrain", "inset", "rain overlay: offset by its 60 px tile so the tile can scroll in"),
-    ("serve.css", ".ask button[name=choice],.ask .pick", "height", "choice buttons wrap: sentences, not labels; owner-approved 2026-10-31 (#63 A)"),
+    (
+        "serve.css",
+        ".gl",
+        "font-size",
+        "glyph-mode avatar: a 20 px emoji picture, not text",
+    ),
+    (
+        "serve.css",
+        ".av .asc",
+        "font",
+        "ascii-mode avatar: 10 px character art, not text",
+    ),
+    (
+        "serve.css",
+        "#herd-on svg",
+        "height",
+        "header horse icon: 19×14 px picture geometry",
+    ),
+    (
+        "serve.css",
+        ".av",
+        "height",
+        "lane avatar box: 48×40 px picture geometry",
+    ),
+    (
+        "serve.css",
+        ".px",
+        "height",
+        "lane horse drawing: 48×36 px picture geometry",
+    ),
+    (
+        "herd.css",
+        ".hr",
+        "height",
+        "ranch strip: never shorter than 120 px of sky on a short screen",
+    ),
+    (
+        "herd.css",
+        ".hrain",
+        "inset",
+        "rain overlay: offset by its 60 px tile so the tile can scroll in",
+    ),
+    (
+        "serve.css",
+        ".ask button[name=choice],.ask .pick",
+        "height",
+        "choice buttons wrap: sentences, not labels; owner-approved 2026-10-31 (#63 A)",
+    ),
 ];
 
-const SIZED: &[&str] = &["font", "font-size", "height", "min-height", "line-height", "gap", "row-gap", "column-gap", "top", "left", "right", "bottom", "inset"];
+const SIZED: &[&str] = &[
+    "font",
+    "font-size",
+    "height",
+    "min-height",
+    "line-height",
+    "gap",
+    "row-gap",
+    "column-gap",
+    "top",
+    "left",
+    "right",
+    "bottom",
+    "inset",
+];
 
 /// The px lengths in a value, e.g. `12px` (a token var never matches: `--s3` has no px).
 fn px(v: &str) -> Vec<String> {
@@ -27,7 +81,9 @@ fn px(v: &str) -> Vec<String> {
     let mut out = vec![];
     for i in 0..b.len().saturating_sub(1) {
         if &b[i..i + 2] == b"px" && i > 0 && b[i - 1].is_ascii_digit() {
-            let s = v[..i].rfind(|c: char| !(c.is_ascii_digit() || c == '.')).map_or(0, |k| k + 1);
+            let s = v[..i]
+                .rfind(|c: char| !(c.is_ascii_digit() || c == '.'))
+                .map_or(0, |k| k + 1);
             out.push(v[s..i + 2].to_string());
         }
     }
@@ -42,7 +98,8 @@ fn decls(css: &str) -> Vec<(usize, String, String, String)> {
         let nl = "\n".repeat(src[a..b].matches('\n').count());
         src.replace_range(a..b, &nl);
     }
-    let (mut out, mut stack, mut seg, mut line, mut start, mut tokens_seen) = (vec![], Vec::<String>::new(), String::new(), 1, 1, false);
+    let (mut out, mut stack, mut seg, mut line, mut start, mut tokens_seen) =
+        (vec![], Vec::<String>::new(), String::new(), 1, 1, false);
     for c in src.chars() {
         match c {
             '{' => {
@@ -52,7 +109,12 @@ fn decls(css: &str) -> Vec<(usize, String, String, String)> {
             ';' | '}' => {
                 let in_tokens = stack.last().is_some_and(|s| s == ":root") && !tokens_seen && stack.len() == 1;
                 if let Some((p, v)) = seg.split_once(':').filter(|_| !in_tokens) {
-                    out.push((start, stack.last().cloned().unwrap_or_default(), p.trim().to_string(), v.trim().to_string()));
+                    out.push((
+                        start,
+                        stack.last().cloned().unwrap_or_default(),
+                        p.trim().to_string(),
+                        v.trim().to_string(),
+                    ));
                 }
                 seg.clear();
                 if c == '}' {
@@ -83,7 +145,10 @@ fn css_uses_only_the_tokens() {
     for file in ["serve.css", "herd.css"] {
         let css = std::fs::read_to_string(dir.join(file)).unwrap();
         if file == "serve.css" {
-            assert!(css.starts_with(":root{") && css.contains("--fs:13px") && css.contains("--ctl:28px"), "serve.css opens with the token block");
+            assert!(
+                css.starts_with(":root{") && css.contains("--fs:13px") && css.contains("--ctl:28px"),
+                "serve.css opens with the token block"
+            );
         }
         for (line, sel, p, v) in decls(&css) {
             if EXCEPTIONS.iter().any(|e| e.0 == file && e.1 == sel && e.2 == p) {
@@ -95,32 +160,53 @@ fn css_uses_only_the_tokens() {
             }
             // A control is `--ctl` tall.
             if p == "height" && (sel.contains("button") || sel.contains(".pk")) && v != "var(--ctl)" {
-                bad.push(format!("assets/{file}:{line} {sel} {{{p}:{v}}} a control is var(--ctl) tall"));
+                bad.push(format!(
+                    "assets/{file}:{line} {sel} {{{p}:{v}}} a control is var(--ctl) tall"
+                ));
             }
             // `font:inherit` keeps the parent's token; any other font size names one.
             if (p == "font-size" || (p == "font" && v != "inherit")) && !v.starts_with("var(--fs") {
-                bad.push(format!("assets/{file}:{line} {sel} {{{p}:{v}}} font size is not a --fs token"));
+                bad.push(format!(
+                    "assets/{file}:{line} {sel} {{{p}:{v}}} font size is not a --fs token"
+                ));
             }
         }
     }
-    assert!(bad.is_empty(), "UI token lint (docs/ui.md), {} outliers:\n{}", bad.len(), bad.join("\n"));
+    assert!(
+        bad.is_empty(),
+        "UI token lint (docs/ui.md), {} outliers:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
 }
 
 #[test]
 fn rendered_page_has_no_inline_px() {
     let demo = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/demo"));
     let d = tmpdir("ui-tokens");
-    let c = Ctx { config: demo.join("fleet.toml"), state: demo.join("events.jsonl"), worktrees: d.join("wt"), hermes: d.join("hermes"), exe: "herdsman".into(), now: 1, home: d.join("home"), hints: vec![] };
+    let c = Ctx {
+        config: demo.join("fleet.toml"),
+        state: demo.join("events.jsonl"),
+        worktrees: d.join("wt"),
+        hermes: d.join("hermes"),
+        exe: "herdsman".into(),
+        now: 1,
+        home: d.join("home"),
+        hints: vec![],
+    };
     herdsman::serve::export(&c, &Fake::default(), &d.join("site"), true).unwrap();
     let page = std::fs::read_to_string(d.join("site/index.html")).unwrap();
-    let bad: Vec<String> = page.match_indices("style=").filter_map(|(i, _)| {
-        let v = &page[i + 6..];
-        let end = match v.chars().next() {
-            Some(q @ ('"' | '\'')) => v[1..].find(q).map_or(v.len(), |k| k + 2),
-            _ => v.find([' ', '>']).unwrap_or(v.len()),
-        };
-        (!px(&v[..end]).is_empty()).then(|| format!("index.html style={}", &v[..end]))
-    }).collect();
+    let bad: Vec<String> = page
+        .match_indices("style=")
+        .filter_map(|(i, _)| {
+            let v = &page[i + 6..];
+            let end = match v.chars().next() {
+                Some(q @ ('"' | '\'')) => v[1..].find(q).map_or(v.len(), |k| k + 2),
+                _ => v.find([' ', '>']).unwrap_or(v.len()),
+            };
+            (!px(&v[..end]).is_empty()).then(|| format!("index.html style={}", &v[..end]))
+        })
+        .collect();
     assert!(bad.is_empty(), "inline px in the rendered page:\n{}", bad.join("\n"));
 }
 

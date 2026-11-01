@@ -36,7 +36,11 @@ fn sync_writes_only_the_hooks_key_idempotently() {
     let (code, out) = run(&c, &Fake::default(), &["profiles", "sync"]);
     assert_eq!(code, 0, "{out}");
     let once = std::fs::read_to_string(&rev).unwrap();
-    assert_eq!(without_hooks(&once), without_hooks(PROFILE), "other settings unchanged:\n{once}");
+    assert_eq!(
+        without_hooks(&once),
+        without_hooks(PROFILE),
+        "other settings unchanged:\n{once}"
+    );
     assert!(once.contains(
         "hooks:\n  pre_tool_call:\n    - matcher: \"terminal|patch|write_file\"\n      command: \"'/opt/herdsman/bin/herdsman' hook --role rev\"\n# keep me\n"
     ), "{once}");
@@ -72,18 +76,34 @@ fn sync_approves_the_hook_once_per_role() {
     for (p, role) in [("fleet-rev", "rev"), ("fleet-impl", "impl")] {
         let v: serde_json::Value = serde_json::from_str(&allow(p)).unwrap();
         let cmd = format!("'/opt/herdsman/bin/herdsman' hook --role {role}");
-        let fleet: Vec<_> = v["approvals"].as_array().unwrap().iter().filter(|e| e["event"] == "pre_tool_call").collect();
-        assert_eq!(fleet, [&serde_json::json!({"event": "pre_tool_call", "command": cmd})], "{p}");
+        let fleet: Vec<_> = v["approvals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["event"] == "pre_tool_call")
+            .collect();
+        assert_eq!(
+            fleet,
+            [&serde_json::json!({"event": "pre_tool_call", "command": cmd})],
+            "{p}"
+        );
     }
     let rev: serde_json::Value = serde_json::from_str(&allow("fleet-rev")).unwrap();
-    assert_eq!((rev["approvals"][0]["command"].as_str(), rev["note"].as_str()), (Some("/x.sh"), Some("keep")));
+    assert_eq!(
+        (rev["approvals"][0]["command"].as_str(), rev["note"].as_str()),
+        (Some("/x.sh"), Some("keep"))
+    );
     assert_eq!(allow("synergy"), other, "non-fleet profile untouched");
     assert!(!c.hermes.join("fleet-orch").exists());
 
     let once = (allow("fleet-rev"), allow("fleet-impl"));
     let (code, _) = run(&c, &Fake::default(), &["profiles", "sync"]);
     assert_eq!(code, 0);
-    assert_eq!((allow("fleet-rev"), allow("fleet-impl")), once, "second sync changes nothing");
+    assert_eq!(
+        (allow("fleet-rev"), allow("fleet-impl")),
+        once,
+        "second sync changes nothing"
+    );
 }
 
 /// #24 AC2: `--check` reads `hermes hooks list` as a fleet lane runs it (HERDSMAN_LANE set)
@@ -101,13 +121,23 @@ fn sync_check_requires_allowed_hooks() {
     };
     let rev = "env HERDSMAN_LANE=sendmeter:-:rev hermes -p fleet-rev hooks list";
     let impl_ = "env HERDSMAN_LANE=sendmeter:-:impl hermes -p fleet-impl hooks list";
-    let r = Fake::default().reply(rev, &line("rev", "✓ allowed")).reply(impl_, &line("impl", "✗ not allowlisted"));
+    let r = Fake::default()
+        .reply(rev, &line("rev", "✓ allowed"))
+        .reply(impl_, &line("impl", "✗ not allowlisted"));
     let (code, out) = run(&c, &r, &["profiles", "sync", "--check"]);
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("✗ not allowed fleet-impl") && out.contains("✓ allowed fleet-rev"), "{out}");
-    assert!(!c.hermes.join("fleet-rev/shell-hooks-allowlist.json").exists(), "--check writes nothing");
+    assert!(
+        out.contains("✗ not allowed fleet-impl") && out.contains("✓ allowed fleet-rev"),
+        "{out}"
+    );
+    assert!(
+        !c.hermes.join("fleet-rev/shell-hooks-allowlist.json").exists(),
+        "--check writes nothing"
+    );
 
-    let r = Fake::default().reply(rev, &line("rev", "✓ allowed")).reply(impl_, &line("impl", "✓ allowed"));
+    let r = Fake::default()
+        .reply(rev, &line("rev", "✓ allowed"))
+        .reply(impl_, &line("impl", "✓ allowed"));
     let (code, out) = run(&c, &r, &["profiles", "sync", "--check"]);
     assert_eq!(code, 0, "{out}");
 }
@@ -130,7 +160,11 @@ auxiliary:\n  web_extract:\n    reasoning_effort: medium\n";
     let want = before.replace("  reasoning_effort: high   # owned by fleet now\n", "");
     assert_eq!(without_hooks(&after), without_hooks(&want), "{after}");
     assert!(!after.contains("reasoning_effort: high"));
-    for v in ["      reasoning_effort: low\n", "      reasoning_effort: minimal\n", "    reasoning_effort: medium\n"] {
+    for v in [
+        "      reasoning_effort: low\n",
+        "      reasoning_effort: minimal\n",
+        "    reasoning_effort: medium\n",
+    ] {
         assert!(after.contains(v), "auxiliary {v:?} kept:\n{after}");
     }
 }

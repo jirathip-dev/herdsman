@@ -6,12 +6,19 @@ use herdsman::serve::Server;
 use serde_json::json;
 
 fn get(s: &Server, path: &str) -> String {
-    String::from_utf8_lossy(&s.respond(&format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:7777\r\n\r\n"), 1_000_000)).into_owned()
+    String::from_utf8_lossy(&s.respond(
+        &format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:7777\r\n\r\n"),
+        1_000_000,
+    ))
+    .into_owned()
 }
 
 fn queued(name: &str) -> herdsman::Ctx {
     let c = ctx(&tmpdir(name), CONFIG);
-    assert_eq!(run(&c, &Fake::default(), &["queue", "sendmeter", "add", "12", "17"]).0, 0);
+    assert_eq!(
+        run(&c, &Fake::default(), &["queue", "sendmeter", "add", "12", "17"]).0,
+        0
+    );
     c
 }
 
@@ -20,14 +27,29 @@ fn cached_spec_and_pr_titles_show_in_the_queue_row() {
     let c = queued("titles");
     let cache = c.state.parent().unwrap().join("cache");
     std::fs::create_dir_all(&cache).unwrap();
-    std::fs::write(cache.join("issue-sendmeter-12.json"), json!({"title": "Queue titles"}).to_string()).unwrap();
-    std::fs::write(cache.join("pr-sendmeter-12.json"), json!({"ts": 1, "branch": "issue-12", "pr": {"number": 33, "title": "Lanes like Corral"}}).to_string()).unwrap();
-    std::fs::write(cache.join("issue-sendmeter-17.json"), json!({"title": "A very long issue title that goes well past one phone line"}).to_string()).unwrap();
+    std::fs::write(
+        cache.join("issue-sendmeter-12.json"),
+        json!({"title": "Queue titles"}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        cache.join("pr-sendmeter-12.json"),
+        json!({"ts": 1, "branch": "issue-12", "pr": {"number": 33, "title": "Lanes like Corral"}}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        cache.join("issue-sendmeter-17.json"),
+        json!({"title": "A very long issue title that goes well past one phone line"}).to_string(),
+    )
+    .unwrap();
     let r = Fake::default();
     let s = Server::new(&c, &r, Some("127.0.0.1:7777".into()));
     for out in [get(&s, "/"), get(&s, "/?frag=all")] {
         assert!(out.contains("Queue titles · PR #33 · Lanes like Corral"), "{out}");
-        assert!(out.contains("A very long issue title that goes well past one …"), "cut at a word: {out}");
+        assert!(
+            out.contains("A very long issue title that goes well past one …"),
+            "cut at a word: {out}"
+        );
     }
     assert_eq!(r.count("gh"), 0, "no gh call on render: {:?}", r.calls.borrow());
 }
@@ -38,7 +60,10 @@ fn uncached_rows_have_no_title_and_make_no_gh_call() {
     let r = Fake::default();
     let s = Server::new(&c, &r, Some("127.0.0.1:7777".into()));
     let page = get(&s, "/");
-    assert!(page.contains("<details class=\"q\">") && !page.contains("class=tl"), "{page}");
+    assert!(
+        page.contains("<details class=\"q\">") && !page.contains("class=tl"),
+        "{page}"
+    );
     assert_eq!(r.count("gh"), 0, "{:?}", r.calls.borrow());
 }
 
@@ -94,7 +119,12 @@ const page = (status, body) => async () => ({ ok: status === 200, status, body, 
     let d = tmpdir("sw");
     std::fs::write(d.join("t.js"), format!("{harness}\n{sw}\n{run}")).unwrap();
     let o = std::process::Command::new("node").arg(d.join("t.js")).output().unwrap();
-    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), r#"[502,0,"DOWN",200,"v1",200,"v1",200,"v2",5]"#, "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&o.stdout).trim(),
+        r#"[502,0,"DOWN",200,"v1",200,"v1",200,"v2",5]"#,
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
 }
 
 /// #73 gate 2 for #67, deterministic: sw.js's own `fetch` listener under node with a synthetic navigate
@@ -103,7 +133,10 @@ const page = (status, body) => async () => ({ ok: status === 200, status, body, 
 #[test]
 fn sw_answers_a_navigation_to_a_json_read_with_the_page() {
     if std::process::Command::new("node").arg("--version").output().is_err() {
-        assert!(std::env::var_os("CI").is_none(), "node is required in CI for the sw gate");
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "node is required in CI for the sw gate"
+        );
         eprintln!("skipping: no node here");
         return;
     }
@@ -134,5 +167,10 @@ const go = async (path, mode) => {
     std::fs::write(d.join("t.js"), format!("{harness}\n{sw}\n{run}")).unwrap();
     let o = std::process::Command::new("node").arg(d.join("t.js")).output().unwrap();
     let want = r#"["net:/","net:/","net:/","net:/","net:/","/ / / / /","cached-page","cached-page","cached-page","cached-page","cached-page","PASS","PASS","PASS","PASS"]"#;
-    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), want, "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&o.stdout).trim(),
+        want,
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
 }

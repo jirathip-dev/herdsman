@@ -11,7 +11,11 @@ fn plan(c: &herdsman::Ctx, r: &Fake, role: &str) -> Value {
 }
 
 fn words(v: &Value) -> Vec<String> {
-    v.as_array().unwrap().iter().map(|w| w.as_str().unwrap().to_string()).collect()
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w.as_str().unwrap().to_string())
+        .collect()
 }
 
 #[test]
@@ -20,20 +24,39 @@ fn claude_role_dry_run_uses_synced_profile() {
     let c = ctx(&d, &CONFIG.replace("harness  =  \"hermes\"", "harness = \"claude\""));
     let r = Fake::default();
     let p = plan(&c, &r, "impl");
-    assert_eq!(words(&p["commands"][2])[1..], ["pane", "run", "<pane>", "export", "HERDSMAN_LANE='sendmeter:12:impl'"]);
+    assert_eq!(
+        words(&p["commands"][2])[1..],
+        ["pane", "run", "<pane>", "export", "HERDSMAN_LANE='sendmeter:12:impl'"]
+    );
     let start = words(&p["commands"][3]);
     let prof = c.config.parent().unwrap().join("claude/fleet-impl");
     let (settings, role) = (prof.join("settings.json"), prof.join("role.md"));
     let expect = [
-        "herdr", "agent", "start", "sendmeter-impl-12", "--kind", "claude", "--pane", "<pane>", "--timeout", "90000", "--",
+        "herdr",
+        "agent",
+        "start",
+        "sendmeter-impl-12",
+        "--kind",
+        "claude",
+        "--pane",
+        "<pane>",
+        "--timeout",
+        "90000",
+        "--",
         "--dangerously-skip-permissions",
-        "--settings", settings.to_str().unwrap(),
-        "--append-system-prompt-file", role.to_str().unwrap(),
-        "--model", "opus",
+        "--settings",
+        settings.to_str().unwrap(),
+        "--append-system-prompt-file",
+        role.to_str().unwrap(),
+        "--model",
+        "opus",
     ];
     assert_eq!(&start[..expect.len()], &expect);
     let kick = start.last().unwrap();
-    assert!(kick.starts_with("Read ") && kick.ends_with("issue-12/.brief.md and execute it fully."), "{kick}");
+    assert!(
+        kick.starts_with("Read ") && kick.ends_with("issue-12/.brief.md and execute it fully."),
+        "{kick}"
+    );
     assert_eq!(p["branch"], "issue-12");
     assert_eq!(p["base"], "origin/staging");
     assert!(words(&p["commands"][4]).starts_with(&["herdr".into(), "agent".into(), "wait".into()]));
@@ -46,13 +69,27 @@ fn hermes_role_dry_run_kicks_prompt_after_boot() {
     let d = tmpdir("spawn-hermes");
     let c = ctx(&d, CONFIG);
     let p = plan(&c, &Fake::default(), "rev");
-    assert_eq!(words(&p["commands"][2])[4..], ["export", "HERDSMAN_LANE='sendmeter:12:rev'"]);
+    assert_eq!(
+        words(&p["commands"][2])[4..],
+        ["export", "HERDSMAN_LANE='sendmeter:12:rev'"]
+    );
     let start = words(&p["commands"][3]);
-    assert_eq!(start[start.len() - 4..], ["--".to_string(), "-p".into(), "fleet-rev".into(), "--accept-hooks".into()]);
+    assert_eq!(
+        start[start.len() - 4..],
+        [
+            "--".to_string(),
+            "-p".into(),
+            "fleet-rev".into(),
+            "--accept-hooks".into()
+        ]
+    );
     assert!(start.contains(&"hermes".to_string()));
     assert!(words(&p["commands"][4]).starts_with(&["herdr".into(), "pane".into(), "wait-output".into()]));
     let kick = words(&p["commands"][5]);
-    assert_eq!(kick[..4], ["herdr", "agent", "prompt", "sendmeter-rev-12-r1"].map(String::from));
+    assert_eq!(
+        kick[..4],
+        ["herdr", "agent", "prompt", "sendmeter-rev-12-r1"].map(String::from)
+    );
     assert_eq!(kick[4], p["kick"].as_str().unwrap());
     assert_eq!(p["base"], "origin/issue-12");
 }
@@ -70,14 +107,23 @@ fn real_claude_spawn_writes_brief_and_logs_event() {
     assert_eq!(code, 0);
     let settings = std::fs::read_to_string(c.config.parent().unwrap().join("claude/fleet-impl/settings.json")).unwrap();
     let s: Value = serde_json::from_str(&settings).unwrap();
-    assert_eq!(s["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "'/opt/herdsman/bin/herdsman' hook --role impl");
+    assert_eq!(
+        s["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+        "'/opt/herdsman/bin/herdsman' hook --role impl"
+    );
     let r = Fake::default()
         .reply("herdr agent list", NO_AGENTS)
         .reply(&format!("git -C {} rev-list", wt.display()), "0\n")
         .reply("gh issue view 12", r#"{"title":"Fix the meter","body":"AC: it works"}"#)
         .reply("git -C", "")
-        .reply("herdr worktree open", r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#)
-        .reply("herdr pane list --workspace w9", r#"{"result":{"panes":[{"pane_id":"w9:p1","agent":null}]}}"#)
+        .reply(
+            "herdr worktree open",
+            r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#,
+        )
+        .reply(
+            "herdr pane list --workspace w9",
+            r#"{"result":{"panes":[{"pane_id":"w9:p1","agent":null}]}}"#,
+        )
         .reply("herdr pane run w9:p1 export HERDSMAN_LANE='sendmeter:12:impl'", "{}")
         .reply("herdr agent start sendmeter-impl-12 --kind claude --pane w9:p1", "{}")
         .reply("herdr agent wait sendmeter-impl-12", "{}");
@@ -88,12 +134,18 @@ fn real_claude_spawn_writes_brief_and_logs_event() {
     // #19: the title comes from the spec fetched at spawn, not a stale or missing cache.
     let calls = r.calls.borrow();
     let start = calls.iter().find(|c| c.starts_with("herdr agent start")).unwrap();
-    assert!(start.contains("--name sendmeter · impl #12 · Fix the meter --mcp-config"), "{start}");
+    assert!(
+        start.contains("--name sendmeter · impl #12 · Fix the meter --mcp-config"),
+        "{start}"
+    );
     drop(calls);
     let brief = std::fs::read_to_string(wt.join(".brief.md")).unwrap();
     assert!(brief.contains("# ROLE: IMPLEMENTER") && brief.contains("AC: it works") && brief.contains("Closes #12"));
     let st = &fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 12)];
-    assert_eq!((st.state.as_str(), st.lane.as_deref()), ("impl", Some("sendmeter-impl-12")));
+    assert_eq!(
+        (st.state.as_str(), st.lane.as_deref()),
+        ("impl", Some("sendmeter-impl-12"))
+    );
 }
 
 #[test]
@@ -107,8 +159,14 @@ fn unconfirmed_hermes_kick_presses_enter_then_exits_4() {
         .reply(&format!("git -C {} rev-list", wt.display()), "0\n")
         .reply("gh issue view 12", r#"{"title":"t","body":"b"}"#)
         .reply("git -C", "")
-        .reply("herdr worktree open", r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#)
-        .reply("herdr pane list", r#"{"result":{"panes":[{"pane_id":"w9:p1","agent":null}]}}"#)
+        .reply(
+            "herdr worktree open",
+            r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#,
+        )
+        .reply(
+            "herdr pane list",
+            r#"{"result":{"panes":[{"pane_id":"w9:p1","agent":null}]}}"#,
+        )
         .reply("herdr pane run", "{}")
         .reply("herdr agent start", "{}")
         .reply("herdr pane send-keys w9:p1 Enter", "{}");
@@ -130,11 +188,34 @@ fn help_agent_doc_is_short_and_complete() {
     // The combined doc (184 lines at #43 + #46) plus 5 lines of slack.
     assert!(out.lines().count() <= 189, "{} lines", out.lines().count());
     for w in [
-        "herdsman spawn", "herdsman merge", "herdsman verdict", "herdsman set", "herdsman status", "herdsman profiles sync",
-        "herdsman check", "herdsman clean", "herdsman adopt", "--force", "--supersede", "--yes",
-        "MAIN_TARGET", "HOST_BUSY", "LANE_LIVE", "WORKTREE_DIRTY", "review(n)",
-        "--serial", "SERIAL_BUSY", "SERIAL_UNMARKED", "CAP", "BAD_VALUE", "design", "owner-only",
-        "herdsman stop", "herdsman kill", "--lane", "SECRET_IN_WIP",
+        "herdsman spawn",
+        "herdsman merge",
+        "herdsman verdict",
+        "herdsman set",
+        "herdsman status",
+        "herdsman profiles sync",
+        "herdsman check",
+        "herdsman clean",
+        "herdsman adopt",
+        "--force",
+        "--supersede",
+        "--yes",
+        "MAIN_TARGET",
+        "HOST_BUSY",
+        "LANE_LIVE",
+        "WORKTREE_DIRTY",
+        "review(n)",
+        "--serial",
+        "SERIAL_BUSY",
+        "SERIAL_UNMARKED",
+        "CAP",
+        "BAD_VALUE",
+        "design",
+        "owner-only",
+        "herdsman stop",
+        "herdsman kill",
+        "--lane",
+        "SECRET_IN_WIP",
     ] {
         assert!(out.contains(w), "missing {w}");
     }
@@ -146,7 +227,10 @@ fn help_agent_doc_is_short_and_complete() {
 fn effort_maps_to_each_harness_flag() {
     let d = tmpdir("effort-claude");
     let cfg = CONFIG
-        .replace("harness  =  \"hermes\"    # toggled in tests", "harness = \"claude\"\neffort = \"high\"")
+        .replace(
+            "harness  =  \"hermes\"    # toggled in tests",
+            "harness = \"claude\"\neffort = \"high\"",
+        )
         .replace("review_rounds = 3", "review_rounds = 3\neffort = \"xhigh\"");
     let c = ctx(&d, &cfg);
     let p = plan(&c, &Fake::default(), "impl");
@@ -160,7 +244,11 @@ fn effort_maps_to_each_harness_flag() {
 
     // Claude `none` omits the flag; Hermes passes it through.
     let d = tmpdir("effort-none");
-    let c = ctx(&d, &cfg.replace("effort = \"high\"", "effort = \"none\"").replace("effort = \"xhigh\"", "effort = \"none\""));
+    let c = ctx(
+        &d,
+        &cfg.replace("effort = \"high\"", "effort = \"none\"")
+            .replace("effort = \"xhigh\"", "effort = \"none\""),
+    );
     assert!(!words(&plan(&c, &Fake::default(), "impl")["commands"][3]).contains(&"--effort".to_string()));
     let start = words(&plan(&c, &Fake::default(), "rev")["commands"][3]);
     assert_eq!(start[start.len() - 2..], ["--reasoning", "none"].map(String::from));
@@ -176,10 +264,19 @@ fn effort_maps_to_each_harness_flag() {
 #[test]
 fn invalid_effort_is_refused_at_config_load() {
     for (cfg, want) in [
-        (CONFIG.replace("profile = \"fleet-rev\"", "profile = \"fleet-rev\"\neffort = \"max\""), "fleet.sendmeter.role.rev: effort \"max\" must be one of"),
-        (CONFIG.replace("review_rounds = 3", "review_rounds = 3\neffort = \"ultra\""), "limits.effort: \"ultra\" must be one of"),
         (
-            CONFIG.replace("harness = \"hermes\"\nprofile = \"fleet-rev\"", "harness = \"dsh\"\nprofile = \"fleet-rev\"\neffort = \"high\""),
+            CONFIG.replace("profile = \"fleet-rev\"", "profile = \"fleet-rev\"\neffort = \"max\""),
+            "fleet.sendmeter.role.rev: effort \"max\" must be one of",
+        ),
+        (
+            CONFIG.replace("review_rounds = 3", "review_rounds = 3\neffort = \"ultra\""),
+            "limits.effort: \"ultra\" must be one of",
+        ),
+        (
+            CONFIG.replace(
+                "harness = \"hermes\"\nprofile = \"fleet-rev\"",
+                "harness = \"dsh\"\nprofile = \"fleet-rev\"\neffort = \"high\"",
+            ),
             "fleet.sendmeter.role.rev: harness dsh does not support effort \"high\"",
         ),
     ] {
@@ -197,17 +294,30 @@ fn invalid_effort_is_refused_at_config_load() {
 #[test]
 fn claude_dry_run_names_every_role() {
     let d = tmpdir("spawn-name");
-    let cfg = CONFIG.replace("harness = \"hermes\"", "harness = \"claude\"").replace("harness  =  \"hermes\"", "harness = \"claude\"")
+    let cfg = CONFIG
+        .replace("harness = \"hermes\"", "harness = \"claude\"")
+        .replace("harness  =  \"hermes\"", "harness = \"claude\"")
         + "\n[fleet.sendmeter.role.design]\nharness = \"claude\"\nprofile = \"fleet-design\"\n";
     let c = ctx(&d, &cfg);
     let cache = c.state.parent().unwrap().join("cache");
     std::fs::create_dir_all(&cache).unwrap();
-    std::fs::write(cache.join("issue-sendmeter-12.json"), r#"{"title":"feat(meter): fix the meter","body":""}"#).unwrap();
+    std::fs::write(
+        cache.join("issue-sendmeter-12.json"),
+        r#"{"title":"feat(meter): fix the meter","body":""}"#,
+    )
+    .unwrap();
     let name = |args: &[&str]| {
         let (code, out) = run(&c, &Fake::default(), args);
         assert_eq!(code, 0, "{out}");
         let p: Value = serde_json::from_str(&out).unwrap();
-        let start = words(p["commands"].as_array().unwrap().iter().find(|c| c[2] == "start").unwrap());
+        let start = words(
+            p["commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c[2] == "start")
+                .unwrap(),
+        );
         let at = start.iter().position(|w| w == "--name").expect("--name");
         assert_eq!(start[at + 1], p["title"].as_str().unwrap());
         start[at + 1].clone()
@@ -225,12 +335,24 @@ fn claude_dry_run_names_every_role() {
 fn lane_title_strips_prefixes_and_cuts_at_words() {
     use herdsman::spawn::lane_title;
     let h = "synergy · impl #2840";
-    assert_eq!(lane_title(h, "M- prefix for Mango numbers"), "synergy · impl #2840 · M- prefix for Mango numbers");
-    assert_eq!(lane_title(h, "P0: feat(api)!: drop v1"), "synergy · impl #2840 · drop v1");
-    assert_eq!(lane_title(h, "spawn: informative titles"), "synergy · impl #2840 · informative titles");
+    assert_eq!(
+        lane_title(h, "M- prefix for Mango numbers"),
+        "synergy · impl #2840 · M- prefix for Mango numbers"
+    );
+    assert_eq!(
+        lane_title(h, "P0: feat(api)!: drop v1"),
+        "synergy · impl #2840 · drop v1"
+    );
+    assert_eq!(
+        lane_title(h, "spawn: informative titles"),
+        "synergy · impl #2840 · informative titles"
+    );
     assert_eq!(lane_title(h, "Fix 10:30 cron"), "synergy · impl #2840 · Fix 10:30 cron");
     assert_eq!(lane_title(h, "  "), h);
-    let long = lane_title(h, "spawn: informative lane titles instead of Claude auto-titles from the brief prompt");
+    let long = lane_title(
+        h,
+        "spawn: informative lane titles instead of Claude auto-titles from the brief prompt",
+    );
     assert_eq!(long, "synergy · impl #2840 · informative lane titles instead of…");
     assert!(long.chars().count() <= 60);
     // Thai: kept whole when it fits; cut by chars (never bytes) when it does not.

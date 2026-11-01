@@ -28,7 +28,11 @@ fn run_in(home: &Path, args: &[&str], envs: &[(&str, &str)], stdin: &str) -> (i3
         .unwrap();
     child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
     let o = child.wait_with_output().unwrap();
-    (o.status.code().unwrap(), String::from_utf8(o.stdout).unwrap(), String::from_utf8(o.stderr).unwrap())
+    (
+        o.status.code().unwrap(),
+        String::from_utf8(o.stdout).unwrap(),
+        String::from_utf8(o.stderr).unwrap(),
+    )
 }
 
 fn run(home: &Path, args: &[&str]) -> (i32, String, String) {
@@ -48,7 +52,11 @@ fn seed(home: &Path, name: &str) {
 /// Every path under `dir` with its mtime and (for files) contents.
 fn snapshot(dir: &Path) -> Vec<(PathBuf, std::time::SystemTime, Vec<u8>)> {
     let md = std::fs::symlink_metadata(dir).unwrap();
-    let body = if md.is_file() { std::fs::read(dir).unwrap() } else { vec![] };
+    let body = if md.is_file() {
+        std::fs::read(dir).unwrap()
+    } else {
+        vec![]
+    };
     let mut v = vec![(dir.to_path_buf(), md.modified().unwrap(), body)];
     if md.is_dir() {
         let mut kids: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).collect();
@@ -85,9 +93,15 @@ fn status_reads_old_paths_in_place_and_hints_once() {
     let before = snapshot(&h);
     let (code, out, err) = run(&h, &["status"]);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("12") && out.contains("merged"), "real history, not an empty board: {out}");
+    assert!(
+        out.contains("12") && out.contains("merged"),
+        "real history, not an empty board: {out}"
+    );
     let hint = |what: &str, d: &str| {
-        format!("herdsman: found pre-rename {what} at {}; run 'herdsman migrate' to move it", h.join(d).display())
+        format!(
+            "herdsman: found pre-rename {what} at {}; run 'herdsman migrate' to move it",
+            h.join(d).display()
+        )
     };
     assert_eq!(err.matches(&hint("config", ".config/fleet")).count(), 1, "{err}");
     assert_eq!(err.matches(&hint("state", ".local/state/fleet")).count(), 1, "{err}");
@@ -115,8 +129,14 @@ fn existing_new_dirs_win_and_old_ones_are_left_alone() {
     let (code, out, _) = run(&h, &["migrate"]);
     assert_eq!(code, 0);
     assert_eq!(out.matches("already exists").count(), 2, "{out}");
-    assert_eq!(std::fs::read_to_string(h.join(".config/fleet/fleet.toml")).unwrap(), "# old\n");
-    assert_eq!(std::fs::read_to_string(h.join(".config/herdsman/fleet.toml")).unwrap(), CONFIG);
+    assert_eq!(
+        std::fs::read_to_string(h.join(".config/fleet/fleet.toml")).unwrap(),
+        "# old\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(h.join(".config/herdsman/fleet.toml")).unwrap(),
+        CONFIG
+    );
     assert!(h.join(".local/state/fleet/events.jsonl").exists());
 }
 
@@ -127,11 +147,18 @@ fn migrate_moves_both_once() {
     let (code, out, err) = run(&h, &["migrate"]);
     assert_eq!(code, 0, "{err}");
     for d in [".config", ".local/state"] {
-        let line = format!("moved {} -> {}", h.join(d).join("fleet").display(), h.join(d).join("herdsman").display());
+        let line = format!(
+            "moved {} -> {}",
+            h.join(d).join("fleet").display(),
+            h.join(d).join("herdsman").display()
+        );
         assert!(out.contains(&line), "{out}");
     }
     assert!(!h.join(".config/fleet").exists() && !h.join(".local/state/fleet").exists());
-    assert_eq!(std::fs::read_to_string(h.join(".config/herdsman/fleet.toml")).unwrap(), CONFIG);
+    assert_eq!(
+        std::fs::read_to_string(h.join(".config/herdsman/fleet.toml")).unwrap(),
+        CONFIG
+    );
     assert!(h.join(".local/state/herdsman/events.jsonl").exists());
     // Second run: a no-op.
     let before = snapshot(&h);
@@ -165,10 +192,20 @@ fn failed_state_move_rolls_the_config_move_back() {
     std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_ne!(code, 0, "{out}");
     let (old, new) = (parent.join("fleet"), parent.join("herdsman"));
-    assert!(err.contains(&format!("moving {} -> {} failed", old.display(), new.display())), "{err}");
+    assert!(
+        err.contains(&format!("moving {} -> {} failed", old.display(), new.display())),
+        "{err}"
+    );
     let (cold, cnew) = (h.join(".config/fleet"), h.join(".config/herdsman"));
-    assert!(err.contains(&format!("rolled back {} -> {}", cnew.display(), cold.display())), "{err}");
-    assert_eq!(std::fs::read_to_string(cold.join("fleet.toml")).unwrap(), CONFIG, "config back in place");
+    assert!(
+        err.contains(&format!("rolled back {} -> {}", cnew.display(), cold.display())),
+        "{err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cold.join("fleet.toml")).unwrap(),
+        CONFIG,
+        "config back in place"
+    );
     assert!(!cnew.exists() && !new.exists());
     assert!(old.join("events.jsonl").exists());
 }
@@ -184,7 +221,10 @@ fn symlinked_old_dir_migrates_as_a_link() {
     let (code, out, err) = run(&h, &["status"]);
     assert_eq!((code, err.as_str()), (0, ""));
     assert!(out.contains("merged"), "{out}");
-    assert_eq!(std::fs::read_to_string(h.join(".config/herdsman/fleet.toml")).unwrap(), CONFIG);
+    assert_eq!(
+        std::fs::read_to_string(h.join(".config/herdsman/fleet.toml")).unwrap(),
+        CONFIG
+    );
     assert!(h.join(".config/real/fleet.toml").exists(), "link target untouched");
 }
 
@@ -211,7 +251,12 @@ fn hook_with_pre_rename_home_prints_only_its_json_decision() {
 }
 
 /// #9: a set-but-empty path variable is unset, never the empty (cwd-relative) path.
-const EMPTY: [(&str, &str); 4] = [("FLEET_CONFIG", ""), ("FLEET_STATE", ""), ("FLEET_WORKTREES", ""), ("FLEET_HERMES_PROFILES", "")];
+const EMPTY: [(&str, &str); 4] = [
+    ("FLEET_CONFIG", ""),
+    ("FLEET_STATE", ""),
+    ("FLEET_WORKTREES", ""),
+    ("FLEET_HERMES_PROFILES", ""),
+];
 
 #[test]
 fn empty_path_vars_resolve_to_the_defaults() {
@@ -221,7 +266,10 @@ fn empty_path_vars_resolve_to_the_defaults() {
         let envs: Vec<_> = EMPTY.iter().copied().chain([("HERDSMAN_HOME", home)]).collect();
         let (code, out, err) = run_in(&h, &["status"], &envs, "");
         assert_eq!((code, err.as_str()), (0, ""), "HERDSMAN_HOME={home:?}");
-        assert!(out.contains("12") && out.contains("merged"), "real history, not an empty board: {out}");
+        assert!(
+            out.contains("12") && out.contains("merged"),
+            "real history, not an empty board: {out}"
+        );
     }
     // Empty HERDSMAN_HOME falls back to $HOME, pre-rename hint included.
     let old = tmpdir("migrate-empty-vars-old");
@@ -229,7 +277,10 @@ fn empty_path_vars_resolve_to_the_defaults() {
     let envs: Vec<_> = EMPTY.iter().copied().chain([("HERDSMAN_HOME", "")]).collect();
     let (code, out, err) = run_in(&old, &["status"], &envs, "");
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("merged") && err.contains("found pre-rename config"), "{out} / {err}");
+    assert!(
+        out.contains("merged") && err.contains("found pre-rename config"),
+        "{out} / {err}"
+    );
 }
 
 #[test]
@@ -252,5 +303,9 @@ fn migrate_refuses_an_empty_herdsman_home_and_leaves_the_cwd_alone() {
     assert_ne!(o.status.code(), Some(0), "{err}");
     assert!(err.contains("HERDSMAN_HOME is set but empty"), "{err}");
     assert!(o.stdout.is_empty(), "nothing moved or reported");
-    assert_eq!((snapshot(&h), snapshot(&cwd)), (bh, bc), "neither $HOME nor ./.config touched");
+    assert_eq!(
+        (snapshot(&h), snapshot(&cwd)),
+        (bh, bc),
+        "neither $HOME nor ./.config touched"
+    );
 }

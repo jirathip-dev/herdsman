@@ -31,11 +31,21 @@ impl Runner for Real {
     fn run_in(&self, prog: &str, args: &[String], input: &str) -> Result<Out> {
         use std::io::Write;
         use std::process::Stdio;
-        let mut c = Command::new(prog).args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().with_context(|| format!("cannot run {prog}"))?;
+        let mut c = Command::new(prog)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .with_context(|| format!("cannot run {prog}"))?;
         let _ = c.stdin.take().unwrap().write_all(input.as_bytes());
         let o = c.wait_with_output()?;
         let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
-        Ok(Out { code: o.status.code().unwrap_or(-1), stdout: text(&o.stdout), stderr: text(&o.stderr) })
+        Ok(Out {
+            code: o.status.code().unwrap_or(-1),
+            stdout: text(&o.stdout),
+            stderr: text(&o.stderr),
+        })
     }
 }
 
@@ -55,5 +65,10 @@ pub fn ok<S: AsRef<str>>(r: &dyn Runner, prog: &str, args: &[S]) -> Result<Strin
 
 pub fn json<S: AsRef<str>>(r: &dyn Runner, prog: &str, args: &[S]) -> Result<Value> {
     let s = ok(r, prog, args)?;
-    serde_json::from_str(&s).with_context(|| format!("{prog} {}: not JSON", args.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(" ")))
+    serde_json::from_str(&s).with_context(|| {
+        format!(
+            "{prog} {}: not JSON",
+            args.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(" ")
+        )
+    })
 }

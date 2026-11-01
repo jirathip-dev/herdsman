@@ -20,14 +20,19 @@ const POLL: u64 = 600;
 /// its lane-dead, a supersede of it, or its next spawn (a lane still running counts until `now`).
 pub fn lane_secs(events: &[Event], account: &str, now: u64, window: u64) -> u64 {
     let from = now.saturating_sub(window);
-    let spawns = events.iter().enumerate().filter(|(_, e)| e.kind == "spawn" && e.str("account") == Some(account));
+    let spawns = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.kind == "spawn" && e.str("account") == Some(account));
     spawns
         .map(|(i, s)| {
             let a = s.str("agent").unwrap_or_default();
             let ends = |e: &&Event| match e.kind.as_str() {
                 "merged" | "clean" => e.fleet == s.fleet && s.issue.is_some() && e.issue == s.issue,
                 "lane-dead" => e.fleet == s.fleet && e.str("key").is_some_and(|k| k.ends_with(&format!(":{a}"))),
-                "supersede" => e.str("agent") == Some(a) || e.data["killed"].as_array().is_some_and(|k| k.iter().any(|n| n == a)),
+                "supersede" => {
+                    e.str("agent") == Some(a) || e.data["killed"].as_array().is_some_and(|k| k.iter().any(|n| n == a))
+                }
                 "spawn" => e.str("agent") == Some(a),
                 _ => false,
             };
@@ -66,9 +71,16 @@ fn q(s: &str) -> String {
 
 /// `curl` with its config (headers, body) on stdin: (status, lowercased headers, body).
 fn curl(r: &dyn Runner, url: &str, conf: &str) -> Option<(u32, String, String)> {
-    let o = r.run_in("curl", &argv(&["-sS", "-m", "15", "-D", "-", "-K", "-", url]), conf).ok().filter(|o| o.code == 0)?;
+    let o = r
+        .run_in("curl", &argv(&["-sS", "-m", "15", "-D", "-", "-K", "-", url]), conf)
+        .ok()
+        .filter(|o| o.code == 0)?;
     let (head, body) = o.stdout.split_once("\r\n\r\n")?;
-    Some((head.split_whitespace().nth(1)?.parse().ok()?, head.to_lowercase(), body.into()))
+    Some((
+        head.split_whitespace().nth(1)?.parse().ok()?,
+        head.to_lowercase(),
+        body.into(),
+    ))
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -82,13 +94,21 @@ pub struct Balance {
 pub fn parse_balance(body: &str, ts: u64) -> Option<Balance> {
     let v: Value = serde_json::from_str(body).ok()?;
     let b = &v["balance_infos"][0];
-    Some(Balance { ts, currency: b["currency"].as_str()?.into(), total: b["total_balance"].as_str()?.parse().ok()? })
+    Some(Balance {
+        ts,
+        currency: b["currency"].as_str()?.into(),
+        total: b["total_balance"].as_str()?.parse().ok()?,
+    })
 }
 
 /// `var`'s value in an env file (`VAR=value` / `export VAR="value"` lines).
 fn env_value(text: &str, var: &str) -> Option<String> {
-    let kv = text.lines().filter_map(|l| l.trim().trim_start_matches("export ").split_once('='));
-    kv.into_iter().find(|(k, _)| k.trim() == var).map(|(_, v)| v.trim().trim_matches(['"', '\'']).to_string())
+    let kv = text
+        .lines()
+        .filter_map(|l| l.trim().trim_start_matches("export ").split_once('='));
+    kv.into_iter()
+        .find(|(k, _)| k.trim() == var)
+        .map(|(_, v)| v.trim().trim_matches(['"', '\'']).to_string())
 }
 
 /// The DeepSeek balance and whether it is under `warn_below`, read at most every 10 min; None without a key,
@@ -96,7 +116,11 @@ fn env_value(text: &str, var: &str) -> Option<String> {
 pub fn deepseek(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> Option<Result<(Balance, bool), String>> {
     let p = cfg.providers.deepseek.as_ref()?;
     let key = match p.env_file.as_deref().or(cfg.accounts.accounts_env.as_deref()) {
-        Some(f) => match std::fs::read_to_string(expand(f)).ok().and_then(|t| env_value(&t, &p.key_env)).filter(|k| !k.is_empty()) {
+        Some(f) => match std::fs::read_to_string(expand(f))
+            .ok()
+            .and_then(|t| env_value(&t, &p.key_env))
+            .filter(|k| !k.is_empty())
+        {
             Some(k) => k,
             None => return Some(Err(format!("key not found in {f}"))),
         },
@@ -107,7 +131,11 @@ pub fn deepseek(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> Option<Result<(Balan
     let b = match cached {
         Some(b) if ctx.now < b.ts + POLL => b,
         _ => {
-            let got = curl(r, "https://api.deepseek.com/user/balance", &format!("header = \"Authorization: Bearer {}\"\n", q(&key)));
+            let got = curl(
+                r,
+                "https://api.deepseek.com/user/balance",
+                &format!("header = \"Authorization: Bearer {}\"\n", q(&key)),
+            );
             match got.filter(|g| g.0 == 200).and_then(|g| parse_balance(&g.2, ctx.now)) {
                 Some(b) => {
                     let _ = save(&path, &b);
@@ -155,20 +183,46 @@ pub fn meter(ctx: &Ctx, cfg: &Config, r: &dyn Runner, name: &str) -> Option<Mete
     let d = dir(ctx);
     let lock = d.join(".poll");
     let _ = std::fs::create_dir_all(&d);
-    if std::fs::metadata(&lock).and_then(|x| x.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|e| e.as_secs() > 60)) {
+    if std::fs::metadata(&lock)
+        .and_then(|x| x.modified())
+        .is_ok_and(|t| t.elapsed().is_ok_and(|e| e.as_secs() > 60))
+    {
         let _ = std::fs::remove_file(&lock);
     }
-    if std::fs::OpenOptions::new().write(true).create_new(true).open(&lock).is_err() {
+    if std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock)
+        .is_err()
+    {
         return Some(m);
     }
     m.checked = ctx.now;
     match poll(r, &expand(login), ctx.now) {
-        Poll::Got(session, week) => m = Meter { checked: ctx.now, ts: ctx.now, session, week, ..Default::default() },
+        Poll::Got(session, week) => {
+            m = Meter {
+                checked: ctx.now,
+                ts: ctx.now,
+                session,
+                week,
+                ..Default::default()
+            }
+        }
         Poll::Login => m.login_needed = true,
         Poll::Lost => {
             m.login_needed = true;
             let why = format!("account {name}: the refreshed usage login could not be stored in the Keychain; run claude /login in {login}");
-            let _ = crate::events::emit(&ctx.state, cfg, Event::new(ctx.now, "accounts", None, "usage-login-lost", json!({"account": name, "reason": why})));
+            let _ = crate::events::emit(
+                &ctx.state,
+                cfg,
+                Event::new(
+                    ctx.now,
+                    "accounts",
+                    None,
+                    "usage-login-lost",
+                    json!({"account": name, "reason": why}),
+                ),
+            );
         }
         Poll::Busy(after) => {
             m.fails += 1;
@@ -193,26 +247,49 @@ enum Poll {
 /// The macOS Keychain service of a `CLAUDE_CONFIG_DIR=<dir>` login, as derived from Claude Code 2.1.308 (unverified):
 /// `Claude Code-credentials-<first 8 hex of sha256(dir)>`. Never the default login's plain `Claude Code-credentials`.
 pub fn keychain_service(dir: &Path) -> String {
-    format!("Claude Code-credentials-{}", &sha256(dir.to_string_lossy().as_bytes())[..8])
+    format!(
+        "Claude Code-credentials-{}",
+        &sha256(dir.to_string_lossy().as_bytes())[..8]
+    )
 }
 
 /// The item's account attribute (`"acct"<blob>="…"`), so a write-back goes to the item that was read.
 fn keychain_account(r: &dyn Runner, svc: &str) -> Option<String> {
-    let o = r.run("security", &argv(&["find-generic-password", "-s", svc])).ok().filter(|o| o.code == 0)?;
-    o.stdout.lines().find_map(|l| Some(l.trim().strip_prefix("\"acct\"<blob>=\"")?.strip_suffix('"')?.to_string()))
+    let o = r
+        .run("security", &argv(&["find-generic-password", "-s", svc]))
+        .ok()
+        .filter(|o| o.code == 0)?;
+    o.stdout.lines().find_map(|l| {
+        Some(
+            l.trim()
+                .strip_prefix("\"acct\"<blob>=\"")?
+                .strip_suffix('"')?
+                .to_string(),
+        )
+    })
 }
 
 /// The login JSON stored in the item.
 fn keychain_read(r: &dyn Runner, svc: &str, acct: &str) -> Option<Value> {
-    let o = r.run("security", &argv(&["find-generic-password", "-w", "-a", acct, "-s", svc])).ok().filter(|o| o.code == 0)?;
+    let o = r
+        .run(
+            "security",
+            &argv(&["find-generic-password", "-w", "-a", acct, "-s", svc]),
+        )
+        .ok()
+        .filter(|o| o.code == 0)?;
     serde_json::from_str(o.stdout.trim()).ok()
 }
 
 /// Read the login's token from the Keychain (refreshing an expired one), then `/api/oauth/usage`.
 fn poll(r: &dyn Runner, dir: &Path, now: u64) -> Poll {
     let svc = keychain_service(dir);
-    let Some(acct) = keychain_account(r, &svc) else { return Poll::Login };
-    let Some(mut creds) = keychain_read(r, &svc, &acct) else { return Poll::Login };
+    let Some(acct) = keychain_account(r, &svc) else {
+        return Poll::Login;
+    };
+    let Some(mut creds) = keychain_read(r, &svc, &acct) else {
+        return Poll::Login;
+    };
     let oa = &creds["claudeAiOauth"];
     let token = if oa["expiresAt"].as_u64().unwrap_or(0) / 1000 > now + 60 {
         oa["accessToken"].as_str().map(String::from).ok_or(Poll::Login)
@@ -223,12 +300,18 @@ fn poll(r: &dyn Runner, dir: &Path, now: u64) -> Poll {
         Ok(t) => t,
         Err(p) => return p,
     };
-    let conf = format!("header = \"Authorization: Bearer {}\"\nheader = \"anthropic-beta: oauth-2025-04-20\"\n", q(&token));
+    let conf = format!(
+        "header = \"Authorization: Bearer {}\"\nheader = \"anthropic-beta: oauth-2025-04-20\"\n",
+        q(&token)
+    );
     match curl(r, "https://api.anthropic.com/api/oauth/usage", &conf) {
         Some((200, _, body)) => parse_usage(&body).map_or(Poll::Failed, |(s, w)| Poll::Got(s, w)),
         Some((401 | 403, ..)) => Poll::Login,
         Some((429, head, _)) => {
-            let after = head.lines().find_map(|l| l.strip_prefix("retry-after:")).and_then(|v| v.trim().parse().ok());
+            let after = head
+                .lines()
+                .find_map(|l| l.strip_prefix("retry-after:"))
+                .and_then(|v| v.trim().parse().ok());
             Poll::Busy(after.unwrap_or(0))
         }
         _ => Poll::Failed,
@@ -240,11 +323,20 @@ fn poll(r: &dyn Runner, dir: &Path, now: u64) -> Poll {
 fn refresh(r: &dyn Runner, creds: &mut Value, (svc, acct): (&str, &str), now: u64) -> Result<String, Poll> {
     // The `security -i` script quotes both: refuse anything a quote or escape could break out of, before rotating.
     let safe = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || " ._@+-".contains(c));
-    let oa = creds.get_mut("claudeAiOauth").filter(|_| safe(svc) && safe(acct)).ok_or(Poll::Login)?;
+    let oa = creds
+        .get_mut("claudeAiOauth")
+        .filter(|_| safe(svc) && safe(acct))
+        .ok_or(Poll::Login)?;
     let body = json!({"grant_type": "refresh_token", "refresh_token": oa["refreshToken"].as_str().ok_or(Poll::Login)?, "client_id": CLIENT_ID});
-    let conf = format!("header = \"Content-Type: application/json\"\ndata = \"{}\"\n", q(&body.to_string()));
+    let conf = format!(
+        "header = \"Content-Type: application/json\"\ndata = \"{}\"\n",
+        q(&body.to_string())
+    );
     let (status, _, out) = curl(r, "https://platform.claude.com/v1/oauth/token", &conf).ok_or(Poll::Login)?;
-    let v: Value = serde_json::from_str(&out).ok().filter(|_| status == 200).ok_or(Poll::Login)?;
+    let v: Value = serde_json::from_str(&out)
+        .ok()
+        .filter(|_| status == 200)
+        .ok_or(Poll::Login)?;
     let token = v["access_token"].as_str().ok_or(Poll::Login)?.to_string();
     oa["accessToken"] = json!(token);
     if let Some(rt) = v["refresh_token"].as_str() {
@@ -252,8 +344,15 @@ fn refresh(r: &dyn Runner, creds: &mut Value, (svc, acct): (&str, &str), now: u6
     }
     oa["expiresAt"] = json!((now + v["expires_in"].as_u64().unwrap_or(3600)) * 1000);
     let hex: String = creds.to_string().bytes().map(|b| format!("{b:02x}")).collect();
-    let stored = r.run_in("security", &argv(&["-i"]), &format!("add-generic-password -U -a \"{acct}\" -s \"{svc}\" -X \"{hex}\"\n"));
-    let back = stored.is_ok_and(|o| o.code == 0).then(|| keychain_read(r, svc, acct)).flatten();
+    let stored = r.run_in(
+        "security",
+        &argv(&["-i"]),
+        &format!("add-generic-password -U -a \"{acct}\" -s \"{svc}\" -X \"{hex}\"\n"),
+    );
+    let back = stored
+        .is_ok_and(|o| o.code == 0)
+        .then(|| keychain_read(r, svc, acct))
+        .flatten();
     if back.is_some_and(|b| b["claudeAiOauth"]["accessToken"] == json!(token)) {
         Ok(token)
     } else {
@@ -306,8 +405,18 @@ pub fn shown(r: &dyn Runner, m: &Meter, login: &str, now: u64) -> Result<Shown, 
     }
     let pace = m.week.and_then(|w| out_at(w, now)).map(|t| {
         let s = date(r, t, "+%a %H");
-        let part = |h: u32| ["night", "morning", "afternoon", "evening"][match h { 5..=11 => 1, 12..=16 => 2, 17..=21 => 3, _ => 0 }];
-        let when = s.split_once(' ').and_then(|(d, h)| Some(format!("{d} {}", part(h.parse().ok()?)))).unwrap_or(s);
+        let part = |h: u32| {
+            ["night", "morning", "afternoon", "evening"][match h {
+                5..=11 => 1,
+                12..=16 => 2,
+                17..=21 => 3,
+                _ => 0,
+            }]
+        };
+        let when = s
+            .split_once(' ')
+            .and_then(|(d, h)| Some(format!("{d} {}", part(h.parse().ok()?))))
+            .unwrap_or(s);
         format!("at this pace: out {when}")
     });
     Ok((parts, pace))
@@ -316,7 +425,12 @@ pub fn shown(r: &dyn Runner, m: &Meter, login: &str, now: u64) -> Result<Shown, 
 /// One account's usage, plain: `session 9% (resets 10m) · week 22% (resets Fri 11:59)`, or the login hint.
 pub fn meter_line(r: &dyn Runner, m: &Meter, login: &str, now: u64) -> String {
     match shown(r, m, login, now) {
-        Ok((parts, pace)) if !parts.is_empty() => parts.into_iter().map(|p| p.0).chain(pace).collect::<Vec<_>>().join(" · "),
+        Ok((parts, pace)) if !parts.is_empty() => parts
+            .into_iter()
+            .map(|p| p.0)
+            .chain(pace)
+            .collect::<Vec<_>>()
+            .join(" · "),
         Ok(_) => "usage: not read yet".into(),
         Err(hint) => hint,
     }

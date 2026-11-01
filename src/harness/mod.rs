@@ -59,5 +59,9 @@ pub fn hook_command(ctx: &Ctx, role: &str) -> String {
 
 /// Try numbers `0..n`, sleeping `secs` before every try but the first.
 fn attempts(r: &dyn Runner, n: u32, secs: u64) -> impl Iterator<Item = u32> + '_ {
-    (0..n).inspect(move |&i| if i > 0 { r.sleep(secs) })
+    (0..n).inspect(move |&i| {
+        if i > 0 {
+            r.sleep(secs)
+        }
+    })
 }

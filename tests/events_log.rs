@@ -6,7 +6,13 @@ use serde_json::json;
 use std::io::Write;
 
 fn ev(i: u64) -> Event {
-    Event::new(i, "sendmeter", Some(7), "spawn", json!({"role": "impl", "agent": format!("a{i}"), "pad": "x".repeat(4000)}))
+    Event::new(
+        i,
+        "sendmeter",
+        Some(7),
+        "spawn",
+        json!({"role": "impl", "agent": format!("a{i}"), "pad": "x".repeat(4000)}),
+    )
 }
 
 #[test]
@@ -17,7 +23,12 @@ fn torn_last_line_is_ignored_and_next_append_is_clean() {
     append(&p, &ev(2)).unwrap();
     // Simulate a writer killed half-way through record 3.
     let line = serde_json::to_string(&ev(3)).unwrap();
-    std::fs::OpenOptions::new().append(true).open(&p).unwrap().write_all(&line.as_bytes()[..100]).unwrap();
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&p)
+        .unwrap()
+        .write_all(&line.as_bytes()[..100])
+        .unwrap();
     assert_eq!(read(&p).unwrap().len(), 2);
     append(&p, &ev(4)).unwrap();
     let all = read(&p).unwrap();
@@ -28,7 +39,9 @@ fn torn_last_line_is_ignored_and_next_append_is_clean() {
 /// Child mode: append forever until killed.
 #[test]
 fn kill9_child_writer() {
-    let Ok(p) = std::env::var("FLEET_KILL_CHILD") else { return };
+    let Ok(p) = std::env::var("FLEET_KILL_CHILD") else {
+        return;
+    };
     let mut i = 0;
     loop {
         append(std::path::Path::new(&p), &ev(i)).unwrap();
@@ -64,14 +77,19 @@ fn kill9_mid_append_never_corrupts() {
     }
     // Every complete line in the file parses; at most the torn ones were dropped.
     let text = std::fs::read_to_string(&p).unwrap();
-    let bad = text.lines().filter(|l| serde_json::from_str::<Event>(l).is_err()).count();
+    let bad = text
+        .lines()
+        .filter(|l| serde_json::from_str::<Event>(l).is_err())
+        .count();
     assert!(bad <= 3, "only torn tails may be unparseable, got {bad}");
 }
 
 /// Child mode: read the log so the parent can inspect stderr.
 #[test]
 fn read_child() {
-    let Ok(p) = std::env::var("FLEET_READ_CHILD") else { return };
+    let Ok(p) = std::env::var("FLEET_READ_CHILD") else {
+        return;
+    };
     println!("count={}", read(std::path::Path::new(&p)).unwrap().len());
 }
 
@@ -82,7 +100,10 @@ fn read_stderr(p: &std::path::Path) -> (String, String) {
         .output()
         .unwrap();
     assert!(out.status.success());
-    (String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+    (
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    )
 }
 
 #[test]

@@ -9,7 +9,10 @@ use std::path::Path;
 /// Live agents named `name` or running inside `dir`.
 pub fn live_in<'a>(agents: &'a [Value], name: &str, dir: &Path) -> Vec<&'a Value> {
     let inside = |a: &Value, k: &str| a[k].as_str().is_some_and(|c| Path::new(c).starts_with(dir));
-    agents.iter().filter(|a| a["name"] == name || inside(a, "cwd") || inside(a, "foreground_cwd")).collect()
+    agents
+        .iter()
+        .filter(|a| a["name"] == name || inside(a, "cwd") || inside(a, "foreground_cwd"))
+        .collect()
 }
 
 #[derive(Debug, Default, Clone)]
@@ -45,10 +48,15 @@ pub fn sample(r: &dyn Runner) -> Host {
         r.sleep(2);
         swapouts(r).map(|b| (b - a).max(0.0))
     });
-    let load = stdout(r, "sysctl", &["-n", "vm.loadavg"]).and_then(|s| s.split_whitespace().find_map(|w| w.parse::<f64>().ok()));
+    let load = stdout(r, "sysctl", &["-n", "vm.loadavg"])
+        .and_then(|s| s.split_whitespace().find_map(|w| w.parse::<f64>().ok()));
     let ncpu = stdout(r, "sysctl", &["-n", "hw.ncpu"]).and_then(|s| s.trim().parse::<f64>().ok());
     let load_per_cpu = load.zip(ncpu.filter(|n| *n > 0.0)).map(|(l, n)| l / n);
-    Host { pressure, swapout, load_per_cpu }
+    Host {
+        pressure,
+        swapout,
+        load_per_cpu,
+    }
 }
 
 /// Err(reason) when any signal is over its limit.

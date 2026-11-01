@@ -16,14 +16,23 @@ pub struct Hermes;
 impl Harness for Hermes {
     fn sync(&self, ctx: &Ctx, role: &str, profile: &str, _usage: &str, out: &mut dyn Write) -> Result<()> {
         let yaml = ctx.hermes.join(profile).join("config.yaml");
-        let Ok(text) = std::fs::read_to_string(&yaml) else { return Ok(()) };
+        let Ok(text) = std::fs::read_to_string(&yaml) else {
+            return Ok(());
+        };
         let hook_cmd = serde_json::to_string(&hook_command(ctx, role))?;
-        let new = set_block(&drop_reasoning_effort(&text), "hooks:", &HERMES_HOOKS.replace("{{FLEET_HOOK}}", &hook_cmd));
+        let new = set_block(
+            &drop_reasoning_effort(&text),
+            "hooks:",
+            &HERMES_HOOKS.replace("{{FLEET_HOOK}}", &hook_cmd),
+        );
         if new != text {
             std::fs::write(&yaml, new)?;
         }
         writeln!(out, "synced {} hooks ({role})", yaml.display())?;
-        approve_hook(&ctx.hermes.join(profile).join("shell-hooks-allowlist.json"), &hook_command(ctx, role))
+        approve_hook(
+            &ctx.hermes.join(profile).join("shell-hooks-allowlist.json"),
+            &hook_command(ctx, role),
+        )
     }
 
     fn start_cmd(&self, _ctx: &Ctx, p: &Plan, pane: &str) -> Vec<String> {
@@ -67,12 +76,18 @@ impl Harness for Hermes {
 /// Record Hermes' first-use consent for the hook (unconsented hooks never register on non-TTY runs), keeping others.
 fn approve_hook(path: &Path, cmd: &str) -> Result<()> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
-    let mut data: Value = serde_json::from_str(&text).ok().filter(Value::is_object).unwrap_or_else(|| json!({}));
+    let mut data: Value = serde_json::from_str(&text)
+        .ok()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
     if !data["approvals"].is_array() {
         data["approvals"] = json!([]);
     }
     let list = data["approvals"].as_array_mut().context("approvals")?;
-    if list.iter().any(|e| e["event"] == "pre_tool_call" && e["command"] == cmd) {
+    if list
+        .iter()
+        .any(|e| e["event"] == "pre_tool_call" && e["command"] == cmd)
+    {
         return Ok(());
     }
     list.push(json!({"event": "pre_tool_call", "command": cmd}));
@@ -82,10 +97,19 @@ fn approve_hook(path: &Path, cmd: &str) -> Result<()> {
 /// Set an existing profile's `mcp_servers:` to only the role's servers (removed when there are none).
 pub fn set_mcp(ctx: &Ctx, profile: &str, servers: &serde_json::Map<String, Value>) -> Result<()> {
     let yaml = ctx.hermes.join(profile).join("config.yaml");
-    let Ok(text) = std::fs::read_to_string(&yaml) else { return Ok(()) };
+    let Ok(text) = std::fs::read_to_string(&yaml) else {
+        return Ok(());
+    };
     // JSON is YAML flow syntax: one line per server.
-    let block: String = servers.iter().map(|(k, v)| format!("  {}: {v}\n", serde_json::to_string(k).unwrap())).collect();
-    let block = if block.is_empty() { block } else { format!("mcp_servers:\n{block}") };
+    let block: String = servers
+        .iter()
+        .map(|(k, v)| format!("  {}: {v}\n", serde_json::to_string(k).unwrap()))
+        .collect();
+    let block = if block.is_empty() {
+        block
+    } else {
+        format!("mcp_servers:\n{block}")
+    };
     let new = set_block(&text, "mcp_servers:", &block);
     if new != text {
         std::fs::write(&yaml, new)?;

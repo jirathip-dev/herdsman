@@ -32,12 +32,18 @@ pub fn list(r: &dyn Runner, what: &str) -> Result<Value> {
 
 /// Live herdr agents (`herdr agent list`).
 pub fn agents(r: &dyn Runner) -> Result<Vec<Value>> {
-    Ok(list(r, "agent")?["result"]["agents"].as_array().cloned().unwrap_or_default())
+    Ok(list(r, "agent")?["result"]["agents"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default())
 }
 
 /// `herdr agent list`'s stdout when it ran OK (serve's watcher hashes it).
 pub fn agent_list(r: &dyn Runner) -> Option<String> {
-    exec(r, &argv(&["agent", "list"])).ok().filter(|o| o.code == 0).map(|o| o.stdout)
+    exec(r, &argv(&["agent", "list"]))
+        .ok()
+        .filter(|o| o.code == 0)
+        .map(|o| o.stdout)
 }
 
 pub fn read_argv(pane: &str) -> Vec<String> {
@@ -51,7 +57,10 @@ pub fn read(r: &dyn Runner, pane: &str) -> Result<String> {
 
 /// The pane's last `lines` lines (herdr's whole `recent` window when shorter).
 pub fn recent(r: &dyn Runner, pane: &str, lines: &str) -> Result<String> {
-    ok(r, &argv(&["pane", "read", pane, "--source", "recent", "--lines", lines]))
+    ok(
+        r,
+        &argv(&["pane", "read", pane, "--source", "recent", "--lines", lines]),
+    )
 }
 
 pub fn keys_argv(pane: &str, key: &str) -> Vec<String> {
@@ -79,7 +88,11 @@ pub fn send_text_argv(pane: &str, text: &str) -> Vec<String> {
 /// The page's reply: the text (dsh: `pane send-text`, else `agent prompt`), then Enter.
 pub fn reply(r: &dyn Runner, dsh: bool, agent: &str, pane: &str, text: &str) -> Result<()> {
     // No `--`: herdr 0.9 reads the 2nd positional as literal text (even `-x`), and a `--` there would be sent as text.
-    let first = if dsh { send_text_argv(pane, text) } else { prompt_argv(agent, text) };
+    let first = if dsh {
+        send_text_argv(pane, text)
+    } else {
+        prompt_argv(agent, text)
+    };
     for a in [first, keys_argv(pane, "Enter")] {
         let o = exec(r, &a)?;
         if o.code != 0 {
@@ -95,9 +108,9 @@ pub fn close(r: &dyn Runner, pane: &str) -> Result<String> {
 
 /// herdr's `{"error": {"code": "timeout"}}` answer (on stderr or stdout).
 pub fn timed_out(o: &Out) -> bool {
-    [&o.stderr, &o.stdout].iter().any(|s| {
-        serde_json::from_str::<Value>(s.trim()).is_ok_and(|v| v["error"]["code"] == "timeout")
-    })
+    [&o.stderr, &o.stdout]
+        .iter()
+        .any(|s| serde_json::from_str::<Value>(s.trim()).is_ok_and(|v| v["error"]["code"] == "timeout"))
 }
 
 pub fn rename_argv(pane: &str, agent: &str) -> Vec<String> {
@@ -129,11 +142,31 @@ pub fn start_argv(agent: &str, kind: &str, pane: &str, args: Vec<String>) -> Vec
 
 /// `herdr agent wait` until the kick shows as working or blocked.
 pub fn wait_working_argv(agent: &str, ms: &str) -> Vec<String> {
-    argv(&["agent", "wait", agent, "--until", "working", "--until", "blocked", "--timeout", ms])
+    argv(&[
+        "agent",
+        "wait",
+        agent,
+        "--until",
+        "working",
+        "--until",
+        "blocked",
+        "--timeout",
+        ms,
+    ])
 }
 
 pub fn wait_output_argv(pane: &str, pattern: &str, ms: &str) -> Vec<String> {
-    argv(&["pane", "wait-output", pane, "--match", pattern, "--source", "visible", "--timeout", ms])
+    argv(&[
+        "pane",
+        "wait-output",
+        pane,
+        "--match",
+        pattern,
+        "--source",
+        "visible",
+        "--timeout",
+        ms,
+    ])
 }
 
 pub fn workspace_create_argv(local: &str, label: &str) -> Vec<String> {
@@ -142,8 +175,19 @@ pub fn workspace_create_argv(local: &str, label: &str) -> Vec<String> {
 
 pub fn worktree_create_argv(local: &str, branch: &str, base: &str, path: &str, label: &str) -> Vec<String> {
     argv(&[
-        "worktree", "create", "--cwd", local, "--branch", branch, "--base", base,
-        "--path", path, "--label", label, "--no-focus",
+        "worktree",
+        "create",
+        "--cwd",
+        local,
+        "--branch",
+        branch,
+        "--base",
+        base,
+        "--path",
+        path,
+        "--label",
+        label,
+        "--no-focus",
     ])
 }
 
@@ -163,8 +207,26 @@ pub fn free_pane(r: &dyn Runner, ws: &str, wt: &Path) -> Result<String> {
     if let Some(p) = list.iter().find(|p| p["agent"].is_null()) {
         return Ok(p["pane_id"].as_str().unwrap_or_default().into());
     }
-    let first = list.first().and_then(|p| p["pane_id"].as_str()).context("workspace has no panes")?;
+    let first = list
+        .first()
+        .and_then(|p| p["pane_id"].as_str())
+        .context("workspace has no panes")?;
     let wt = wt.to_string_lossy();
-    let s = json(r, &argv(&["pane", "split", first, "--direction", "right", "--cwd", &wt, "--no-focus"]))?;
-    Ok(s["result"]["pane"]["pane_id"].as_str().context("pane split: no pane_id")?.into())
+    let s = json(
+        r,
+        &argv(&[
+            "pane",
+            "split",
+            first,
+            "--direction",
+            "right",
+            "--cwd",
+            &wt,
+            "--no-focus",
+        ]),
+    )?;
+    Ok(s["result"]["pane"]["pane_id"]
+        .as_str()
+        .context("pane split: no pane_id")?
+        .into())
 }

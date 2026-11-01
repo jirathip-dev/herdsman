@@ -20,12 +20,18 @@ pub struct Dsh;
 
 /// `<config dir>/dsh/<profile>.patch.yml`, the lane's `--patch` overlay.
 fn patch_file(ctx: &Ctx, profile: &str) -> PathBuf {
-    ctx.claude_dir().with_file_name("dsh").join(format!("{profile}.patch.yml"))
+    ctx.claude_dir()
+        .with_file_name("dsh")
+        .join(format!("{profile}.patch.yml"))
 }
 
 /// Reviewers get the workspace-write sandbox; escalations are never asked (nobody answers them).
 fn patch(role: &str) -> String {
-    let mode = if role == "rev" { "workspace-write" } else { "danger-full-access" };
+    let mode = if role == "rev" {
+        "workspace-write"
+    } else {
+        "danger-full-access"
+    };
     format!(
         "# Written by `herdsman profiles sync` for {role} lanes; edits are overwritten.\n\
          - id: sandbox-policy\n  config:\n    mode: {mode}\n    workspaceRoot: !!js process.cwd()\n\
@@ -47,9 +53,15 @@ impl Harness for Dsh {
             bail!("DSH profile {} missing; run `herdsman profiles sync`", p.profile);
         }
         let v = ok(r, "dsh-tui", &["version"]).context("dsh-tui is not installed")?;
-        let profile = v.lines().find_map(|l| l.strip_prefix("profile:")).and_then(|l| l.split_whitespace().next());
+        let profile = v
+            .lines()
+            .find_map(|l| l.strip_prefix("profile:"))
+            .and_then(|l| l.split_whitespace().next());
         if profile != Some(DSH_TUI_VERSION) {
-            bail!("dsh-tui profile is {}, fleet pins {DSH_TUI_VERSION}", profile.unwrap_or("unknown"));
+            bail!(
+                "dsh-tui profile is {}, fleet pins {DSH_TUI_VERSION}",
+                profile.unwrap_or("unknown")
+            );
         }
         Ok(())
     }
@@ -113,7 +125,9 @@ impl Harness for Dsh {
 /// Re-read the pane (1 s apart, `tries` times) until dsh-TUI reports one of `want`.
 fn poll(r: &dyn Runner, get: &[String], want: &[&str], tries: u32) -> bool {
     for _ in attempts(r, tries, 1) {
-        let pane = herdr::json(r, get).map(|v| v["result"]["pane"].clone()).unwrap_or_default();
+        let pane = herdr::json(r, get)
+            .map(|v| v["result"]["pane"].clone())
+            .unwrap_or_default();
         if pane["agent"] == LABEL && want.iter().any(|w| pane["agent_status"] == *w) {
             return true;
         }
@@ -131,9 +145,23 @@ pub fn install_pre_push(r: &dyn Runner, exe: &str, wt: &Path, role: &str) -> Res
     let dir = gd.join("fleet-hooks");
     std::fs::create_dir_all(&dir)?;
     let hook = dir.join("pre-push");
-    std::fs::write(&hook, format!("#!/bin/sh\nexec '{exe}' hook --role {role} --git-pre-push\n"))?;
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\nexec '{exe}' hook --role {role} --git-pre-push\n"),
+    )?;
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))?;
     ok(r, "git", &["-C", &w, "config", "extensions.worktreeConfig", "true"])?;
-    ok(r, "git", &["-C", &w, "config", "--worktree", "core.hooksPath", &dir.to_string_lossy()])?;
+    ok(
+        r,
+        "git",
+        &[
+            "-C",
+            &w,
+            "config",
+            "--worktree",
+            "core.hooksPath",
+            &dir.to_string_lossy(),
+        ],
+    )?;
     Ok(())
 }

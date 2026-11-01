@@ -5,12 +5,18 @@ use common::*;
 const MAIN: &str = "gh api repos/jirathip-dev/sendmeter/branches/main/protection";
 const STAGING: &str = "gh api repos/jirathip-dev/sendmeter/branches/staging/protection";
 const PROTECTED: &str = r#"{"url":"x","required_status_checks":{"strict":true,"contexts":["ci"]},"required_pull_request_reviews":{"required_approving_review_count":1},"enforce_admins":{"enabled":true}}"#;
-const NOT_PROTECTED: &str = r#"{"message":"Branch not protected","documentation_url":"https://docs.github.com","status":"404"}"#;
-const NO_BRANCH: &str = r#"{"message":"Branch not found","documentation_url":"https://docs.github.com","status":"404"}"#;
+const NOT_PROTECTED: &str =
+    r#"{"message":"Branch not protected","documentation_url":"https://docs.github.com","status":"404"}"#;
+const NO_BRANCH: &str =
+    r#"{"message":"Branch not found","documentation_url":"https://docs.github.com","status":"404"}"#;
 const FREE_PLAN: &str = r#"{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","documentation_url":"https://docs.github.com","status":"403"}"#;
 
 fn err(stdout: &str, stderr: &str) -> herdsman::runner::Out {
-    herdsman::runner::Out { code: 1, stdout: stdout.into(), stderr: stderr.into() }
+    herdsman::runner::Out {
+        code: 1,
+        stdout: stdout.into(),
+        stderr: stderr.into(),
+    }
 }
 
 fn with(main: herdsman::runner::Out, staging: herdsman::runner::Out) -> Fake {
@@ -21,7 +27,11 @@ fn with(main: herdsman::runner::Out, staging: herdsman::runner::Out) -> Fake {
 }
 
 fn ok(body: &str) -> herdsman::runner::Out {
-    herdsman::runner::Out { code: 0, stdout: body.into(), stderr: String::new() }
+    herdsman::runner::Out {
+        code: 0,
+        stdout: body.into(),
+        stderr: String::new(),
+    }
 }
 
 fn check(name: &str, r: &Fake) -> (i32, String) {
@@ -37,36 +47,60 @@ fn check(name: &str, r: &Fake) -> (i32, String) {
 fn all_protected_exits_zero() {
     let (code, out) = check("prot-all", &with(ok(PROTECTED), ok(PROTECTED)));
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("jirathip-dev/sendmeter staging: ✓ protected (required status checks, required PR reviews)"), "{out}");
+    assert!(
+        out.contains("jirathip-dev/sendmeter staging: ✓ protected (required status checks, required PR reviews)"),
+        "{out}"
+    );
     assert!(out.contains("jirathip-dev/sendmeter main: ✓ protected"), "{out}");
     assert!(!out.contains('⚠'), "{out}");
 }
 
 #[test]
 fn protection_without_checks_or_reviews_is_incomplete() {
-    let checks_only = r#"{"required_status_checks":{"strict":true,"contexts":["ci"]},"enforce_admins":{"enabled":true}}"#;
+    let checks_only =
+        r#"{"required_status_checks":{"strict":true,"contexts":["ci"]},"enforce_admins":{"enabled":true}}"#;
     let (code, out) = check("prot-incomplete", &with(ok(PROTECTED), ok(checks_only)));
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("staging: △ protected but incomplete: missing required PR reviews"), "{out}");
+    assert!(
+        out.contains("staging: △ protected but incomplete: missing required PR reviews"),
+        "{out}"
+    );
 
-    let (code, out) = check("prot-bare", &with(ok(PROTECTED), ok(r#"{"enforce_admins":{"enabled":true}}"#)));
+    let (code, out) = check(
+        "prot-bare",
+        &with(ok(PROTECTED), ok(r#"{"enforce_admins":{"enabled":true}}"#)),
+    );
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("staging: △ protected but incomplete: missing required status checks, required PR reviews"), "{out}");
+    assert!(
+        out.contains("staging: △ protected but incomplete: missing required status checks, required PR reviews"),
+        "{out}"
+    );
 }
 
 #[test]
 fn enforce_admins_off_is_a_warning_line() {
-    let no_admins = PROTECTED.replace(r#""enforce_admins":{"enabled":true}"#, r#""enforce_admins":{"enabled":false}"#);
+    let no_admins = PROTECTED.replace(
+        r#""enforce_admins":{"enabled":true}"#,
+        r#""enforce_admins":{"enabled":false}"#,
+    );
     let (code, out) = check("prot-admins", &with(ok(PROTECTED), ok(&no_admins)));
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("staging: ✓ protected"), "{out}");
-    assert!(out.contains("staging: ⚠ enforce_admins off: admins can bypass protection"), "{out}");
+    assert!(
+        out.contains("staging: ⚠ enforce_admins off: admins can bypass protection"),
+        "{out}"
+    );
     assert!(!out.contains("main: ⚠"), "{out}");
 }
 
 #[test]
 fn bad_credentials_is_unavailable_with_status() {
-    let e = || err(r#"{"message":"Bad credentials","documentation_url":"https://docs.github.com","status":"401"}"#, "gh: Bad credentials (HTTP 401)");
+    let e = || {
+        err(
+            r#"{"message":"Bad credentials","documentation_url":"https://docs.github.com","status":"401"}"#,
+            "gh: Bad credentials (HTTP 401)",
+        )
+    };
     let (code, out) = check("prot-401", &with(e(), e()));
     assert_eq!(code, 1, "{out}");
     assert!(out.contains("main: ✗ unavailable: Bad credentials (HTTP 401)"), "{out}");
@@ -85,12 +119,20 @@ fn unprotected_staging_exits_non_zero() {
     let r = with(ok(PROTECTED), err(NOT_PROTECTED, "gh: Branch not protected (HTTP 404)"));
     let (code, out) = check("prot-unprot", &r);
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("jirathip-dev/sendmeter staging: ✗ not protected (HTTP 404)"), "{out}");
+    assert!(
+        out.contains("jirathip-dev/sendmeter staging: ✗ not protected (HTTP 404)"),
+        "{out}"
+    );
 }
 
 #[test]
 fn private_free_plan_is_unavailable_with_status() {
-    let e = || err(FREE_PLAN, "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)");
+    let e = || {
+        err(
+            FREE_PLAN,
+            "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)",
+        )
+    };
     let (code, out) = check("prot-403", &with(e(), e()));
     assert_eq!(code, 1, "{out}");
     assert!(out.contains("staging: ✗ unavailable: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)"), "{out}");
@@ -106,7 +148,10 @@ fn transient_failure_is_unavailable_never_bare_error() {
     let r = with(ok(PROTECTED), err("", "error connecting to api.github.com"));
     let (code, out) = check("prot-net", &r);
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("staging: ✗ unavailable: no HTTP status (gh exit 1: error connecting to api.github.com)"), "{out}");
+    assert!(
+        out.contains("staging: ✗ unavailable: no HTTP status (gh exit 1: error connecting to api.github.com)"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -114,12 +159,17 @@ fn repo_without_main_is_skipped() {
     let r = with(err(NO_BRANCH, "gh: Branch not found (HTTP 404)"), ok(PROTECTED));
     let (code, out) = check("prot-nomain", &r);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("jirathip-dev/sendmeter main: - no such branch (HTTP 404)"), "{out}");
+    assert!(
+        out.contains("jirathip-dev/sendmeter main: - no such branch (HTTP 404)"),
+        "{out}"
+    );
 }
 
 #[test]
 fn one_unprotected_among_fleets_exits_non_zero() {
-    let cfg = format!("{CONFIG}\n[fleet.herdsman]\nrepo = \"jirathip-dev/herdsman\"\nlocal = \"/tmp/x\"\nintegration = \"integ\"\n");
+    let cfg = format!(
+        "{CONFIG}\n[fleet.herdsman]\nrepo = \"jirathip-dev/herdsman\"\nlocal = \"/tmp/x\"\nintegration = \"integ\"\n"
+    );
     let d = tmpdir("prot-multi");
     let c = ctx(&d, &cfg);
     let r = Fake::default()
@@ -129,7 +179,17 @@ fn one_unprotected_among_fleets_exits_non_zero() {
     let (code, out) = run(&c, &r, &["protection"]);
     assert_eq!(code, 1, "{out}");
     // The integration branch is checked too; unscripted here, so it fails.
-    assert!(out.contains("jirathip-dev/herdsman integ: ✗ unavailable: no HTTP status"), "{out}");
+    assert!(
+        out.contains("jirathip-dev/herdsman integ: ✗ unavailable: no HTTP status"),
+        "{out}"
+    );
     assert_eq!(out.matches("✓ protected").count(), 4, "{out}");
-    assert!(r.calls.borrow().iter().all(|c| c.starts_with("gh api repos/") && !c.contains("-X")), "{:?}", r.calls.borrow());
+    assert!(
+        r.calls
+            .borrow()
+            .iter()
+            .all(|c| c.starts_with("gh api repos/") && !c.contains("-X")),
+        "{:?}",
+        r.calls.borrow()
+    );
 }

@@ -19,7 +19,11 @@ impl Runner for Fake {
         } else {
             String::new()
         };
-        Ok(Out { code: 0, stdout, stderr: String::new() })
+        Ok(Out {
+            code: 0,
+            stdout,
+            stderr: String::new(),
+        })
     }
     fn sleep(&self, _: u64) {}
 }
@@ -30,13 +34,31 @@ fn kick_with_non_ascii_path_does_not_panic() {
     let wt = PathBuf::from("/Users/日本語/wt");
     let s = String::new;
     let p = Plan {
-        agent: "a".into(), role: "rev".into(), harness: "dsh".into(), profile: s(), model: None, effort: None,
-        branch: s(), base: s(), worktree: wt.clone(), brief: wt.join(".brief.md"),
-        kick: "Read /Users/日本語/wt/.brief.md and execute it fully.".into(), lane: s(),
-        account: None, mcp: Default::default(), mcp_file: wt.join(".mcp.lane.json"), head: s(), title: s(),
+        agent: "a".into(),
+        role: "rev".into(),
+        harness: "dsh".into(),
+        profile: s(),
+        model: None,
+        effort: None,
+        branch: s(),
+        base: s(),
+        worktree: wt.clone(),
+        brief: wt.join(".brief.md"),
+        kick: "Read /Users/日本語/wt/.brief.md and execute it fully.".into(),
+        lane: s(),
+        account: None,
+        mcp: Default::default(),
+        mcp_file: wt.join(".mcp.lane.json"),
+        head: s(),
+        title: s(),
     };
     assert!(!p.kick.is_char_boundary(20));
     let r = Fake(Default::default());
     assert!(harness::get("dsh").kick(&r, &p, "w9:p1").unwrap());
-    assert!(r.0.lock().unwrap().iter().any(|c| c.starts_with("pane send-text w9:p1 Read /Users/日本語")));
+    assert!(r
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|c| c.starts_with("pane send-text w9:p1 Read /Users/日本語")));
 }

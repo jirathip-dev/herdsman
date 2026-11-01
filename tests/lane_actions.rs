@@ -42,10 +42,16 @@ fn kill_dry_run_lists_what_is_lost() {
     assert_eq!(code, 0, "{out}");
     let want = format!("{LANE} · impl · 3 unpushed commit(s), 2 dirty file(s) → wip/{LANE}-20261031-1200 · pane closes, worktree kept\n");
     assert!(out.starts_with(&want) && out.contains("dry run"), "{out}");
-    assert!(!r.called("herdr pane close") && !r.called(&format!("git -C {wt} push")) && !r.called(&format!("git -C {wt} add")));
+    assert!(
+        !r.called("herdr pane close")
+            && !r.called(&format!("git -C {wt} push"))
+            && !r.called(&format!("git -C {wt} add"))
+    );
     assert_eq!(kinds(&c, "lane-killed"), 0);
     let r = git(&wt, "?? .brief.md\n", "0\n", "");
-    assert!(run(&c, &r, &["kill", LANE]).1.starts_with(&format!("{LANE} · impl · nothing unpushed · pane closes")));
+    assert!(run(&c, &r, &["kill", LANE])
+        .1
+        .starts_with(&format!("{LANE} · impl · nothing unpushed · pane closes")));
 }
 
 #[test]
@@ -54,18 +60,43 @@ fn kill_pushes_wip_then_closes_and_logs() {
     let r = git(&wt, " M src/a.rs\n", "2\n", "+fn x() {}\n");
     let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains(&format!("killed {LANE}: work pushed to wip/{LANE}-20261031-1200")), "{out}");
-    let at = |p: &str| r.index(&format!("git -C {wt} {p}")).unwrap_or_else(|| panic!("no git {p}"));
-    assert!(at("add -A") < at("reset -q -- .brief.md") && at("reset -q -- .brief.md") < at("commit -q --no-verify -m wip: kill snapshot"));
+    assert!(
+        out.contains(&format!("killed {LANE}: work pushed to wip/{LANE}-20261031-1200")),
+        "{out}"
+    );
+    let at = |p: &str| {
+        r.index(&format!("git -C {wt} {p}"))
+            .unwrap_or_else(|| panic!("no git {p}"))
+    };
+    assert!(
+        at("add -A") < at("reset -q -- .brief.md")
+            && at("reset -q -- .brief.md") < at("commit -q --no-verify -m wip: kill snapshot")
+    );
     assert!(at("commit") < at(&format!("push origin HEAD:refs/heads/wip/{LANE}-20261031-1200")));
     assert!(at("push") < r.index("herdr pane close w1:p2").unwrap());
     // Never main/staging, never force: the one push names the wip ref.
-    let pushes: Vec<String> = r.calls.borrow().iter().filter(|l| l.contains(" push ")).cloned().collect();
-    assert_eq!(pushes, [format!("git -C {wt} push origin HEAD:refs/heads/wip/{LANE}-20261031-1200")]);
+    let pushes: Vec<String> = r
+        .calls
+        .borrow()
+        .iter()
+        .filter(|l| l.contains(" push "))
+        .cloned()
+        .collect();
+    assert_eq!(
+        pushes,
+        [format!(
+            "git -C {wt} push origin HEAD:refs/heads/wip/{LANE}-20261031-1200"
+        )]
+    );
     let e = read(&c.state).unwrap().pop().unwrap();
-    assert_eq!((e.kind.as_str(), e.str("wip"), e.str("role")), ("lane-killed", Some(&*format!("wip/{LANE}-20261031-1200")), Some("impl")));
+    assert_eq!(
+        (e.kind.as_str(), e.str("wip"), e.str("role")),
+        ("lane-killed", Some(&*format!("wip/{LANE}-20261031-1200")), Some("impl"))
+    );
     // The impl goes back to queued (re-spawnable); a second kill finds no lane.
-    let s = fold(&read(&c.state).unwrap()).remove(&("sendmeter".into(), 12)).unwrap();
+    let s = fold(&read(&c.state).unwrap())
+        .remove(&("sendmeter".into(), 12))
+        .unwrap();
     assert_eq!((s.state.as_str(), s.unfinished("impl")), ("queued", false));
     assert!(run(&c, &r, &["kill", LANE]).1.starts_with("REFUSED NO_SUCH_AGENT"));
 }
@@ -78,7 +109,11 @@ fn kill_refuses_a_secret_in_the_wip_diff() {
     assert_eq!(code, 3, "{out}");
     assert!(out.contains("REFUSED SECRET_IN_WIP"), "{out}");
     assert!(!out.contains("ghp_abc"), "the secret is never printed");
-    assert!(!r.called(&format!("git -C {wt} push")) && !r.called("herdr pane close") && !r.called(&format!("git -C {wt} commit")));
+    assert!(
+        !r.called(&format!("git -C {wt} push"))
+            && !r.called("herdr pane close")
+            && !r.called(&format!("git -C {wt} commit"))
+    );
     assert!(r.called(&format!("git -C {wt} reset -q")), "unstaged again");
     assert_eq!(kinds(&c, "lane-killed"), 0);
 }
@@ -87,7 +122,11 @@ fn kill_refuses_a_secret_in_the_wip_diff() {
 #[test]
 fn kill_skips_lockfile_checksums_but_not_secrets() {
     let head = "diff --git a/Cargo.lock b/Cargo.lock\n--- a/Cargo.lock\n+++ b/Cargo.lock\n@@ -1,3 +1,3 @@\n";
-    let lock = format!("{head}+checksum = \"{}\"\n+  \"integrity\": \"sha512-{}==\",\n-OLD_TOKEN=ghp_abcdefghijklmnopqrstu1234\n", "ab".repeat(32), "Qx".repeat(43));
+    let lock = format!(
+        "{head}+checksum = \"{}\"\n+  \"integrity\": \"sha512-{}==\",\n-OLD_TOKEN=ghp_abcdefghijklmnopqrstu1234\n",
+        "ab".repeat(32),
+        "Qx".repeat(43)
+    );
     let (c, wt) = lane("kill-lock");
     let r = git(&wt, "", "1\n", &lock);
     assert_eq!(run(&c, &r, &["kill", LANE, "--yes"]).0, 0);
@@ -107,7 +146,10 @@ fn kill_skips_lockfile_checksums_but_not_secrets() {
         let r = git(&wt, "", "1\n", &format!("{lock}{bad}\n"));
         let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
         assert!(code == 3 && out.contains("REFUSED SECRET_IN_WIP"), "{bad}: {out}");
-        assert!(!r.called(&format!("git -C {wt} push")) && !r.called("herdr pane close"), "{bad}");
+        assert!(
+            !r.called(&format!("git -C {wt} push")) && !r.called("herdr pane close"),
+            "{bad}"
+        );
     }
 }
 
@@ -122,7 +164,11 @@ impl herdsman::runner::Runner for RealGit {
         }
         self.0.calls.borrow_mut().push(format!("git {}", args.join(" ")));
         if !self.1.is_empty() && args.join(" ").contains(self.1) {
-            return Ok(herdsman::runner::Out { code: 1, stdout: String::new(), stderr: "forced".into() });
+            return Ok(herdsman::runner::Out {
+                code: 1,
+                stdout: String::new(),
+                stderr: "forced".into(),
+            });
         }
         herdsman::runner::Real.run(prog, args)
     }
@@ -130,7 +176,17 @@ impl herdsman::runner::Runner for RealGit {
 
 fn repo(wt: &str, fail: &'static str) -> RealGit {
     let origin = format!("{wt}.git");
-    let sh = |a: &[&str]| assert!(std::process::Command::new("git").args(a).output().unwrap().status.success(), "{a:?}");
+    let sh = |a: &[&str]| {
+        assert!(
+            std::process::Command::new("git")
+                .args(a)
+                .output()
+                .unwrap()
+                .status
+                .success(),
+            "{a:?}"
+        )
+    };
     sh(&["init", "-q", "--bare", &origin]);
     sh(&["clone", "-q", &origin, wt]);
     for (k, v) in [("user.name", "t"), ("user.email", "t@t"), ("commit.gpgsign", "false")] {
@@ -143,11 +199,19 @@ fn repo(wt: &str, fail: &'static str) -> RealGit {
     for f in [".brief.md", ".addendum.md", ".mcp.lane.json", "verdict.md"] {
         std::fs::write(format!("{wt}/{f}"), "scratch").unwrap();
     }
-    RealGit(Fake::default().reply("date -r", "20261031-1200\n").reply("herdr pane", ""), fail)
+    RealGit(
+        Fake::default()
+            .reply("date -r", "20261031-1200\n")
+            .reply("herdr pane", ""),
+        fail,
+    )
 }
 
 fn status(wt: &str) -> String {
-    let o = std::process::Command::new("git").args(["-C", wt, "status", "--porcelain", "--ignored"]).output().unwrap();
+    let o = std::process::Command::new("git")
+        .args(["-C", wt, "status", "--porcelain", "--ignored"])
+        .output()
+        .unwrap();
     String::from_utf8(o.stdout).unwrap()
 }
 
@@ -156,10 +220,22 @@ fn kill_counts_lane_scratch_as_clean_and_never_pushes_it() {
     let (c, wt) = lane("kill-scratch");
     let r = repo(&wt, "");
     let before = status(&wt);
-    assert!(run(&c, &r, &["kill", LANE]).1.starts_with(&format!("{LANE} · impl · nothing unpushed · pane closes")));
+    assert!(run(&c, &r, &["kill", LANE])
+        .1
+        .starts_with(&format!("{LANE} · impl · nothing unpushed · pane closes")));
     let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
-    assert_eq!((code, out.trim()), (0, &*format!("{LANE} · impl · nothing unpushed · pane closes, worktree kept\nkilled {LANE}")));
-    assert!(r.0.called("herdr pane close w1:p2") && !r.0.called(&format!("git -C {wt} push")) && !r.0.called(&format!("git -C {wt} add")));
+    assert_eq!(
+        (code, out.trim()),
+        (
+            0,
+            &*format!("{LANE} · impl · nothing unpushed · pane closes, worktree kept\nkilled {LANE}")
+        )
+    );
+    assert!(
+        r.0.called("herdr pane close w1:p2")
+            && !r.0.called(&format!("git -C {wt} push"))
+            && !r.0.called(&format!("git -C {wt} add"))
+    );
     assert_eq!(status(&wt), before);
 }
 
@@ -168,10 +244,22 @@ fn kill_snapshots_only_the_real_dirty_file() {
     let (c, wt) = lane("kill-real");
     let r = repo(&wt, "");
     std::fs::write(format!("{wt}/real.rs"), "fn x() {}\n").unwrap();
-    assert!(run(&c, &r, &["kill", LANE]).1.contains("0 unpushed commit(s), 1 dirty file(s)"));
+    assert!(run(&c, &r, &["kill", LANE])
+        .1
+        .contains("0 unpushed commit(s), 1 dirty file(s)"));
     let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
     assert_eq!(code, 0, "{out}");
-    let o = std::process::Command::new("git").args(["-C", &format!("{wt}.git"), "show", "--name-only", "--format=", &format!("wip/{LANE}-20261031-1200")]).output().unwrap();
+    let o = std::process::Command::new("git")
+        .args([
+            "-C",
+            &format!("{wt}.git"),
+            "show",
+            "--name-only",
+            "--format=",
+            &format!("wip/{LANE}-20261031-1200"),
+        ])
+        .output()
+        .unwrap();
     assert_eq!(String::from_utf8(o.stdout).unwrap().trim(), "real.rs");
     assert!(r.0.called("herdr pane close w1:p2"));
 }
@@ -185,7 +273,11 @@ fn kill_restores_the_index_when_the_snapshot_fails() {
     let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
     assert_eq!(code, 3, "{out}");
     assert!(out.contains("REFUSED SNAPSHOT_FAILED"), "{out}");
-    assert!(r.0.called(&format!("git -C {wt} add -A")) && !r.0.called(&format!("git -C {wt} push")) && !r.0.called("herdr pane close"));
+    assert!(
+        r.0.called(&format!("git -C {wt} add -A"))
+            && !r.0.called(&format!("git -C {wt} push"))
+            && !r.0.called("herdr pane close")
+    );
     assert_eq!(status(&wt), before);
     assert_eq!(kinds(&c, "lane-killed"), 0);
 }
@@ -208,24 +300,40 @@ fn clean_lane_refuses_unsafe_lanes() {
     let r = git(&wt, "", "0\n", "").reply("herdr agent list", NO_AGENTS);
     let clean = |r: &Fake| run(&c, r, &["clean", "sendmeter", "--lane", LANE]);
     let (code, out) = clean(&r);
-    assert!(code == 3 && out.contains("REFUSED UNSAFE_CLEAN: sendmeter-impl-12: only after merge"), "{out}");
+    assert!(
+        code == 3 && out.contains("REFUSED UNSAFE_CLEAN: sendmeter-impl-12: only after merge"),
+        "{out}"
+    );
     // #83: an open PR is named, so the sheet's disabled [clean] says why without a tap.
     let cache = c.state.parent().unwrap().join("cache");
     std::fs::create_dir_all(&cache).unwrap();
-    std::fs::write(cache.join("pr-sendmeter-12.json"), json!({"ts": 1, "pr": {"number": 42, "state": "OPEN"}}).to_string()).unwrap();
-    assert!(clean(&r).1.contains("UNSAFE_CLEAN: sendmeter-impl-12: only after merge (PR #42 open)"));
+    std::fs::write(
+        cache.join("pr-sendmeter-12.json"),
+        json!({"ts": 1, "pr": {"number": 42, "state": "OPEN"}}).to_string(),
+    )
+    .unwrap();
+    assert!(clean(&r)
+        .1
+        .contains("UNSAFE_CLEAN: sendmeter-impl-12: only after merge (PR #42 open)"));
     append(&c.state, &Event::new(T, "sendmeter", Some(12), "merged", json!({}))).unwrap();
     let live = git(&wt, "", "0\n", "").reply("herdr agent list", &agents(&[(LANE, "idle", "/x", "w1:p2")]));
     assert!(clean(&live).1.contains("UNSAFE_CLEAN: sendmeter-impl-12: live agent"));
     let dirty = git(&wt, " M a.rs\n", "0\n", "").reply("herdr agent list", NO_AGENTS);
-    assert!(clean(&dirty).1.contains("UNSAFE_CLEAN: sendmeter-impl-12: 1 uncommitted change(s)"));
+    assert!(clean(&dirty)
+        .1
+        .contains("UNSAFE_CLEAN: sendmeter-impl-12: 1 uncommitted change(s)"));
     let (code, out) = clean(&r);
     assert!(code == 0 && out.contains(&format!("would remove {wt}")), "{out}");
-    assert!(run(&c, &r, &["clean", "sendmeter", "--lane", "nobody"]).1.contains("UNSAFE_CLEAN: nobody: no worktree"));
+    assert!(run(&c, &r, &["clean", "sendmeter", "--lane", "nobody"])
+        .1
+        .contains("UNSAFE_CLEAN: nobody: no worktree"));
 }
 
 fn req(s: &Server, path: &str, body: &str, extra: &str) -> String {
-    let r = format!("POST {path} HTTP/1.1\r\nHost: {ADDR}\r\n{extra}Content-Length: {}\r\n\r\n{body}", body.len());
+    let r = format!(
+        "POST {path} HTTP/1.1\r\nHost: {ADDR}\r\n{extra}Content-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
     String::from_utf8_lossy(&s.respond(&r, T)).into_owned()
 }
 
@@ -235,17 +343,32 @@ fn act_needs_a_paired_cookie_and_logs_via_web() {
     let r = git(&wt, "", "0\n", "");
     let s = Server::new(&c, &r, Some(ADDR.into()));
     assert!(req(&s, "/act", &format!("agent={LANE}&op=stop"), "").starts_with("HTTP/1.1 401 "));
-    assert!(req(&s, "/act", &format!("agent={LANE}&op=stop"), "Origin: https://evil.example\r\n").starts_with("HTTP/1.1 403 "));
+    assert!(req(
+        &s,
+        "/act",
+        &format!("agent={LANE}&op=stop"),
+        "Origin: https://evil.example\r\n"
+    )
+    .starts_with("HTTP/1.1 403 "));
     assert!(!r.called("herdr pane send-keys"));
     let cookie = pair(&s, &c, "Mozilla/5.0 (iPhone)", T);
     let res = req(&s, "/act", &format!("agent={LANE}&op=stop"), &cookie);
-    assert!(res.starts_with("HTTP/1.1 200 OK") && res.ends_with("sent Esc to sendmeter-impl-12\n"), "{res}");
+    assert!(
+        res.starts_with("HTTP/1.1 200 OK") && res.ends_with("sent Esc to sendmeter-impl-12\n"),
+        "{res}"
+    );
     let e = read(&c.state).unwrap().pop().unwrap();
     let label = herdsman::devices::load(&c)[0].label.clone();
-    assert_eq!((e.kind.as_str(), e.str("via"), e.str("device"), e.str("op")), ("act", Some("web"), Some(&*label), Some("stop")));
+    assert_eq!(
+        (e.kind.as_str(), e.str("via"), e.str("device"), e.str("op")),
+        ("act", Some("web"), Some(&*label), Some("stop"))
+    );
     // Kill without confirm is the dry-run line; nothing closes, nothing logged.
     let res = req(&s, "/act", &format!("agent={LANE}&op=kill"), &cookie);
-    assert!(res.contains("pane closes, worktree kept") && !r.called("herdr pane close"), "{res}");
+    assert!(
+        res.contains("pane closes, worktree kept") && !r.called("herdr pane close"),
+        "{res}"
+    );
     assert_eq!(kinds(&c, "act"), 1);
 }
 
@@ -271,26 +394,43 @@ fn transcript_groups_200_lines_into_turns_with_tools_collapsed() {
         assert_eq!(items.len(), 2, "{t}");
         assert_eq!(items[0]["tool"], format!("⏺ Bash(cargo test {i})"));
         assert_eq!(items[0]["body"].as_str().unwrap().lines().count(), 6);
-        assert_eq!(items[1]["text"], format!("⏺ Done {i}, a long reply that wraps\n  onto a second line"));
+        assert_eq!(
+            items[1]["text"],
+            format!("⏺ Done {i}, a long reply that wraps\n  onto a second line")
+        );
     }
     let tail = herdsman::lanes::turns(&lines[198..]);
     let hermes = &tail[0]["items"].as_array().unwrap()[1];
-    assert_eq!((&hermes["tool"], &hermes["body"]), (&json!("┊ 💻 terminal ls"), &json!("┊   a.rs b.rs")));
+    assert_eq!(
+        (&hermes["tool"], &hermes["body"]),
+        (&json!("┊ 💻 terminal ls"), &json!("┊   a.rs b.rs"))
+    );
 }
 
 #[test]
 fn lane_loads_more_from_the_scrollback() {
     let (c, _) = lane("more");
     let list = agents(&[(LANE, "working", "/x", "w1:p2")]);
-    let r = Fake::default().reply("herdr agent list", &list).reply("herdr workspace list", "{}").reply("herdr pane read", &screen());
+    let r = Fake::default()
+        .reply("herdr agent list", &list)
+        .reply("herdr workspace list", "{}")
+        .reply("herdr pane read", &screen());
     let s = Server::new(&c, &r, Some(ADDR.into()));
     let cookie = pair(&s, &c, "", T);
     let get = |q: &str| {
-        let res = String::from_utf8_lossy(&s.respond(&format!("GET /lane?agent={LANE}{q} HTTP/1.1\r\nHost: {ADDR}\r\n{cookie}\r\n"), T)).into_owned();
+        let res = String::from_utf8_lossy(&s.respond(
+            &format!("GET /lane?agent={LANE}{q} HTTP/1.1\r\nHost: {ADDR}\r\n{cookie}\r\n"),
+            T,
+        ))
+        .into_owned();
         serde_json::from_str::<serde_json::Value>(&res[res.find("\r\n\r\n").unwrap() + 4..]).unwrap()
     };
     let first = get("&lines=500");
-    assert_eq!((&first["before"], &first["more"]), (&json!(200), &json!(true)), "the cap stays at 200");
+    assert_eq!(
+        (&first["before"], &first["more"]),
+        (&json!(200), &json!(true)),
+        "the cap stays at 200"
+    );
     let older = get("&lines=200&before=200");
     assert_eq!((&older["before"], &older["more"]), (&json!(202), &json!(false)));
     assert_eq!(older["turns"][0]["items"][0]["tool"], "⏺ Bash(cargo test 0)");
@@ -302,9 +442,13 @@ fn lane_loads_more_from_the_scrollback() {
 fn inputs_are_16px_and_zoom_stays_allowed() {
     let css = include_str!("../assets/serve.css");
     let rule = css.lines().find(|l| l.starts_with(".reply textarea{")).unwrap();
-    assert!(rule.ends_with("font-size:var(--fs-input)}") && css.contains("--fs-input:16px"), "{rule}");
+    assert!(
+        rule.ends_with("font-size:var(--fs-input)}") && css.contains("--fs-input:16px"),
+        "{rule}"
+    );
     let (c, _) = lane("zoom");
-    let page = String::from_utf8_lossy(&Server::new(&c, &Fake::default(), None).respond("GET / HTTP/1.1\r\n\r\n", T)).into_owned();
+    let page = String::from_utf8_lossy(&Server::new(&c, &Fake::default(), None).respond("GET / HTTP/1.1\r\n\r\n", T))
+        .into_owned();
     assert!(page.contains("<meta name=viewport") && !page.contains("maximum-scale"));
     assert!(css.contains(".lock body{position:fixed") && include_str!("../assets/serve.js").contains("visualViewport"));
 }

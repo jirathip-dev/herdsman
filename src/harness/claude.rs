@@ -33,7 +33,10 @@ impl Harness for Claude {
 
     /// The lane's MCP file: only the role's servers.
     fn prepare(&self, _ctx: &Ctx, _r: &dyn Runner, p: &Plan) -> Result<()> {
-        std::fs::write(&p.mcp_file, serde_json::to_string_pretty(&serde_json::json!({"mcpServers": p.mcp}))?)?;
+        std::fs::write(
+            &p.mcp_file,
+            serde_json::to_string_pretty(&serde_json::json!({"mcpServers": p.mcp}))?,
+        )?;
         Ok(())
     }
 
@@ -55,7 +58,11 @@ impl Harness for Claude {
         // Display name = terminal title on the herdr board (else Claude titles it from the kick).
         a.extend(["--name".into(), p.title.clone()]);
         // `--mcp-config` is variadic: `--strict-mcp-config` ends it before the kick.
-        a.extend(["--mcp-config".into(), p.mcp_file.to_string_lossy().into(), "--strict-mcp-config".into()]);
+        a.extend([
+            "--mcp-config".into(),
+            p.mcp_file.to_string_lossy().into(),
+            "--strict-mcp-config".into(),
+        ]);
         a.push(p.kick.clone());
         herdr::start_argv(&p.agent, "claude", pane, a)
     }
