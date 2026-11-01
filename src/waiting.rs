@@ -74,6 +74,14 @@ pub fn waiting_on(
     if pr["state"] == "CLOSED" {
         return w("none", "nothing to do (closed): clean me", s.last_ts, None);
     }
+    // #104: a lane whose account capped since its spawn is respawned on a free one (`kill` pushes `wip/` first).
+    let sp = last_spawn(events, &lane).map(|e| (e.ts, e.str("account")));
+    let cap =
+        |e: &&Event| e.is("account-capped", f, n) && sp.is_some_and(|sp| e.ts >= sp.0 && e.str("account") == sp.1);
+    if let (Some(c), Some((role, _))) = (events.iter().find(cap), s.lanes.iter().find(|l| *l.1 == lane)) {
+        let what = "account capped, waiting for orch to respawn on a free one";
+        return w("orch", what, c.ts, cmd("spawn", &format!(" {role} --supersede")));
+    }
     let pushed = pr["headRefOid"].as_str().unwrap_or_default();
     match s.state.split('(').next().unwrap_or_default() {
         "ready" if gh::ci(&gh::required(&pr["statusCheckRollup"], req)) == "green" => {

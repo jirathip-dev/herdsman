@@ -25,7 +25,7 @@ queued → impl → review(n) → fix(n) → ready → merged; plus blocked, nee
 - MERGED: spawn/adopt: the issue is merged; a merged issue never reopens
 - SERIAL_BUSY: spawn: a `--serial` impl waits while the fleet's `serial_max` (default 1) other serial issues have a live impl/fix lane or sit at review/ready
 - SERIAL_UNMARKED: merge: the PR touches the fleet's serial_paths but the issue was not queued `--serial`
-- CAP: spawn: the fleet's optional max_impl / max_rev lane cap is reached (unset = no cap)
+- CAP / ALL_CAPPED: spawn: the fleet's optional max_impl / max_rev lane cap is reached (unset = no cap) / every account of the role is capped (names the first reset)
 - PAUSED: spawn: the fleet is paused (`herdsman resume <fleet>`); impl/rev lanes wait, live lanes are untouched
 - BAD_VALUE: set: a value is empty or has a quote/backslash/control char, or the model is not in `models`; ask: an empty question, over 4 options
 - NO_SUCH_ASK / ALREADY_ANSWERED: answer: the fleet has no such ask id, or it was answered already
@@ -50,7 +50,7 @@ Lanes skip permission prompts; the Claude/Hermes hook blocks `gh pr merge`, `gh 
 `gh api` comment writes, `git push` to main/master/staging/integration, edits to fleet, fleet-operations and Hermes
 profile config. Reviewers are read-only: no edits but `verdict.md`, no `git commit|push|merge|rebase|reset`. `herdsman spawn … design` is owner-only: denied from every lane, orch included; never in verdict or merge.
 Accounts (`herdsman accounts`): a Claude role's `account`/`accounts` exports the first uncapped one as `CLAUDE_CODE_OAUTH_TOKEN`;
-an `account-capped` one waits `cap_reset_minutes` or `herdsman accounts reset <name>`. MCP: only the role's `mcp` (default none).
+an `account-capped` one is skipped until the banner's reset time (else `cap_reset_minutes`, a day if weekly) or `herdsman accounts reset <name>`. MCP: only the role's `mcp` (default none).
 
 ## Events
 
