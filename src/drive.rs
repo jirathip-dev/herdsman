@@ -1,6 +1,7 @@
 //! #92 `herdsman drive`: one pass of the orch's loop, no AI; each action logs a passive `driven` event.
 use crate::config::Config;
-use crate::events::{emit, fold, read, Event};
+use crate::events::{emit, fold, read, Event, IssueState};
+use crate::overlap::git;
 use crate::runner::{ok, Runner};
 use crate::{gh, host, queue, waiting, Ctx};
 use anyhow::Result;
@@ -68,7 +69,10 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
     let events = read(&ctx.state)?;
     let agents = host::agents(r)?;
     let f = cfg.fleet(fleet)?;
-    let waits = waiting::scan(ctx, cfg, r, &events, &agents, true);
+    let mut waits = waiting::scan(ctx, cfg, r, &events, &agents, true);
+    // #129: ready PRs that conflict with nothing merge first; of a conflicting pair the older, the other is updated.
+    let conflicts = crate::overlap::preview(ctx, cfg, r, fleet, &events).unwrap_or_default();
+    waits.sort_by_key(|(s, _)| conflicts.contains_key(&s.issue));
     for (s, w) in waits
         .iter()
         .filter(|(s, w)| s.fleet == fleet && s.lane.as_ref() == Some(&w.lane))
@@ -87,7 +91,12 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
                 ("spawn", _) => "respawn",
                 (v, _) => v,
             };
-            act(ctx, cfg, r, out, &events, (fleet, Some(s.issue), step), &args)?;
+            let code = act(ctx, cfg, r, out, &events, (fleet, Some(s.issue), step), &args)?;
+            if step == "merge" && code.is_none() {
+                if let Err(e) = auto_update(ctx, cfg, r, out, fleet) {
+                    writeln!(out, "{fleet} auto-update: {e:#}")?;
+                }
+            }
         } else if s.state == "ready" && red {
             // Red CI after a PASS is a FAIL at the same head (no new round), the failed checks as the finding.
             let head = pr["headRefOid"].as_str().unwrap_or_default();
@@ -130,6 +139,60 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
         )?;
     }
     Ok(go)
+}
+
+/// #129: after a merge, merge integration into every other open ready / in-review PR whose lane isn't working, oldest
+/// PR first, in a scratch worktree. A clean merge is pushed (`auto-updated`); a ready PR's conflict gets an `--update` lane.
+pub fn auto_update(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &str) -> Result<()> {
+    let (f, events, ag) = (
+        cfg.fleet(fleet)?,
+        read(&ctx.state)?,
+        host::agents(r).unwrap_or_default(),
+    );
+    let busy = |l: &str| ag.iter().any(|a| a["name"] == l && a["agent_status"] == "working");
+    let open = |s: &IssueState| {
+        let pr = gh::cached_pr(ctx, fleet, s.issue);
+        pr["number"].as_u64().filter(|_| pr["state"] == "OPEN")
+    };
+    let mut prs: Vec<(u64, IssueState)> = (fold(&events).into_values())
+        .filter(|s| s.fleet == fleet && (s.state == "ready" || s.state.starts_with("review")))
+        .filter(|s| !s.lane.as_deref().is_some_and(busy))
+        .filter_map(|s| Some((open(&s)?, s)))
+        .collect();
+    prs.sort_by_key(|p| p.0);
+    let (dir, wt) = (f.local_path(), ctx.state.with_file_name(format!("update-{fleet}")));
+    let (wts, into) = (wt.to_string_lossy(), format!("origin/{}", f.integration));
+    git(r, &dir, &["fetch", "-q", "origin"])?;
+    // A scratch `git worktree`, not a herdr one: no pane, no lane.
+    let tree = |a: &[&str]| git(r, &dir, &[&["worktree"][..], a].concat());
+    for (_, s) in prs {
+        let (n, branch) = (s.issue.to_string(), crate::gate::branch_of(Some(&s), s.issue));
+        let from = git(r, &dir, &["rev-parse", &format!("origin/{branch}")])?;
+        let _ = tree(&["remove", "--force", &wts]);
+        tree(&["add", "-f", "--detach", &wts, &from])?;
+        let clean = git(r, &wt, &["merge", "--no-edit", &into]).is_ok();
+        let to = git(r, &wt, &["rev-parse", "HEAD"])?;
+        let res = if !clean && s.state == "ready" {
+            let args = ["spawn", fleet, &n, "impl", "--supersede", "--update"];
+            act(ctx, cfg, r, out, &events, (fleet, Some(s.issue), "conflict"), &args).map(drop)
+        } else if clean && to != from {
+            git(r, &wt, &["push", "-q", "origin", &format!("HEAD:{branch}")]).and_then(|_| {
+                gh::forget_pr(ctx, fleet, s.issue);
+                writeln!(out, "{fleet} #{n} auto-updated: {from:.7} → {to:.7}")?;
+                let d = json!({"from": from, "to": to});
+                emit(
+                    &ctx.state,
+                    cfg,
+                    Event::new(ctx.now, fleet, Some(s.issue), "auto-updated", d),
+                )
+            })
+        } else {
+            Ok(())
+        };
+        let _ = tree(&["remove", "--force", &wts]);
+        res?;
+    }
+    Ok(())
 }
 
 /// The finding for red CI: the first failing check, then the tail of its run's failed-step log.

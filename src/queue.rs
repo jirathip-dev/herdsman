@@ -1,5 +1,6 @@
 //! The per-fleet work queue (`queue` events): `herdsman queue`, `next` and `board`.
 use crate::events::{age, fold, Event, IssueState, States};
+use crate::overlap::Conflicts;
 use anyhow::{anyhow, ensure, Result};
 use serde_json::{json, Value};
 
@@ -190,7 +191,7 @@ pub fn ls_json(events: &[Event], fleet: &str) -> Value {
 pub const WIDTH: usize = 60;
 
 /// One fleet's board, lines ≤ 60 cols: the queue, other open issues, issues merged in the last 24 h.
-pub fn board(events: &[Event], fleet: &str, now: u64, cfg: Option<&crate::config::Config>) -> String {
+pub fn board(events: &[Event], fleet: &str, now: u64, cfg: Option<&crate::config::Config>, c: &Conflicts) -> String {
     let st = fold(events);
     let q = view(events, &st, fleet);
     let mine: Vec<&IssueState> = st.values().filter(|s| s.fleet == fleet).collect();
@@ -218,9 +219,15 @@ pub fn board(events: &[Event], fleet: &str, now: u64, cfg: Option<&crate::config
         } else {
             age(now.saturating_sub(ts))
         };
+        // #129: its own line, the row is full: `⚠ conflicts with #98 (serve.rs)`.
+        let warn = c.get(&n).and_then(|c| c.first()).map_or(String::new(), |(o, files)| {
+            let o = if *o == 0 { "integration".into() } else { format!("#{o}") };
+            let names: Vec<_> = files.iter().map(|p| p.rsplit('/').next().unwrap_or_default()).collect();
+            format!("\n         ⚠ conflicts with {o} ({})", names.join(", "))
+        });
         let last = last.unwrap_or_else(|| if ev.is_empty() { "-".into() } else { ev.into() });
         format!(
-            "{pos:>2} #{n:<5} {:<11} {lane:<20} {eff:<5} {a:<4} {last}",
+            "{pos:>2} #{n:<5} {:<11} {lane:<20} {eff:<5} {a:<4} {last}{warn}",
             state(&st, fleet, n)
         )
     };
@@ -241,6 +248,7 @@ pub fn board(events: &[Event], fleet: &str, now: u64, cfg: Option<&crate::config
     }
     lines
         .iter()
+        .flat_map(|l| l.lines())
         .map(|l| l.chars().take(WIDTH).collect::<String>().trim_end().to_string() + "\n")
         .collect()
 }
