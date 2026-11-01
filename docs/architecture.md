@@ -55,11 +55,12 @@ the hook for one release, and `HERDSMAN_LANE` wins when both are set.
   - `format_push_string`: the HTML page is built with `+= &format!(..)`; one extra allocation per row is nothing.
   - `format_collect`: `.map(|x| format!(..)).collect()` reads better than a `fold` with `write!`.
   - `many_single_char_names`: short names in small math and parsing closures (dates, hex, crypto).
-- **Size cap:** at most 9,700 formatted lines of non-test Rust under `src/` (tests live in `tests/`), counted as
+- **Size cap:** at most 9,000 formatted lines of non-test Rust under `src/` (tests live in `tests/`), counted as
   `find src -name '*.rs' | xargs cat | wc -l` after `cargo fmt`. CI enforces it. Raising the cap needs the owner's OK
   in an issue.
 
 History: #60 aimed for 5,000 hand-packed lines; without joining lines or dropping features it ended at 6,080 (the
 herdr adapter, `src/herdr.rs`, included), so the cap was that count rounded up (6,100); #88 (`serial_max`) raised it to
 6,120, #87 (alerts) to 6,170 and #92 (`herdsman drive`, +193 net) to 6,360. #93 re-based it on formatted code: the
-same 6,356 packed lines are 8,859 under rustfmt at width 120, so the cap became 9,000 formatted lines, then 9,700 (2026-11-01, owner: one raise for the #95–#107 batch; re-measured after the orch deletion).
+same 6,356 packed lines are 8,859 under rustfmt at width 120, so the cap became 9,000 formatted lines.
+10,000 (2026-11-01, owner: "Maybe we put limit to 10k overall"; re-measured after the orch deletion)
