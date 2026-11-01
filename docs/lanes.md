@@ -77,6 +77,7 @@ does one pass, from cron after `herdsman check` ([setup.md](setup.md)) or the bo
 | `ready`, CI green | `merge`; CI pending: wait |
 | `ready`, CI red | `verdict FAIL` at the same head (no new round), the failed check's log tail (secrets masked) as the finding (ci-red) |
 | `fix(n)` after a FAIL | `spawn impl --supersede` (fix); the brief carries the findings verbatim |
+| `ready` or a pushed fix, PR `CONFLICTING` or `BEHIND` the integration branch | `spawn impl --supersede --update` (conflict): the brief says merge `origin/<integration>` (no rebase, no force-push), resolve keeping both sides, run the gates, push, report the resolved files; a fix round, so a fresh review follows; past `review_rounds` it logs `needs-human` |
 | FAIL in round `review_rounds` | `verdict` logs `needs-human` with the findings; drive stops |
 | a lane killed | `spawn impl` (respawn) |
 | merged lanes left | `clean --yes` |
