@@ -26,11 +26,11 @@ jobs:
         run: |
           extra=$(sed -n '/^\[dependencies\]/,/^\[/p' Cargo.toml | grep -oE '^[a-z0-9_-]+' | grep -vxE 'clap|serde|serde_json|toml|anyhow|thiserror|p256|aes-gcm|hkdf|sha2|base64' || true)
           test -z "$extra" || { echo "not allowed: $extra"; exit 1; }
-      - name: line cap (≤ 6170 non-test Rust lines under src/; #60: 6,080 rounded up, +20 for #88 serial_max, +50 for #87 alerts; #93 re-bases it formatted)
+      - name: line cap (≤ 6340 non-test Rust lines under src/; #60: 6,080 rounded up, +20 for #88 serial_max, +50 for #87 alerts, +170 for #92 drive; #93 re-bases it formatted)
         run: |
           n=$(find src -name '*.rs' -print0 | xargs -0 cat | wc -l)
           echo "src lines: $n"
-          test "$n" -le 6170
+          test "$n" -le 6340
       - name: assets budget (warn only; ≤ 1500 lines of JS/CSS under assets/)
         run: |
           n=$(cat assets/*.js assets/*.css | wc -l)
