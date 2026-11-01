@@ -452,3 +452,65 @@ fn inputs_are_16px_and_zoom_stays_allowed() {
     assert!(page.contains("<meta name=viewport") && !page.contains("maximum-scale"));
     assert!(css.contains(".lock body{position:fixed") && include_str!("../assets/serve.js").contains("visualViewport"));
 }
+
+/// #96: the push guard flags real secret shapes only, never code, test names or words like `key`/`token`.
+#[test]
+fn secret_flags_real_shapes_only() {
+    use herdsman::lanes::secret;
+    for ok in [
+        "fn check_prompts_an_idle_orch_after_5_min_then_alerts_after_15() {",
+        "    let api_key = config.key();",
+        "fn token_for(fleet: &str) -> Option<String> {",
+        "let token = std::env::var(\"GITHUB_TOKEN\").unwrap_or_default();",
+        "KEY_PATH=/etc/ssl/private/server_2026.pem",
+        "let secret_name = \"orch_idle_after_15_min_alert\";",
+        "checksum = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
+        "a3f9c2e1b7d4058a6e3f9c2e1b7d4058a6e3f9c2 src/x.rs",
+    ] {
+        assert_eq!(secret(ok), None, "{ok}");
+    }
+    let pem = "-----BEGIN RSA PRIVATE KEY-----";
+    let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    for (bad, v) in [
+        (
+            format!("TOKEN = \"ghp_{}\"", "aB3".repeat(12)),
+            format!("ghp_{}", "aB3".repeat(12)),
+        ),
+        (
+            "key: sk-ant-api03-abcdefghijklmnop1234".into(),
+            "sk-ant-api03-abcdefghijklmnop1234".into(),
+        ),
+        (
+            "aws_access_key_id = AKIAIOSFODNN7EXAMPLE".into(),
+            "AKIAIOSFODNN7EXAMPLE".into(),
+        ),
+        (format!("  {pem}"), pem.into()),
+        (format!("Authorization: Bearer {jwt}"), jwt.into()),
+        ("SECRET=\"h7Gk2pQ9xLm4vB8nR3tZ\"".into(), "h7Gk2pQ9xLm4vB8nR3tZ".into()),
+    ] {
+        assert_eq!(secret(&bad), Some(v.as_str()), "{bad}");
+    }
+}
+
+/// #96: #89's diff (a long snake_case test name) saves; a secret's refusal names file:line with the value masked.
+#[test]
+fn kill_saves_code_and_names_the_secret_line() {
+    let ok = "diff --git a/src/check.rs b/src/check.rs\n+++ b/src/check.rs\n@@ -10,2 +10,3 @@\n \
+              fn a() {}\n+fn check_prompts_an_idle_orch_after_5_min_then_alerts_after_15() {}\n";
+    let (c, wt) = lane("kill-96-ok");
+    let r = git(&wt, "", "2\n", ok);
+    assert_eq!(run(&c, &r, &["kill", LANE, "--yes"]).0, 0);
+    assert!(r.called(&format!("git -C {wt} push origin HEAD:refs/heads/wip/")));
+    let bad = format!(
+        "{ok}diff --git a/.env b/.env\n+++ b/.env\n@@ -3,1 +3,2 @@\n A=1\n-B=2\n+SECRET=\"h7Gk2pQ9xLm4vB8nR3tZ\"\n"
+    );
+    let (c, wt) = lane("kill-96-bad");
+    let r = git(&wt, "", "2\n", &bad);
+    let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
+    assert_eq!(code, 3, "{out}");
+    assert!(
+        out.contains("(.env:4: SECRET=\"•••\")") && !out.contains("h7Gk"),
+        "{out}"
+    );
+    assert!(!r.called(&format!("git -C {wt} push")));
+}

@@ -157,6 +157,33 @@ pub fn group(all: &[Lane], changed: impl Fn(&Lane) -> u64) -> Groups<'_> {
 const HIDE: &str = "•••";
 pub const PREFIXES: [&str; 8] = ["sk-", "ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "xox", "xapp-"];
 
+/// The push guards' check (stricter than [`mask`]): the secret on line `l`, if any — a `PREFIXES`/AWS/Google token,
+/// a JWT, a PEM private key, or a high-entropy non-code value assigned to a `*KEY|TOKEN|SECRET|PASSWORD` name.
+#[allow(clippy::cast_precision_loss)] // char counts of one line
+pub fn secret(l: &str) -> Option<&str> {
+    let has = |s: &str, f: fn(&u8) -> bool| s.as_bytes().iter().any(f);
+    let pre = |w: &str, p: &str| w.starts_with(p) && w.len() >= p.len() + 16 && has(&w[p.len()..], u8::is_ascii_digit);
+    let b64 = |s: &str| !s.is_empty() && !has(s, |b| !b.is_ascii_alphanumeric() && !b"-_".contains(b));
+    let jwt = |w: &str| w.starts_with("eyJ") && w.split('.').count() == 3 && w.split('.').all(b64);
+    let mut words = l.split(|c: char| !c.is_ascii_alphanumeric() && !"-_.".contains(c));
+    let pem = l.contains("-----BEGIN") && l.contains("PRIVATE KEY-----");
+    let tok = words.find(|w| jwt(w) || PREFIXES.iter().chain(&["AKIA", "AIza"]).any(|p| pre(w, p)));
+    let parts: Vec<&str> = l.split('=').collect();
+    tok.or(pem.then_some(l.trim())).or_else(|| {
+        parts.windows(2).find_map(|p| {
+            let up = p[0].split_whitespace().last()?.to_uppercase();
+            let v = p[1].trim().trim_matches(['"', '\'', ';', ',']);
+            let n = v.chars().count() as f64;
+            let bits: f64 = v.chars().map(|c| -(v.matches(c).count() as f64 / n).log2() / n).sum();
+            // Words, `snake_case`/`camelCase` identifiers, code and paths are never secrets.
+            let word = !has(v, u8::is_ascii_digit) || v.contains('_') && v == v.to_ascii_lowercase();
+            let code = v.contains(['(', '{', ' ']) || v.contains("::") || v.starts_with(['/', '~', '.', '$']);
+            let named = ["KEY", "TOKEN", "SECRET", "PASSWORD"].iter().any(|s| up.contains(s));
+            (named && n >= 20.0 && bits >= 3.5 && !word && !code).then_some(v)
+        })
+    })
+}
+
 /// Mask secret-looking runs: `PREFIXES` tokens, JWTs, 32+ char hex/base64, `*KEY=`/`*TOKEN=`/`*SECRET=` values.
 pub fn mask(s: &str) -> String {
     let tok = |c: char| c.is_ascii_alphanumeric() || "-_+/=.".contains(c);
