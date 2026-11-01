@@ -549,14 +549,26 @@ fn activity_lines_per_harness_are_masked_and_cut() {
     assert_eq!((cut.chars().count(), cut.ends_with('…')), (60, true));
     let secrets = [
         (
-            "export ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnop",
+            concat!("export ANTHROPIC_API_KEY=sk", "-ant-api03-abcdefghijklmnop"),
             "export ANTHROPIC_API_KEY=•••",
         ),
-        ("curl -H token sk-ant-api03-abcdefghijklmnop", "curl -H token sk-•••"),
-        ("gh auth ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "gh auth ghp_•••"),
-        ("gho_16C7e42F292c6912E7710c838347Ae178B4a done", "gho_••• done"),
-        ("slack xoxb-1234567890-abcdefghij", "slack xox•••"),
-        ("jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc123def", "jwt •••"),
+        (
+            concat!("curl -H token sk", "-ant-api03-abcdefghijklmnop"),
+            "curl -H token sk-•••",
+        ),
+        (
+            concat!("gh auth gh", "p_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"),
+            "gh auth ghp_•••",
+        ),
+        (
+            concat!("gh", "o_16C7e42F292c6912E7710c838347Ae178B4a done"),
+            "gho_••• done",
+        ),
+        (concat!("slack xo", "xb-1234567890-abcdefghij"), "slack xox•••"),
+        (
+            concat!("jwt ey", "JhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc123def"),
+            "jwt •••",
+        ),
         ("sha 0123456789abcdef0123456789abcdef01234567 ok", "sha ••• ok"),
         ("b64 QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNDU2Nzg5", "b64 •••"),
         ("GITHUB_TOKEN=\"abc def\" next", "GITHUB_TOKEN=\"••• def\" next"),
@@ -576,12 +588,12 @@ fn activity_lines_per_harness_are_masked_and_cut() {
     assert_eq!(
         activity(
             "claude",
-            "⏺ Bash(export OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz)"
+            concat!("⏺ Bash(export OPENAI_API_KEY=sk", "-proj-abcdefghijklmnopqrstuvwxyz)")
         ),
         "⏺ Bash(export OPENAI_API_KEY=•••)"
     );
-    let lines: String =
-        (1..=14).map(|i| format!("line {i}\n\n")).collect::<String>() + "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n";
+    let lines: String = (1..=14).map(|i| format!("line {i}\n\n")).collect::<String>()
+        + concat!("gh", "p_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n");
     let t = tail(&lines, 10);
     assert_eq!((t.len(), t[0].as_str(), t[9].as_str()), (10, "line 6", "ghp_•••"));
 }

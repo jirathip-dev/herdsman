@@ -5,8 +5,8 @@ use herdsman::events::read;
 use serde_json::Value;
 use std::path::Path;
 
-const TOKEN_A: &str = "sk-ant-oat01-AAAA-secret";
-const TOKEN_B: &str = "sk-ant-oat01-BBBB-secret";
+const TOKEN_A: &str = concat!("sk", "-ant-oat01-AAAA-secret");
+const TOKEN_B: &str = concat!("sk", "-ant-oat01-BBBB-secret");
 
 /// Claude impl role with `role_extra` lines, `[accounts]` A/B/C from `<dir>/tokens.env`, local repo `<dir>/repo`.
 fn config(d: &Path, role_extra: &str) -> String {

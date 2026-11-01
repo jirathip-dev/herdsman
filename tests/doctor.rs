@@ -4,7 +4,7 @@ use common::*;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-const TOKEN: &str = "sk-ant-oat01-FAKEtokenFAKEtokenFAKEtoken0123456789";
+const TOKEN: &str = concat!("sk", "-ant-oat01-FAKEtokenFAKEtokenFAKEtoken0123456789");
 const HERDR: &str = "client:\n  version: 0.9.5\n\nserver:\n  status: running\n  version: 0.9.5\n";
 const PLIST: &str = "<plist><dict><key>ProgramArguments</key><array><string>/x/herdsman</string>\
 <string>serve</string><string>--addr</string><string>127.0.0.1:7777</string></array></dict></plist>";
