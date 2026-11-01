@@ -75,16 +75,14 @@ pub fn waiting_on(
         return w("none", "nothing to do (closed): clean me", s.last_ts, None);
     }
     let pushed = pr["headRefOid"].as_str().unwrap_or_default();
-    // #102: a PASSed (or re-pushed fix) PR that conflicts with, or is behind, the integration branch gets an update lane.
+    // #102: a PASSed PR conflicting with / behind integration gets an update lane; its pushed head is reviewed first.
     let how = match (pr["mergeable"].as_str(), pr["mergeStateStatus"].as_str()) {
         (Some("CONFLICTING"), _) => "conflicts with",
         (_, Some("BEHIND")) => "is behind",
         _ => "",
     };
     match s.state.split('(').next().unwrap_or_default() {
-        "ready" | "fix"
-            if !how.is_empty() && (s.state == "ready" || s.last_event != "verdict" && !s.reviewed(pushed)) =>
-        {
+        "ready" if !how.is_empty() => {
             let what = format!(
                 "conflict: PR #{} {how} {}",
                 pr["number"],

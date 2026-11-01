@@ -542,3 +542,50 @@ fn a_behind_pr_after_pass_is_updated_the_same_way() {
     assert_eq!(steps, ["conflict"], "{out}");
     assert_eq!(state(&c), "fix(1)");
 }
+
+#[test]
+fn a_pushed_update_or_fix_head_still_conflicting_gets_a_review_not_another_update() {
+    let c = setup("drive-conflict-stale");
+    lane(&c, 10, "impl", "sendmeter-impl-12", "issue-12");
+    ev(
+        &c,
+        20,
+        "verdict",
+        json!({"verdict": "PASS", "sha": sha("a1"), "body": "PASS"}),
+    );
+    let pr_at = |head: &str| {
+        herdsman::gh::forget_pr(&c, "sendmeter", 12);
+        fake(NO_AGENTS)
+            .reply("gh pr view issue-12", &stale_pr(&sha(head), "CONFLICTING", "DIRTY"))
+            .reply("git -C", "")
+    };
+    assert_eq!(drive(&c, &pr_at("a1")).1, ["conflict"]);
+    assert_eq!(state(&c), "fix(1)");
+    // The update lane pushed b2; GitHub has not recomputed `mergeable` yet.
+    let (_, out) = run(&c, &pr_at("b2"), &["waiting", "sendmeter"]);
+    assert!(out.contains("waiting for orch to spawn review"), "{out}");
+    assert!(
+        out.contains("herdsman spawn sendmeter 12 rev") && !out.contains("--update"),
+        "{out}"
+    );
+    // A FAIL's fix round pushing a conflicting head is reviewed, too.
+    ev(
+        &c,
+        30,
+        "verdict",
+        json!({"verdict": "FAIL", "sha": sha("b2"), "body": "FAIL"}),
+    );
+    ev(
+        &c,
+        31,
+        "spawn",
+        json!({"role": "impl", "agent": "sendmeter-impl-12", "branch": "issue-12"}),
+    );
+    let (_, out) = run(&c, &pr_at("c3"), &["waiting", "sendmeter"]);
+    assert!(
+        out.contains("waiting for orch to spawn review") && !out.contains("--update"),
+        "{out}"
+    );
+    let (code, out) = run(&c, &Fake::default(), &["spawn", "sendmeter", "12", "rev", "--update"]);
+    assert!(code == 3 && out.contains("REFUSED BAD_VALUE"), "{out}");
+}

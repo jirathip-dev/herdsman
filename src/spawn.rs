@@ -399,6 +399,9 @@ pub fn spawn(
     if f.paused && matches!(role, "impl" | "rev") {
         return refused("PAUSED", format!("{fleet} is paused; `herdsman resume {fleet}` first"));
     }
+    if o.update && role != "impl" {
+        return refused("BAD_VALUE", "--update is an impl fix round");
+    }
     let mut p = plan(ctx, cfg, fleet, issue, role)?;
     let mut pj = plan_json(ctx, f, &p);
     if o.dry_run {
@@ -453,7 +456,6 @@ pub fn spawn(
     if let Some(n) = issue {
         lane_admit(f, &events, fleet, n, role)?;
     }
-    // #102: an update is a fix round; past `review_rounds` it goes to a human.
     let rounds = issue
         .and_then(|n| fold(&events).remove(&(fleet.into(), n)))
         .map_or(0, |s| s.rounds);
