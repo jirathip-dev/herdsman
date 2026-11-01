@@ -104,13 +104,11 @@ fn state<'a>(st: &'a States, fleet: &str, n: u64) -> &'a str {
     st.get(&(fleet.to_string(), n)).map_or("queued", |s| s.state.as_str())
 }
 
-/// The fleet's issues marked `--serial`, merged ones included.
+/// The fleet's issues marked `--serial` or by drive (`serial-auto`, #149), merged ones included.
 pub fn serial(events: &[Event], fleet: &str) -> Vec<u64> {
-    replay(events, fleet)
-        .into_iter()
-        .filter(|i| i.serial)
-        .map(|i| i.issue)
-        .collect()
+    let auto = events.iter().filter(|e| e.kind == "serial-auto" && e.fleet == fleet);
+    let q = replay(events, fleet).into_iter().filter(|i| i.serial).map(|i| i.issue);
+    q.chain(auto.filter_map(|e| e.issue)).collect()
 }
 
 /// The fleet's `--serial` issues in flight: a live impl/fix lane, or at review/ready (`SERIAL_BUSY`).

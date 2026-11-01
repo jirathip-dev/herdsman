@@ -107,6 +107,16 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
         let pr = gh::cached_pr(ctx, fleet, s.issue);
         let red = gh::ci(&gh::required(&pr["statusCheckRollup"], &f.required_checks)) == "failed";
         let n = s.issue.to_string();
+        // #149: an unmarked open PR touching a serial path is marked serial here, not refused at merge.
+        if pr["state"] == "OPEN" && !f.serial_paths.is_empty() && !queue::serial(&events, fleet).contains(&s.issue) {
+            let (num, head) = (pr["number"].to_string(), pr["headRefOid"].as_str().unwrap_or_default());
+            let files = gh::diff_names(ctx, r, f, (fleet, s.issue), &num, head).unwrap_or_default();
+            if let Some(p) = files.into_iter().find(|p| f.serial_path(p)) {
+                writeln!(out, "{fleet} #{n} serial-auto: {p}")?;
+                let e = Event::new(ctx.now, fleet, Some(s.issue), "serial-auto", json!({"path": p}));
+                emit(&ctx.state, cfg, e)?;
+            }
+        }
         if w.who == "orch" {
             // `waiting` names the orch's exact next command; drive runs it instead.
             let Some(cmd) = &w.next_cmd else { continue };
