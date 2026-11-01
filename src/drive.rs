@@ -102,8 +102,8 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
     for n in queue::startable(&events, fleet).into_iter().take_while(|_| start) {
         let at = (fleet, n.parse().ok(), "start");
         let code = act(ctx, cfg, r, out, &events, at, &["spawn", fleet, &n, "impl"])?;
-        go &= code != Some("HOST_BUSY");
-        if matches!(code, Some("HOST_BUSY" | "CAP")) {
+        go &= !matches!(code, Some("HOST_BUSY" | "DISK_LOW"));
+        if matches!(code, Some("HOST_BUSY" | "DISK_LOW" | "CAP")) {
             break;
         }
     }

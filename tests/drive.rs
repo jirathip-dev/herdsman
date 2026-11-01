@@ -683,6 +683,26 @@ fn a_serial_busy_item_is_skipped_and_keeps_its_place() {
     idle(&c, &r);
 }
 
+/// #103: DISK_LOW stops the pass like HOST_BUSY: #3 is not tried.
+#[test]
+fn disk_low_stops_the_pass() {
+    let c = fanout("drive-fan-disk", "", &["1", "2", "3"]);
+    let df = |gb: u64| {
+        format!(
+            "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/d 1 1 {} 1% /\n",
+            gb << 20
+        )
+    };
+    let r = fan_fake(NO_AGENTS)
+        .once("df -k /", 0, &df(50))
+        .once("df -k /", 0, &df(5));
+    let (out, steps) = drive(&c, &r);
+    assert_eq!(steps, ["start", "start"], "{out}");
+    assert!(out.contains("sendmeter #2 start: REFUSED DISK_LOW"), "{out}");
+    assert_eq!(r.count("df -k /"), 2, "#3 not tried");
+    assert_eq!(state_of(&c, 3), "queued");
+}
+
 #[test]
 fn host_busy_stops_the_pass_and_cap_stops_starting() {
     let c = fanout("drive-fan-busy", "", &["1", "2", "3"]);

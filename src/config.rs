@@ -109,6 +109,11 @@ pub struct Fleet {
     pub paused: bool,
     /// #92: who runs the loop, `"orch"` (an AI lane, the default) or `"herdsman"` (`herdsman drive`).
     pub driver: Option<String>,
+    /// #103: exported into every lane (`~/` expands); `clone_node_modules` APFS-clones `local`'s on a lockfile match.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub clone_node_modules: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -152,6 +157,8 @@ pub struct Limits {
     pub load_per_cpu: f64,
     /// Pages swapped out per 2 s sample.
     pub swapout_rate: f64,
+    /// `herdsman spawn` refuses `DISK_LOW` under this many GB free on `/`.
+    pub min_free_gb: f64,
     /// Default reasoning effort for roles that set none.
     pub effort: Option<String>,
 }
@@ -163,6 +170,7 @@ impl Default for Limits {
             stall_minutes: 30,
             load_per_cpu: 2.5,
             swapout_rate: 2000.0,
+            min_free_gb: 10.0,
             effort: None,
         }
     }
