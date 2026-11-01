@@ -89,7 +89,7 @@ pub fn cap_until(cfg: &Config, r: &dyn Runner, screen: &str, now: u64) -> u64 {
     let secs = words.iter().find_map(|w| clock(w)).or(date.map(|_| 0));
     let off = local_offset(r, now);
     let today = now.saturating_add_signed(off) / 86400;
-    let at = |secs| {
+    let at = |secs: u64| {
         (today..today + 400)
             .filter(|&d| date.is_none_or(|md| md == civil_month_day(d)))
             .map(|d| (d * 86400 + secs).saturating_add_signed(-off))
