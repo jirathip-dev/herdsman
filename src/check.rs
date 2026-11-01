@@ -481,6 +481,21 @@ pub fn stop(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
     Ok(writeln!(out, "sent Esc to {agent}")?)
 }
 
+/// `herdsman close`: close a non-lane herdr agent's pane (by name or pane id); files stay. Logs `closed-other`.
+pub fn close(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent: &str) -> Result<()> {
+    let (events, agents) = (read(&ctx.state)?, herdr::agents(r)?);
+    let a = agents.iter().find(|a| a["name"] == agent || a["pane_id"] == agent);
+    let name = a.and_then(|a| a["name"].as_str()).unwrap_or(agent);
+    if last_spawn(&events, agent).or(last_spawn(&events, name)).is_some() {
+        return crate::gate::refused("IS_LANE", format!("`{name}` is a lane: use stop, kill or clean"));
+    }
+    let pane = a.and_then(|a| a["pane_id"].as_str()).context("no such herdr agent")?;
+    herdr::close(r, pane)?;
+    let ev = Event::new(ctx.now, "", None, "closed-other", json!({"agent": name}));
+    emit(&ctx.state, cfg, ev)?;
+    Ok(writeln!(out, "closed {name}'s pane; its worktree and files stay")?)
+}
+
 /// `herdsman kill`: the dry-run line (what is lost); with `yes`, unpushed or dirty work goes to
 /// `wip/<agent>-<stamp>` first (refused `SECRET_IN_WIP` when the diff masks), then the pane closes.
 /// The worktree is kept; an orch's checkout is the owner's and never snapshotted.

@@ -194,6 +194,8 @@ enum Cmd {
     },
     /// Send Esc to an agent's pane (it pauses); logs `stop`
     Stop { agent: String },
+    /// Close the pane of a herdr agent that is not a herdsman lane (IS_LANE for lanes); files and worktrees stay
+    Close { agent: String },
     /// Close an agent's pane, pushing unpushed or dirty work to `wip/<agent>-<stamp>` first; the worktree stays. Dry run unless --yes
     Kill {
         agent: String,
@@ -632,6 +634,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     check::clean(ctx, &cfg, r, out, fleet.as_deref(), (None, lane.as_deref()), yes)?;
                 }
                 Cmd::Stop { agent } => check::stop(ctx, &cfg, r, out, &agent)?,
+                Cmd::Close { agent } => check::close(ctx, &cfg, r, out, &agent)?,
                 Cmd::Kill { agent, yes } => check::kill(ctx, &cfg, r, out, &agent, yes)?,
                 Cmd::Verdict {
                     fleet,

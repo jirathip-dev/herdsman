@@ -112,7 +112,7 @@ function alerts() {
   if (nopair) { b.disabled = true; note(b, 'pair this phone first', false); }
 }
 // Also shows the sheet's Pair button (open() hides it again).
-function unpaired() { nopair = true; alerts(); $('.pairf').hidden = false; }
+function unpaired() { nopair = true; alerts(); $('.pairf').hidden = false; $$('[data-op=close]').forEach(b => b.hidden = true); }
 alerts();
 document.addEventListener('click', async e => {
   const b = e.target.closest('#push');
@@ -194,7 +194,7 @@ document.addEventListener('submit', async e => {
   } catch (err) { toast('error: ' + err.message); }
 });
 B.insertAdjacentHTML('beforeend', `<div id=sheet hidden><div class=bd></div><div class=sh role=dialog aria-modal=true>
-<div class=hd><p><b></b></p></div><div class=top></div><div class=acts><button type=button data-op=stop>Stop</button><button type=button data-op=kill>Kill</button><button type=button data-op=clean>Clean</button></div>
+<div class=hd><p><b></b></p></div><div class=top></div><div class=acts><button type=button data-op=stop>Stop</button><button type=button data-op=kill>Kill</button><button type=button data-op=clean>Clean</button><button type=button data-op=close>Close pane</button></div>
 <div class=cf hidden><p></p><button type=button class=yes>Kill</button><button type=button class=no>Cancel</button></div>
 <div class=chat><button type=button class=more hidden>Load more</button><div class=old></div><div class=now></div></div>
 <p class=pairf hidden><button type=button class=pairb>Pair this phone</button></p>
@@ -203,7 +203,7 @@ B.insertAdjacentHTML('beforeend', `<div id=sheet hidden><div class=bd></div><div
 <p class=st></p></div></div>`);
 if (DEMO) sync();
 const S = $('#sheet'), sh = $('.sh'), chat = $('.chat'), st = $('.st'), now = $('.now'), old = $('.old'), more = $('.more');
-let agent = null, timer = 0, cur = 0, y = 0, nopane = false;
+let agent = null, timer = 0, cur = 0, y = 0, nopane = false, opane = null;
 // The Lanes row of `agent` (its sheet card), from the needs-you cards and the herd.
 const laneOf = agent => [...$$('.lane')].find(l => l.dataset.agent === agent);
 const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text || '' });
@@ -259,6 +259,7 @@ async function poll() {
     if (!r.ok) return now.replaceChildren(el('p', 'm', (await r.text()).trim()));
     const j = await r.json(), end = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 8;
     const open = new Set([...now.querySelectorAll('details[open] summary')].map(s => s.textContent));
+    opane = j.pane;
     now.replaceChildren(...render(j.turns));
     now.querySelectorAll('summary').forEach(s => { if (open.has(s.textContent)) s.parentNode.open = true; });
     if (!old.childElementCount) { cur = j.before; more.hidden = !j.more; }
@@ -278,13 +279,15 @@ more.onclick = async () => {
 // `ok` null: a neutral note, e.g. why a control is disabled (#83).
 function say(msg, ok) { st.textContent = msg; st.className = 'st ' + (ok == null ? 'm' : ok ? 'g' : 'r'); }
 // Stop/Kill/Clean call `/act`; kill and clean dry-run first (kill shows what is lost, clean why it is unsafe).
-const act = (op, confirm) => post('act', { agent, op, confirm: confirm ? '1' : '' });
+// #95: an Others agent (not a lane) gets only Close pane, confirmed here before `/act` closes it.
+const act = (op, confirm) => post('act', { agent: op === 'close' && opane || agent, op, confirm: confirm ? '1' : '' });
 async function run(op) {
-  const r = await act(op, op === 'stop'), msg = (await r.text()).trim();
-  if (r.status === 401) unpaired();
-  if (op === 'stop' || !r.ok) return say(msg, r.ok);
+  const r = op === 'close' ? null : await act(op, op === 'stop');
+  const msg = r ? (await r.text()).trim() : `close ${agent}'s pane? its worktree and files stay`;
+  if (r && r.status === 401) unpaired();
+  if (op === 'stop' || (r && !r.ok)) return say(msg, r.ok);
   $('.cf p').textContent = msg.split('; ').find(l => !l.startsWith('dry run')) || msg;
-  $('.cf .yes span').textContent = op === 'kill' ? 'Kill' : 'Clean';
+  $('.cf .yes span').textContent = { kill: 'Kill', clean: 'Clean', close: 'Close' }[op];
   $('.cf').dataset.op = op;
   $('.cf').hidden = false;
 }
@@ -304,6 +307,7 @@ async function cleanable() {
 }
 function open(e) {
   agent = e.dataset.agent;
+  opane = null;
   const top = $('.top');
   top.innerHTML = e.querySelector('.card').innerHTML;
   top.scrollTop = 0;
@@ -311,13 +315,16 @@ function open(e) {
   const rev = e.dataset.role === 'rev';
   $('.reply').hidden = !!B.dataset.ro || rev;
   $('.acts').hidden = !!B.dataset.ro;
-  // #83: a lane with no pane has nothing to stop or kill.
+  // #83: a lane with no pane has nothing to stop or kill; #95: an Others agent is no lane, only its pane closes.
   nopane = 'gone' in e.dataset;
-  $$('[data-op=stop], [data-op=kill]').forEach(b => b.hidden = nopane);
+  const other = e.dataset.role === 'other';
+  $$('[data-op=stop], [data-op=kill]').forEach(b => b.hidden = nopane || other);
+  $('[data-op=clean]').hidden = other;
+  $('[data-op=close]').hidden = !other || nopair;
   $$('.pairf, .cf, .cmds').forEach(x => x.hidden = true);
   now.replaceChildren();
   old.replaceChildren();
-  say(rev ? 'reviewer lane: read-only' : '', true);
+  say(rev ? 'reviewer lane: read-only' : other ? 'not a herdsman lane: herdsman can only close its pane' : '', other ? null : true);
   // Lock the page under the sheet (iOS scrolls the body otherwise); reopened mid-close, it is still locked.
   if (shut) { clearTimeout(shut); shut = 0; S.classList.remove('out'); } else {
     y = scrollY;
@@ -332,7 +339,7 @@ function open(e) {
   fit();
   snap(kb() ? 'full' : 'mid');
   poll();
-  if (!B.dataset.ro && !DEMO) cleanable();
+  if (!other && !B.dataset.ro && !DEMO) cleanable();
   timer = setInterval(poll, 5000);
 }
 // Slides off-screen, then hides; the scroll lock and the page position come back after the slide.
