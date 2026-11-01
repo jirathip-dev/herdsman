@@ -1,6 +1,7 @@
 //! #18: web push: RFC 8291 aes128gcm (its Appendix A vector, and a decrypt round trip), the ES256
 //! VAPID JWT, subscribe/unsubscribe on the page (Host/Origin + paired cookie), and delivery by a
-//! fake `curl`: 201 sent, 410 pruned, 500 `notify-failed`.
+//! fake `curl`: 201 sent, 410 pruned, 500 `notify-failed`. #87: a subscribe with no webpush notifier says
+//! alerts are off, with one it pushes once to that device; the Host row; `check` warns once.
 mod common;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::Aes128Gcm;
@@ -95,13 +96,15 @@ fn subscribe_needs_a_paired_device_and_unsubscribe_removes_it() {
     assert!(post(&s, "/push/subscribe", &form, "Origin: https://evil.example\r\n").starts_with("HTTP/1.1 403"), "foreign Origin");
     let cookie = pair(&s, &c, "Mozilla (iPhone)", c.now) + "User-Agent: Mozilla (iPhone)\r\n";
     assert!(post(&s, "/push/subscribe", "endpoint=http://x&p256dh=AA&auth=AA", &cookie).starts_with("HTTP/1.1 400"));
-    assert!(post(&s, "/push/subscribe", &form, &cookie).starts_with("HTTP/1.1 200"));
+    let res = post(&s, "/push/subscribe", &form, &cookie);
+    assert!(res.starts_with("HTTP/1.1 200") && res.ends_with(&format!("\r\n\r\n{}\n", webpush::OFF)), "no notifier: off, {res}");
     let subs = webpush::load(&c.state);
     assert_eq!((subs.len(), subs[0].label.as_str()), (1, "iPhone"));
     let file = dir.join("state/webpush/subs.json");
     assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
     let page = String::from_utf8_lossy(&s.respond(&format!("GET / HTTP/1.1\r\nHost: {ADDR}\r\n\r\n"), 1_000_000)).into_owned();
     assert!(page.contains("Enable alerts") && page.contains(&subs[0].id()), "Host tab lists the device");
+    assert!(page.contains("<p class=kv>off: no webpush notifier</p>"), "Host row: off");
     assert!(!page.contains("secret-endpoint") && !page.contains(AUTH), "endpoint and keys stay off the page");
     let body = format!("id={}", subs[0].id());
     assert!(post(&s, "/push/unsubscribe", &body, "").starts_with("HTTP/1.1 401"), "unpaired cannot remove");
@@ -109,26 +112,30 @@ fn subscribe_needs_a_paired_device_and_unsubscribe_removes_it() {
     assert!(webpush::load(&c.state).is_empty());
 }
 
-/// A fake `curl` on PATH: saves its stdin, answers the status in `<dir>/code`.
-fn fake_curl(dir: &Path) {
+/// A fake `curl` on PATH: saves its stdin, logs its args to `<dir>/calls`, answers the status in `<dir>/code`.
+/// Held for the test: PATH is process-wide.
+fn fake_curl(dir: &Path) -> std::sync::MutexGuard<'static, ()> {
+    static PATH: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let held = PATH.lock().unwrap_or_else(|e| e.into_inner());
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    let script = format!("#!/bin/sh\ncat > '{0}/body'\necho \"$@\" > '{0}/args'\ncat '{0}/code'\n", dir.display());
+    let script = format!("#!/bin/sh\ncat > '{0}/body'\necho \"$@\" > '{0}/args'\necho \"$@\" >> '{0}/calls'\ncat '{0}/code'\n", dir.display());
     std::fs::write(bin.join("curl"), script).unwrap();
     std::fs::set_permissions(bin.join("curl"), std::fs::Permissions::from_mode(0o755)).unwrap();
     std::env::set_var("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()));
+    held
 }
 
 #[test]
 fn delivery_201_sent_410_pruned_500_notify_failed() {
     let dir = tmpdir("wp-curl");
-    fake_curl(&dir);
+    let _path = fake_curl(&dir);
     let c = ctx(&dir, CONFIG);
     let cfg = Config::parse("[[notify]]\ntype = \"webpush\"\nsub = \"mailto:owner@example.com\"\n").unwrap();
     let ua = SecretKey::from_slice(&d(UA_PRIVATE)).unwrap();
     let f: std::collections::BTreeMap<String, String> =
         sub_form(&ua, "https://push.example/ep").split('&').map(|kv| kv.split_once('=').unwrap()).map(|(k, v)| (k.into(), v.into())).collect();
-    webpush::subscribe(&c.state, &f, "Mac", 1).unwrap();
+    assert_eq!(webpush::subscribe(&c.state, &f, "Mac", 1, None).unwrap(), webpush::OFF);
     let merged = || Event::new(1, "sendmeter", Some(7), "merged", serde_json::json!({"into": "staging", "merge_sha": "abc", "pr": 9}));
     let failed = || read(&c.state).unwrap().iter().filter(|e| e.kind == "notify-failed").count();
 
@@ -160,4 +167,68 @@ fn delivery_201_sent_410_pruned_500_notify_failed() {
 #[test]
 fn webpush_notifier_needs_sub() {
     assert!(Config::parse("[[notify]]\ntype = \"webpush\"\n").is_err());
+}
+
+const PUSH: &str = "[[notify]]\ntype = \"webpush\"\nsub = \"mailto:owner@example.com\"\n";
+
+/// The Host tab's Alerts row at `now`.
+fn host(s: &Server, now: u64) -> String {
+    let page = String::from_utf8_lossy(&s.respond(&format!("GET / HTTP/1.1\r\nHost: {ADDR}\r\n\r\n"), now)).into_owned();
+    let row = page.split("<h2>Alerts</h2><p class=kv>").nth(1).expect("Alerts row");
+    row[..row.find("</p>").unwrap()].to_string()
+}
+
+#[test]
+fn subscribe_with_a_notifier_pushes_once_to_that_device_and_the_host_row_follows() {
+    let dir = tmpdir("wp-hello");
+    let _path = fake_curl(&dir);
+    std::fs::write(dir.join("code"), "201").unwrap();
+    let c = ctx(&dir, &format!("{CONFIG}\n{PUSH}"));
+    let r = Fake::default().reply("herdr", NO_AGENTS);
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    let ua = SecretKey::from_slice(&d(UA_PRIVATE)).unwrap();
+    let cookie = pair(&s, &c, "Mozilla (iPhone)", c.now) + "User-Agent: Mozilla (iPhone)\r\n";
+    assert_eq!(host(&s, 1_000_000), "on · 0 devices · never sent");
+    let res = post(&s, "/push/subscribe", &sub_form(&ua, "https://push.example/one"), &cookie);
+    assert!(res.ends_with("\r\n\r\nalerts on\n"), "{res}");
+    let res = post(&s, "/push/subscribe", &sub_form(&ua, "https://push.example/two"), &cookie);
+    assert!(res.ends_with("\r\n\r\nalerts on\n"), "{res}");
+    let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
+    let eps: Vec<_> = calls.lines().map(|l| l.rsplit(' ').next().unwrap()).collect();
+    assert_eq!(eps, ["https://push.example/one", "https://push.example/two"], "one push each, to the new device only");
+    let json: serde_json::Value = serde_json::from_slice(&decrypt(&std::fs::read(dir.join("body")).unwrap(), &ua, &d(AUTH)).unwrap()).unwrap();
+    assert!(json["body"].as_str().unwrap().ends_with("alerts are on"), "{json}");
+    let sent: Vec<_> = read(&c.state).unwrap().into_iter().filter(|e| e.kind == "push-sent").collect();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(serde_json::Value::from(sent[1].data.clone()), serde_json::json!({"devices": 1}), "the device count only: no endpoint, no key");
+    let at = sent[1].ts;
+    assert_eq!(host(&s, at + 180), "on · 2 devices · last sent 3m ago");
+    std::fs::write(dir.join("code"), "500").unwrap();
+    let cfg = Config::load(&c.config).unwrap();
+    emit(&c.state, &cfg, Event::new(at + 1, "sendmeter", Some(7), "blocked", serde_json::json!({"code": "X", "reason": "y"}))).unwrap();
+    assert_eq!(host(&s, at + 180), "on · last failure: webpush: iPhone: HTTP 500; iPhone: HTTP 500");
+    std::fs::write(dir.join("code"), "201").unwrap();
+    emit(&c.state, &cfg, Event::new(at + 2, "sendmeter", Some(7), "blocked", serde_json::json!({"code": "X", "reason": "y"}))).unwrap();
+    assert!(host(&s, at + 180).starts_with("on · 2 devices · last sent"), "a newer delivery clears the failure");
+}
+
+#[test]
+fn check_warns_once_when_devices_are_subscribed_but_no_notifier_is() {
+    let dir = tmpdir("wp-check");
+    let c = ctx(&dir, CONFIG);
+    let r = Fake::default().reply("herdr", NO_AGENTS);
+    let ua = SecretKey::from_slice(&d(UA_PRIVATE)).unwrap();
+    let f = |ep: &str| sub_form(&ua, ep).split('&').map(|kv| kv.split_once('=').unwrap()).map(|(k, v)| (k.into(), v.into())).collect();
+    let check = || run(&c, &r, &["check"]);
+    assert_eq!(check(), (0, String::new()), "no device: no warning");
+    webpush::subscribe(&c.state, &f("https://push.example/ep"), "iPhone", 1, None).unwrap();
+    let (code, out) = check();
+    assert_eq!(code, 0);
+    assert!(out.contains("alerts-off: 1 device(s) subscribed, but no type = \"webpush\" notifier: alerts are off"), "{out}");
+    assert_eq!(check(), (0, String::new()), "once, not every tick");
+    let warned = read(&c.state).unwrap().iter().filter(|e| e.kind == "alerts-off").count();
+    assert_eq!(warned, 1);
+    std::fs::write(&c.config, format!("{CONFIG}\n{PUSH}")).unwrap();
+    webpush::subscribe(&c.state, &f("https://push.example/two"), "iPad", 2, None).unwrap();
+    assert_eq!(check(), (0, String::new()), "a notifier: no warning");
 }

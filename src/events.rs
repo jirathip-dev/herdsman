@@ -87,7 +87,11 @@ pub fn emit(state: &Path, cfg: &Config, ev: Event) -> Result<()> {
     append(state, &ev)?;
     for n in cfg.notifiers(&ev.fleet).into_iter().filter(|n| n.wants(&ev.kind)) {
         let payload = if n.format.as_deref() == Some("json") { serde_json::to_string(&ev)? } else { plain(&ev) + "\n" };
-        let res = if n.webpush() { crate::webpush::send(state, n.sub.as_deref().unwrap_or_default(), &ev).map(drop) } else { run_notifier(&n.cmd, &payload) };
+        let res = if n.webpush() {
+            crate::webpush::send(state, n.sub.as_deref().unwrap_or_default(), &ev, None).map(drop)
+        } else {
+            run_notifier(&n.cmd, &payload)
+        };
         if let Err(e) = res {
             let cmd = if n.webpush() { "webpush" } else { &n.cmd };
             eprintln!("herdsman: notifier `{cmd}` failed: {e:#}");
@@ -176,7 +180,10 @@ pub fn last_spawn<'a>(events: &'a [Event], agent: &str) -> Option<&'a Event> {
 }
 
 /// Events `herdsman check` and notifiers write about an issue; they are not activity.
-pub const PASSIVE: [&str; 9] = ["stall", "lane-dead", "ready-unmerged", "notify-failed", "account-capped", "orch-holding", "ask-waiting", "orch-nudged", "orch-stuck"];
+pub const PASSIVE: [&str; 10] = [
+    "stall", "lane-dead", "ready-unmerged", "notify-failed", "push-sent",
+    "account-capped", "orch-holding", "ask-waiting", "orch-nudged", "orch-stuck",
+];
 
 /// Why ask `a` closed: answered, its issue merged, or its lane killed, cleaned or respawned; `None` while open.
 pub fn closed(events: &[Event], a: &Event) -> Option<&'static str> {

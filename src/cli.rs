@@ -418,10 +418,11 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
         Cmd::Serve { addr, read_only, .. } => serve::serve(ctx, r, &addr, read_only)?,
         Cmd::Push { cmd: PushCmd::Test } => {
             let cfg = Config::load(&ctx.config)?;
-            let n = cfg.notify.iter().chain(cfg.fleet.values().flat_map(|f| &f.notify)).find(|n| n.webpush());
-            let Some(sub) = n.and_then(|n| n.sub.as_deref()) else { bail!("no `type = \"webpush\"` notifier in fleet.toml (docs/serve.md)") };
+            let Some(sub) = cfg.webpush_sub() else {
+                bail!("no `type = \"webpush\"` notifier in fleet.toml (docs/serve.md)")
+            };
             let ev = crate::events::Event::new(ctx.now, "herdsman", None, "push-test", json!({"reason": "test alert"}));
-            writeln!(out, "{}", crate::webpush::send(&ctx.state, sub, &ev)?)?;
+            writeln!(out, "{}", crate::webpush::send(&ctx.state, sub, &ev, None)?)?;
         }
         Cmd::Queue { fleet, cmd: QueueCmd::Ls { json } } => {
             let rows = queue::ls_json(&read(&ctx.state)?, &fleet);

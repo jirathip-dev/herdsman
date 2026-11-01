@@ -100,8 +100,12 @@ pub fn jwt(k: &SecretKey, endpoint: &str, sub: &str, now: u64) -> String {
     format!("{msg}.{}", B64.encode(sig.to_bytes()))
 }
 
-/// `POST /push/subscribe` (endpoint, p256dh, auth): add or replace this endpoint's subscription.
-pub fn subscribe(log: &Path, f: &BTreeMap<String, String>, label: &str, now: u64) -> Result<()> {
+/// What a subscribe says with no webpush notifier: the device is kept, nothing is sent (#87).
+pub const OFF: &str = "alerts are saved but off: add `[[notify]] type = \"webpush\"` to fleet.toml (docs/serve.md)";
+
+/// `POST /push/subscribe` (endpoint, p256dh, auth): add or replace this endpoint's subscription, then (#87) push
+/// "alerts are on" to it alone; with no webpush notifier (`sub`), say the alerts are saved but off.
+pub fn subscribe(log: &Path, f: &BTreeMap<String, String>, label: &str, now: u64, sub: Option<&str>) -> Result<String> {
     let g = |k: &str| f.get(k).cloned().unwrap_or_default();
     let s = Sub { endpoint: g("endpoint"), p256dh: g("p256dh"), auth: g("auth"), label: label.into(), created: now };
     if !s.endpoint.starts_with("https://") || s.endpoint.chars().any(char::is_whitespace) {
@@ -113,7 +117,11 @@ pub fn subscribe(log: &Path, f: &BTreeMap<String, String>, label: &str, now: u64
     let mut all = load(log);
     all.retain(|x| x.endpoint != s.endpoint);
     all.push(s);
-    store(log, &all)
+    store(log, &all)?;
+    let Some(sub) = sub else { return Ok(OFF.into()) };
+    let ev = Event::new(now, "herdsman", None, "push-test", serde_json::json!({"reason": "alerts are on"}));
+    let sent = send(log, sub, &ev, Some(&g("endpoint")));
+    Ok(sent.map_or_else(|e| format!("alerts on; the test push failed: {e:#}"), |_| "alerts on".into()))
 }
 
 /// Drop the subscriptions with these ids.
@@ -139,9 +147,10 @@ fn post(s: &Sub, k: &SecretKey, sub: &str, body: &[u8]) -> Result<u16> {
     Ok(String::from_utf8_lossy(&c.wait_with_output()?.stdout).trim().parse().unwrap_or(0))
 }
 
-/// Push `ev` once to every subscription (no retry): a 404/410 prunes it, any other failure is the error.
-pub fn send(log: &Path, sub: &str, ev: &Event) -> Result<String> {
-    let all = load(log);
+/// Push `ev` once to every subscription, or only to endpoint `only` (no retry): a 404/410 prunes it, any
+/// other failure is the error. A delivery logs one passive `push-sent` with the device count (#87).
+pub fn send(log: &Path, sub: &str, ev: &Event, only: Option<&str>) -> Result<String> {
+    let all: Vec<Sub> = load(log).into_iter().filter(|s| only.is_none_or(|e| s.endpoint == e)).collect();
     if all.is_empty() {
         return Ok("no device has alerts on".into());
     }
@@ -164,6 +173,10 @@ pub fn send(log: &Path, sub: &str, ev: &Event) -> Result<String> {
     }
     if !gone.is_empty() {
         remove(log, &gone)?;
+    }
+    if sent > 0 {
+        let d = serde_json::json!({"devices": sent});
+        crate::events::append(log, &Event::new(ev.ts, &ev.fleet, None, "push-sent", d))?;
     }
     if !errs.is_empty() {
         bail!("webpush: {}", errs.join("; "));

@@ -80,6 +80,12 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
         let why = format!("{} unanswered for {}: {}", a.str("id").unwrap_or("?"), age(ctx.now.saturating_sub(a.ts)), a.str("question").unwrap_or("?"));
         fire(ctx, cfg, out, &events, (&a.fleet, a.issue), "ask-waiting", json!({"key": a.str("id"), "reason": why}))?;
     }
+    // #87: devices subscribed but no webpush notifier: the page's alerts never send; once per device count.
+    let subs = crate::webpush::load(&ctx.state).len();
+    if subs > 0 && cfg.webpush_sub().is_none() {
+        let why = format!("{subs} device(s) subscribed, but no type = \"webpush\" notifier: alerts are off");
+        fire(ctx, cfg, out, &events, ("herdsman", None), "alerts-off", json!({"key": subs, "reason": why}))?;
+    }
     // #46: an item waiting > 5 min on an idle orch prompts it once per (issue, head, state); 10 min on, `orch-stuck`.
     let waits = crate::waiting::scan(ctx, cfg, r, &events, agents.as_deref().unwrap_or_default(), true);
     for (s, w) in waits.iter().filter(|(s, w)| w.who == "orch" && s.lane.as_ref() == Some(&w.lane) && ctx.now.saturating_sub(w.since) > 300 && agents.is_some()) {
