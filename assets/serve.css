@@ -66,6 +66,7 @@ nav a.on{color:var(--fg);box-shadow:inset 0 2px var(--g)}
 @keyframes p{50%{transform:scale(1.9)}}
 #rf,#herd-on{width:40px}#herd-on{margin-left:var(--s2)}#herd-on svg{width:19px;height:14px}
 #rf i,#ptr{font-style:normal}#rf.spin i,#ptr.spin{display:inline-block;animation:s 1s linear infinite}
+button[aria-busy=true]::after{content:" ↻";display:inline-block;animation:s 1s linear infinite}
 @keyframes s{to{transform:rotate(1turn)}}
 #ptr{position:fixed;top:calc(var(--hit) + var(--s3));left:calc(50% - var(--s2));z-index:1}
 main{transition:transform .2s}
@@ -76,7 +77,7 @@ main{transition:transform .2s}
 .ask .reason{margin:var(--s1) 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .ask .command{white-space:pre-wrap;font-size:var(--fs-meta);margin:var(--s1) 0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}.ask .command.open{display:block}
 .ask .title,.ask .cd{margin:0;font-size:var(--fs-meta)}.ask .cd{color:var(--r)}.ask :is(.title,.reason,.command):empty{display:none}
-@media (prefers-reduced-motion:reduce){#dot.p,#rf.spin i,#ptr.spin,.fl{animation:none}}
+@media (prefers-reduced-motion:reduce){#dot.p,#rf.spin i,#ptr.spin,.fl,button[aria-busy=true]::after{animation:none}}
 .av{display:flex;align-items:center;justify-content:center;width:48px;height:40px;overflow:hidden}
 .av>*{display:none}
 /* Horse mode shows the glyph until herd.js's symbols land (`.hz`): no fetch or JS, no blank avatar. */

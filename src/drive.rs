@@ -5,6 +5,7 @@ use crate::runner::{ok, Runner};
 use crate::{gh, host, queue, waiting, Ctx};
 use anyhow::Result;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
 
@@ -23,6 +24,32 @@ pub fn last_pass(ctx: &Ctx, fleet: &str) -> Option<u64> {
 fn state_dir(ctx: &Ctx) -> &Path {
     ctx.state.parent().unwrap_or(&ctx.state)
 }
+
+/// #140: a pass's lines as one toast, per action (`merged #1, #2 · started #3`), then `2 skipped (<codes>)`.
+pub fn summary(fleet: &str, out: &str) -> String {
+    if out.starts_with("drive: ") {
+        return out.trim().into(); // another pass holds the lock
+    }
+    let (mut by, mut skip) = (BTreeMap::<&str, Vec<&str>>::new(), vec![]);
+    for (head, res) in out.lines().filter_map(|l| l.split_once(": ")) {
+        let (step, mut w) = (head.rsplit(' ').next().unwrap_or(head), res.split([' ', ':']));
+        let past = PAST.iter().find(|d| d.starts_with(step)).unwrap_or(&step);
+        let issue = head.split(' ').find(|n| n.starts_with('#'));
+        match w.next().filter(|c| ["REFUSED", "exit", "error"].contains(c)) {
+            Some(c) => skip.extend(if c == "REFUSED" { w.next() } else { Some(c) }),
+            None => by.entry(past).or_default().extend(issue),
+        }
+    }
+    let n = skip.len();
+    skip.sort_unstable();
+    skip.dedup();
+    let mut parts: Vec<String> = by.iter().map(|(v, ns)| format!("{v} {}", ns.join(", "))).collect();
+    parts.extend((n > 0).then(|| format!("{n} skipped ({})", skip.join(", "))));
+    parts.extend(parts.is_empty().then(|| "nothing due".into()));
+    // An action without an issue (clean) leaves a double space.
+    format!("{fleet}: {}", parts.join(" · ").replace("  ", " ").trim_end())
+}
+const PAST: [&str; 3] = ["started", "merged", "reviewed"];
 
 /// One pass over every `driver = "herdsman"` fleet (or `only`), under `<state dir>/drive.lock`.
 pub fn drive(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, only: Option<&str>) -> Result<()> {
