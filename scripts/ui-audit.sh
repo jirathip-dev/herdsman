@@ -27,7 +27,7 @@ run() { # url, extra args
   return "$rc"
 }
 fail=0
-for v in queue queue-open lanes sheet sheet-parked sheet-drag host events herd1 herd2 herd-night herd-night-storm herd-scroll queue-scroll toast; do
+for v in queue queue-open queue-drive lanes sheet sheet-parked sheet-drag host events herd1 herd2 herd-night herd-night-storm herd-scroll queue-scroll toast; do
   url="http://127.0.0.1:$port/index.html?audit=$v"
   run "$url" --screenshot="$shots/$v.png" >/dev/null || fail=1
   run "$url&check=1" --dump-dom > "$shots/$v.html" || fail=1

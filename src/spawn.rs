@@ -359,13 +359,23 @@ pub fn spawn(
     }
 
     let local = f.local_path().to_string_lossy().into_owned();
+    let mut sha = None;
     let (created, brief_text) = match issue {
         None => (herdr::json(r, &create_argv(&local, &p))?, orch_brief(f, fleet, &p)),
         Some(n) => {
             let iss = crate::gh::spec(ctx, r, f, fleet, n, true)?;
             ok(r, "git", &["-C", &local, "fetch", "origin", p.base.trim_start_matches("origin/")])?;
             let open = herdr::worktree_open_argv(&local, &wt);
-            let created = herdr::json(r, &if p.worktree.exists() { open } else { create_argv(&local, &p) })?;
+            let reopen = p.worktree.exists();
+            let created = herdr::json(r, &if reopen { open } else { create_argv(&local, &p) })?;
+            if role == "rev" {
+                // #92: a re-review of the same round moves its worktree to the fetched head; the spawn logs that head.
+                if reopen {
+                    ok(r, "git", &["-C", &wt, "reset", "--hard", &p.base])?;
+                    let _ = std::fs::remove_file(p.worktree.join("verdict.md"));
+                }
+                sha = ok(r, "git", &["-C", &wt, "rev-parse", "HEAD"]).ok().map(|h| h.trim().to_string());
+            }
             let (title, body) = (iss["title"].as_str().unwrap_or(""), iss["body"].as_str().unwrap_or(""));
             p.title = lane_title(&p.head, title);
             // A fix round's brief carries the findings of the latest verdict if it was FAIL.
@@ -399,6 +409,9 @@ pub fn spawn(
     let confirmed = h.kick(r, &p, &pane)?;
     let mut d = lane_data(&p, &pane, ws);
     d["confirmed"] = json!(confirmed);
+    if let Some(h) = sha.filter(|h| !h.is_empty()) {
+        d["sha"] = json!(h);
+    }
     event("spawn", d)?;
     pj["pane"] = json!(pane);
     pj["confirmed"] = json!(confirmed);

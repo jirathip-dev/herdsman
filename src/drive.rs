@@ -33,12 +33,12 @@ pub fn drive(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, only:
         return Ok(writeln!(out, "drive: another pass holds {}; nothing done", lock.display())?);
     }
     let mine = |(n, f): &(&String, &crate::config::Fleet)| f.driven() && only.is_none_or(|o| o == n.as_str());
-    let res = cfg.fleet.iter().filter(mine).try_for_each(|(name, f)| {
-        if !f.paused {
-            pass(ctx, cfg, r, out, name)?;
-        }
-        Ok(std::fs::write(state_dir(ctx).join(format!("drive-{name}.last")), ctx.now.to_string())?)
-    });
+    // A paused fleet gets no pass (and no `last pass`); one fleet's error doesn't skip the others.
+    let mut res = Ok(());
+    for (name, _) in cfg.fleet.iter().filter(mine).filter(|(_, f)| !f.paused) {
+        res = res.and(pass(ctx, cfg, r, out, name));
+        let _ = std::fs::write(state_dir(ctx).join(format!("drive-{name}.last")), ctx.now.to_string());
+    }
     let _ = std::fs::remove_file(&lock);
     res
 }
@@ -96,7 +96,8 @@ fn ci_findings(r: &dyn Runner, f: &crate::config::Fleet, pr: &serde_json::Value,
     let log = log.flatten().unwrap_or_default();
     let tail: Vec<&str> = log.lines().rev().take(40).collect::<Vec<_>>().into_iter().rev().collect();
     let what = gh::not_green(&checks).unwrap_or_else(|| "a check failed".into());
-    format!("FAIL\n\nCI is red at {head}: {what}.\n\n```\n{}\n```\n", tail.join("\n"))
+    // The tail lands in events and the fix brief: mask secret-looking runs first.
+    format!("FAIL\n\nCI is red at {head}: {what}.\n\n```\n{}\n```\n", crate::lanes::mask(&tail.join("\n")))
 }
 
 /// (fleet, issue, step) of one action.
@@ -121,13 +122,14 @@ fn act(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, ev: &[Event
     if step == "clean" && code.is_none() && !text.contains("removed ") {
         return Ok(());
     }
-    let who = issue.map_or(fleet.to_string(), |n| format!("{fleet} #{n}"));
-    writeln!(out, "{who} {step}: {result}")?;
     let recent = |e: &Event| e.kind == "driven" && e.fleet == fleet && e.issue == issue && ctx.now < e.ts + 3600;
     let same = |e: &Event| e.str("step") == Some(step) && e.str("code") == code;
+    // A repeated refusal is silent too (no cron mail every pass).
     if code.is_some() && ev.iter().any(|e| recent(e) && same(e)) {
         return Ok(());
     }
+    let who = issue.map_or(fleet.to_string(), |n| format!("{fleet} #{n}"));
+    writeln!(out, "{who} {step}: {result}")?;
     let d = json!({"step": step, "cmd": format!("herdsman {}", cmd.join(" ")), "result": result, "code": code});
     emit(&ctx.state, cfg, Event::new(ctx.now, fleet, issue, "driven", d))
 }

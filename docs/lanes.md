@@ -70,17 +70,18 @@ does one pass, from cron after `herdsman check` ([setup.md](setup.md)) or the bo
 | --- | --- |
 | `next` offers an issue | `spawn impl` (start) |
 | impl/fix lane idle, head pushed, PR open, not reviewed at that head | `spawn rev` (review) |
-| `verdict.md` written since the rev spawn, first line `PASS` or `FAIL` | `verdict --sha <head>` |
+| `verdict.md` written since the rev spawn, first line `PASS` or `FAIL`, rev spawned at the PR head | `verdict --sha <head>` |
+| the same, but the PR head moved since the rev spawn (its logged `sha`) | `spawn rev --supersede` at the new head (review) |
 | `ready`, CI green | `merge`; CI pending: wait |
-| `ready`, CI red | `verdict FAIL` at the same head (no new round), the failed check's log tail as the finding (ci-red) |
+| `ready`, CI red | `verdict FAIL` at the same head (no new round), the failed check's log tail (secrets masked) as the finding (ci-red) |
 | `fix(n)` after a FAIL | `spawn impl --supersede` (fix); the brief carries the findings verbatim |
 | FAIL in round `review_rounds` | `verdict` logs `needs-human` with the findings; drive stops |
 | a lane killed | `spawn impl` (respawn) |
 | merged lanes left | `clean --yes` |
 
-Paused fleets are skipped. drive never answers asks (a lane's question stays a needs-you card),
+Paused fleets are skipped (no pass, no `last pass`); one fleet's error doesn't skip the others. drive never answers asks (a lane's question stays a needs-you card),
 never passes `--force`, and never bypasses a refusal: `REFUSED` (e.g. `HOST_BUSY`, `CAP`,
-`SERIAL_BUSY`) is printed every pass and logged once per item an hour, and the step is retried
+`SERIAL_BUSY`) is printed and logged once per item an hour (cron stays quiet), and the step is retried
 next pass. Every action logs a passive `driven` event (step, command, result). A pass holds
 `<state dir>/drive.lock` (taken over after 30 min), so cron and the button never overlap; the
 board shows `driver: herdsman · last pass <age> ago`.

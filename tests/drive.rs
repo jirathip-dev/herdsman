@@ -119,6 +119,7 @@ fn a_written_verdict_is_recorded_at_the_head_then_pending_ci_waits() {
     let r = fake(NO_AGENTS)
         .reply("gh pr view issue-12", &pr(&head, "pending"))
         .reply("gh api repos/jirathip-dev/sendmeter/branches/issue-12", &format!("{head}\n"))
+        .reply(&format!("git -C {} log", rev.display()), &format!("{head} 20"))
         .reply("git -C", "");
     let (out, steps) = drive(&c, &r);
     assert_eq!(steps, ["verdict"], "{out}");
@@ -128,6 +129,37 @@ fn a_written_verdict_is_recorded_at_the_head_then_pending_ci_waits() {
     // PASS with CI pending: drive waits.
     idle(&c, &r);
     assert!(!r.called("gh pr merge"));
+}
+
+#[test]
+fn a_head_moved_during_review_gets_a_fresh_reviewer_not_the_old_verdict() {
+    let c = setup("drive-moved");
+    lane(&c, 10, "impl", "sendmeter-impl-12", "issue-12");
+    let rev = c.worktrees.join("sendmeter/rev-12-r1");
+    std::fs::create_dir_all(&rev).unwrap();
+    ev(&c, 20, "spawn", json!({"role": "rev", "agent": "sendmeter-rev-12-r1", "pane": "w9:r", "workspace": "w9",
+        "worktree": rev, "branch": "rev-12-r1", "sha": sha("0d")}));
+    std::fs::write(rev.join("verdict.md"), "PASS\nall good\n").unwrap();
+    let head = sha("bee");
+    let r = fake(NO_AGENTS)
+        .reply("gh pr view issue-12", &pr(&head, "pending"))
+        .reply("gh api repos/jirathip-dev/sendmeter/branches/issue-12", &format!("{head}\n"))
+        .reply(&format!("git -C {} rev-parse HEAD", rev.display()), &format!("{head}\n"))
+        .reply("git -C", "");
+    let (out, steps) = drive(&c, &r);
+    assert_eq!(steps, ["review"], "{out}");
+    let all = read(&c.state).unwrap();
+    assert!(!all.iter().any(|e| e.kind == "verdict"), "the old head's verdict is not recorded for the new head");
+    assert!(r.called(&format!("git -C {} reset --hard origin/issue-12", rev.display())));
+    assert!(!rev.join("verdict.md").exists(), "the stale verdict is gone");
+    let spawn = all.iter().rev().find(|e| e.kind == "spawn").unwrap();
+    assert_eq!((spawn.str("role"), spawn.str("sha")), (Some("rev"), Some(head.as_str())), "logged at the new head");
+    // The fresh reviewer's verdict is recorded at the head it was spawned at.
+    std::fs::write(rev.join("verdict.md"), "PASS\n").unwrap();
+    let (out, steps) = drive(&c, &r);
+    assert_eq!(steps, ["verdict"], "{out}");
+    let v = read(&c.state).unwrap().into_iter().find(|e| e.kind == "verdict").expect(&out);
+    assert_eq!(v.str("sha"), Some(head.as_str()));
 }
 
 #[test]
@@ -177,6 +209,7 @@ fn the_third_fail_stops_at_needs_human_with_the_findings() {
     let r = fake(NO_AGENTS)
         .reply("gh pr view issue-12", &pr(&head, "green"))
         .reply("gh api repos/jirathip-dev/sendmeter/branches/issue-12", &format!("{head}\n"))
+        .reply(&format!("git -C {} log", rev.display()), &format!("{head} 20"))
         .reply("git -C", "");
     let (out, steps) = drive(&c, &r);
     assert_eq!(steps, ["verdict"], "{out}");
@@ -196,7 +229,7 @@ fn red_ci_after_pass_is_a_fail_with_the_log_tail() {
     ev(&c, 30, "verdict", json!({"verdict": "PASS", "sha": head, "body": "PASS"}));
     let r = fake(NO_AGENTS)
         .reply("gh pr view issue-12", &pr(&head, "red"))
-        .reply("gh run view 777 -R jirathip-dev/sendmeter --log-failed", "test x ... FAILED\nerror: 1 test failed\n")
+        .reply("gh run view 777 -R jirathip-dev/sendmeter --log-failed", "test x ... FAILED\nGH_TOKEN=ghp_abcdef123456\nerror: 1 test failed\n")
         .reply("gh api repos/jirathip-dev/sendmeter/branches/issue-12", &format!("{head}\n"))
         .reply("git -C", "");
     let (out, steps) = drive(&c, &r);
@@ -205,6 +238,7 @@ fn red_ci_after_pass_is_a_fail_with_the_log_tail() {
     let v = all.iter().rev().find(|e| e.kind == "verdict").unwrap();
     assert_eq!(v.str("verdict"), Some("FAIL"));
     assert!(v.str("body").unwrap().contains("error: 1 test failed"), "{:?}", v.str("body"));
+    assert!(!v.str("body").unwrap().contains("ghp_abcdef"), "the log tail is masked: {:?}", v.str("body"));
     let st = &fold(&all)[&("sendmeter".to_string(), 12)];
     assert_eq!((st.state.as_str(), st.rounds), ("fix(1)", 1), "same head: no new round");
 }
@@ -230,6 +264,7 @@ fn paused_fleets_orch_driven_fleets_and_host_busy_are_no_ops() {
     let r = fake(NO_AGENTS).reply("git -C", "");
     idle(&c, &r);
     assert!(!r.called("herdr"), "{:?}", r.calls.borrow());
+    assert_eq!(herdsman::drive::last_pass(&c, "sendmeter"), None, "a paused fleet had no pass");
     let orch = ctx(&tmpdir("drive-orch"), CONFIG);
     assert_eq!(run(&orch, &Fake::default(), &["queue", "sendmeter", "add", "12"]).0, 0);
     idle(&orch, &r);
@@ -243,11 +278,12 @@ fn paused_fleets_orch_driven_fleets_and_host_busy_are_no_ops() {
     assert_eq!(steps, ["start"]);
     assert!(out.contains("REFUSED HOST_BUSY"), "{out}");
     assert!(!busy.called("herdr worktree"));
-    // Retried next pass, logged once per hour.
+    // Retried next pass, logged and printed once per hour.
     let busy = Fake { replies: fake(NO_AGENTS).reply("git -C", "").replies, ..Default::default() }
         .once("sysctl -n kern.memorystatus_vm_pressure_level", 0, "4\n");
     let (out, steps) = drive(&c, &busy);
-    assert!(out.contains("REFUSED HOST_BUSY") && steps.is_empty(), "{out}");
+    assert!(out.is_empty() && steps.is_empty(), "{out}");
+    assert_eq!(busy.count("sysctl -n kern.memorystatus_vm_pressure_level"), 1, "retried");
     assert_eq!(state(&c), "queued");
 }
 
