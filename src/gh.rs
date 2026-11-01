@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 pub const PR_FIELDS: &str = "number,title,state,baseRefName,headRefOid,mergeable,mergeStateStatus,statusCheckRollup";
 pub const PR_TTL: u64 = 60;
+const SPEC_FIELDS: &str = "title,body,updatedAt,comments";
 
 fn cache_path(ctx: &Ctx, kind: &str, fleet: &str, issue: u64) -> PathBuf {
     ctx.state
@@ -40,7 +41,19 @@ pub fn cached_title(ctx: &Ctx, fleet: &str, issue: u64) -> Option<String> {
     cached_spec(ctx, fleet, issue).and_then(|v| v["title"].as_str().map(String::from))
 }
 
-/// The issue's `{title, body, updatedAt}`; `refresh` re-reads `updatedAt` first, else the cache is trusted.
+/// `(url, text)` of a `**Amendment` comment by an OWNER, MEMBER or COLLABORATOR; strangers can't steer a lane.
+fn amendment(c: &Value) -> Option<(String, String)> {
+    let s = |k: &str| c.pointer(k).and_then(Value::as_str).unwrap_or_default().trim();
+    let body = s("/body");
+    if !matches!(s("/authorAssociation"), "OWNER" | "MEMBER" | "COLLABORATOR") || !body.starts_with("**Amendment") {
+        return None;
+    }
+    let url = s("/url");
+    let text = format!("\n\n{body} — {}, {} ({url})", s("/author/login"), s("/createdAt"));
+    Some((url.to_string(), text))
+}
+
+/// `{title, body + amendments, updatedAt, amended: last url}` (#101); `refresh` re-checks `updatedAt` first.
 pub fn spec(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, issue: u64, refresh: bool) -> Result<Value> {
     let p = cache_path(ctx, "issue", fleet, issue);
     let n = issue.to_string();
@@ -53,11 +66,15 @@ pub fn spec(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, issue: u64, refre
             return Ok(c);
         }
     }
-    let v = json(
-        r,
-        "gh",
-        &["issue", "view", &n, "-R", &f.repo, "--json", "title,body,updatedAt"],
-    )?;
+    let mut v = json(r, "gh", &["issue", "view", &n, "-R", &f.repo, "--json", SPEC_FIELDS])?;
+    let comments = v["comments"].as_array().cloned().unwrap_or_default();
+    let amends: Vec<(String, String)> = comments.iter().filter_map(amendment).collect();
+    if let Some((url, _)) = amends.last() {
+        let list: String = amends.iter().map(|a| a.1.as_str()).collect();
+        let body = format!("{}\n\n## Amendments{list}", v["body"].as_str().unwrap_or_default());
+        v["body"] = json!(body);
+        v["amended"] = json!(url);
+    }
     store(&p, &v)?;
     Ok(v)
 }
