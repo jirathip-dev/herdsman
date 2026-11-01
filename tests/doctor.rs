@@ -87,7 +87,7 @@ fn good() -> Fake {
         .reply("which ", "/bin/x\n")
         .reply("lsof ", "herdsman 1 u LISTEN\n")
         .reply("tailscale serve status", "|-- / proxy http://127.0.0.1:7777\n")
-        .reply("launchctl list dev.herdsman.serve", "{\n}\n")
+        .reply("launchctl print gui/", "state = running\n")
 }
 
 fn line<'a>(out: &'a str, check: &str) -> &'a str {
@@ -236,9 +236,9 @@ fn each_check_fails_with_its_fix_and_exit_one() {
             "→ tailscale serve --bg",
         ),
         (
-            |_, _, r| r.once("launchctl list", 113, ""),
+            |_, _, r| r.once("launchctl print", 113, ""),
             "launchd",
-            "→ launchctl load -w",
+            "→ launchctl bootstrap gui/$(id -u)",
         ),
         (
             |c, _, r| {

@@ -5,7 +5,7 @@ use crate::Ctx;
 use anyhow::Result;
 use std::collections::BTreeSet;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
 /// Add `row`: ✓ without its ` → <fix>` when `ok`, else marked `bad` (✗, or ! for a warning).
@@ -56,13 +56,17 @@ fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, d: &mut Vec<String>) {
     for (name, f) in &cfg.fleet {
         let read = ok(r, "gh", &["repo", "view", &f.repo, "--json", "name"]).is_ok();
         row(d, read, '✗', &format!("gh {name} — read {} → gh auth refresh", f.repo));
-        let (l, b) = (f.local_path().display().to_string(), &f.integration);
-        let git = ok(r, "git", &["-C", &l, "rev-parse", "--verify", &format!("origin/{b}")]).is_ok();
-        let fix = format!("git -C {l} fetch origin {b} || gh repo clone {} {l}", f.repo);
-        row(d, git, '✗', &format!("local {name} — {l} has origin/{b} → {fix}"));
+        let dir = f.local_path().display().to_string();
+        let b = &f.integration;
+        let origin = format!("origin/{b}");
+        let git = ok(r, "git", &["-C", &dir, "rev-parse", "--verify", &origin]).is_ok();
+        let fix = format!("git -C {dir} fetch origin {b} || gh repo clone {} {dir}", f.repo);
+        row(d, git, '✗', &format!("local {name} — {dir} has {origin} → {fix}"));
     }
-    if let Some(p) = cfg.accounts.accounts_env.as_deref().map(expand) {
-        let (text, m, p) = (std::fs::read_to_string(&p).unwrap_or_default(), mode(&p), p.display());
+    if let Some(path) = cfg.accounts.accounts_env.as_deref().map(expand) {
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let m = mode(&path);
+        let p = path.display();
         let l = format!("accounts_env — {p} {m} → touch {p} && chmod 600 {p}");
         row(d, m == "mode 600", '✗', &l);
         for (name, var) in &cfg.accounts.names {
@@ -106,8 +110,11 @@ fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, d: &mut Vec<String>) {
         None => d.push("✗ launchd — no plist runs herdsman serve → see docs/setup.md".into()),
         Some(p) => {
             let label = p.file_stem().unwrap_or_default().to_string_lossy();
-            let l = format!("launchd — {label} loaded → launchctl load -w {}", p.display());
-            row(d, ok(r, "launchctl", &["list", &label]).is_ok(), '✗', &l);
+            let uid = std::fs::metadata(&ctx.home).map_or(0, |m| m.uid());
+            let target = format!("gui/{uid}/{label}");
+            let fix = format!("launchctl bootstrap gui/$(id -u) {}", p.display());
+            let l = format!("launchd — {target} loaded → {fix}");
+            row(d, ok(r, "launchctl", &["print", &target]).is_ok(), '✗', &l);
         }
     }
     let n = crate::devices::load(ctx).len();
@@ -118,7 +125,8 @@ fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, d: &mut Vec<String>) {
     let fix = [format!("chmod 600 {}", key.display()), "herdsman push test".into()];
     let l = format!("vapid.key — {m} → {}", fix[usize::from(m == "missing")]);
     row(d, m == "mode 600", '✗', &l);
-    let (n, sub) = (crate::webpush::load(&ctx.state).len(), cfg.webpush_sub().is_some());
+    let n = crate::webpush::load(&ctx.state).len();
+    let sub = cfg.webpush_sub().is_some();
     let l = format!("push — {n} subscriptions, webpush notifier {sub} → turn alerts on; add a webpush [[notify]]");
     row(d, n > 0 && sub, '!', &l);
     // `check` and `drive` stamp `<state>/<what>.at` each run: the cron's proof.
@@ -126,7 +134,8 @@ fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, d: &mut Vec<String>) {
     for what in ["check", "drive"].into_iter().filter(|w| *w == "check" || driven) {
         let at = std::fs::read_to_string(ctx.state.with_file_name(format!("{what}.at")));
         let at = at.ok().and_then(|s| s.trim().parse::<u64>().ok());
-        let (age, exe) = (at.map_or("never".into(), |t| crate::events::age(ctx.now - t)), &ctx.exe);
+        let age = at.map_or("never".into(), |t| crate::events::age(ctx.now - t));
+        let exe = &ctx.exe;
         let l = format!("watchdog {what} — last ran {age} → (crontab -l; echo '*/5 * * * * {exe} {what}') | crontab -");
         row(d, at.is_some_and(|t| ctx.now < t + 900), '✗', &l);
     }
