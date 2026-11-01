@@ -173,7 +173,7 @@ enum Cmd {
     },
     /// One pass of the loop for `driver = "herdsman"` fleets: do every step that's due, then exit; safe from cron
     Drive { fleet: Option<String> },
-    /// Alert once per state on stall, lane-dead, ready-unmerged, orch-holding, ask-waiting; nudge an idle orch; idempotent, safe from cron
+    /// Alert once per state on stall, lane-dead, ready-unmerged, orch-holding, ask-waiting, orphan-lane; nudge an idle orch; idempotent, safe from cron
     Check,
     /// Each `[accounts]` account: ok / capped until hh:mm, and the lanes on it (names only, never tokens)
     Accounts {
@@ -431,7 +431,12 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                         .iter()
                         .flatten()
                         .find(|(x, _)| x.fleet == s.fleet && x.issue == s.issue)
-                        .map_or("-", |w| w.1.what.as_str());
+                        .map(|w| w.1.what.clone())
+                        .or_else(|| {
+                            let skip = queue::skipped(&events, &all, &s.fleet, s.issue, ctx.now);
+                            skip.map(|(c, why)| format!("skipped this pass: {c} ({why})"))
+                        })
+                        .unwrap_or_else(|| "-".into());
                     writeln!(out, "{:<5} {w}", status_line(s, ctx.now))?;
                 }
                 write!(out, "{}", serial.concat())?;

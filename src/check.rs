@@ -122,6 +122,18 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
             fire(ctx, cfg, out, &events, (&s.fleet, Some(s.issue)), kind, d)?;
         }
     }
+    // #107: a herdr agent named like a lane (`<fleet>-<role>-<n>…`) that no `spawn` event logged; once per agent.
+    for name in agents.iter().flatten().filter_map(|a| a["name"].as_str()) {
+        let lane = cfg.fleet.iter().find_map(|(fl, f)| {
+            let mut w = name.strip_prefix(&format!("{fl}-"))?.split('-');
+            f.role.contains_key(w.next()?).then_some(())?;
+            Some((fl.as_str(), Some(w.next()?.parse().ok()?)))
+        });
+        if let Some(at) = lane.filter(|_| last_spawn(&events, name).is_none()) {
+            let d = json!({"key": name, "reason": format!("herdr agent {name} has no spawn event; spawn adopts it")});
+            fire(ctx, cfg, out, &events, at, "orphan-lane", d)?;
+        }
+    }
     let open = open_asks(&events);
     for a in open.iter().filter(|a| ctx.now.saturating_sub(a.ts) > 30 * 60) {
         let why = format!(

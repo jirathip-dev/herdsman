@@ -106,11 +106,11 @@ pub fn close(r: &dyn Runner, pane: &str) -> Result<String> {
     ok(r, &argv(&["pane", "close", pane]))
 }
 
-/// herdr's `{"error": {"code": "timeout"}}` answer (on stderr or stdout).
-pub fn timed_out(o: &Out) -> bool {
+/// herdr's `{"error": {"code": <code>}}` answer (on stderr or stdout), e.g. `timeout`.
+pub fn failed_with(o: &Out, code: &str) -> bool {
     [&o.stderr, &o.stdout]
         .iter()
-        .any(|s| serde_json::from_str::<Value>(s.trim()).is_ok_and(|v| v["error"]["code"] == "timeout"))
+        .any(|s| serde_json::from_str::<Value>(s.trim()).is_ok_and(|v| v["error"]["code"] == code))
 }
 
 pub fn rename_argv(pane: &str, agent: &str) -> Vec<String> {
