@@ -53,9 +53,9 @@ const EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "serve.css",
-        ".ask button[name=choice],.ask .pick",
+        "button[name=choice],button.pick",
         "height",
-        "choice buttons wrap: sentences, not labels; owner-approved 2026-10-31 (#63 A)",
+        "choice buttons wrap: sentences, not labels; owner-approved 2026-10-31 (#63 A; #139: wherever the form renders)",
     ),
 ];
 
