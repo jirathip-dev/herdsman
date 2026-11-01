@@ -550,3 +550,35 @@ fn named_orphan_in_worktree_is_adopted_not_lane_live() {
     assert_eq!(ev.iter().filter(|e| e.kind == "spawn").count(), 1);
     assert_eq!(ev[0].data["adopted"], true);
 }
+
+/// #128: a supersede closes the old lane's pane once the new one is confirmed; a working old lane is untouched.
+#[test]
+fn supersede_closes_old_pane_after_confirm_unless_working() {
+    for working in [false, true] {
+        let d = tmpdir("supersede-old-pane");
+        let c = ctx(&d, CONFIG);
+        let w = wt(&c).to_string_lossy().into_owned();
+        let d0 =
+            json!({"role": "impl", "agent": "sendmeter-impl-12", "branch": "issue-12", "worktree": w, "pane": "w8:p3"});
+        append(&c.state, &Event::new(10, "sendmeter", Some(12), "spawn", d0)).unwrap();
+        let list = if working {
+            agents(&[("renamed", "working", "/elsewhere", "w8:p3")])
+        } else {
+            NO_AGENTS.into()
+        };
+        let r = happy(&c, &list);
+        let (exit, out) = spawn(&c, &r, &["--supersede"]);
+        assert_eq!(exit, 0, "{out} {:?}", r.calls.borrow());
+        let closed = read(&c.state).unwrap().iter().any(|e| e.kind == "lane-closed");
+        if working {
+            assert!(!r.called("herdr pane close w8:p3") && !closed, "{:?}", r.calls.borrow());
+        } else {
+            let close = r.index("herdr pane close w8:p3").expect("old pane closed");
+            assert!(
+                close > r.index("herdr agent prompt").unwrap(),
+                "after the new lane is confirmed"
+            );
+            assert!(closed);
+        }
+    }
+}

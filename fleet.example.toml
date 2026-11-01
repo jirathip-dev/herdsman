@@ -5,6 +5,8 @@ models = ["opus", "sonnet", "claude-opus-5-5"]   # the model dropdown `herdsman 
 [serve]
 allowed_hosts = ["<mac>.<tailnet>.ts.net"]   # `tailscale serve` proxies the page over HTTPS
 # approve_hint = "or send 'pair {code}' to the owner"   # appended to the pairing panel's Mac line
+# tailscale_https_port = 8443   # `herdsman setup` runs `tailscale serve --bg --https=<port> http://<addr>`
+# launchd_label = "dev.herdsman.serve"   # the board job `herdsman setup` writes (or adopts)
 
 [fleet.api]
 repo = "acme/api"
@@ -52,6 +54,7 @@ local = "~/Projects/web"
 integration = "staging"
 serial_paths = ["supabase/migrations/**"]   # `--serial` lanes, serial_max at a time (SERIAL_BUSY / SERIAL_UNMARKED)
 # serial_max = 2   # serial issues in flight at once; default 1 (board/status: `serial n/max`)
+# serial_label = "schema"   # the Queue graph's lock mark for serial issues (🔒schema), ≤ 8 characters; default "serial"
 # required_checks = ["quality"]   # gate/check/wait look only at these (latest run each); unset = all checks
 # line_cap = 10000   # `herdsman cap-check --config <this file>`: formatted src/**/*.rs lines, exit 1 over it
 # max_impl = 2   # optional caps (CAP); unset = no cap, the host check protects the Mac
@@ -103,6 +106,7 @@ C = "CLAUDE_CODE_OAUTH_TOKEN_C"
 
 [limits]
 review_rounds = 3
+update_rounds = 3   # `spawn --update` (conflict/behind) rounds, counted apart from review_rounds
 stall_minutes = 30   # herdsman check: stall / ready-unmerged threshold
 ask_default_minutes = 30  # herdsman check: a routine ask unanswered this long takes its recommended option
 load_per_cpu = 2.5   # herdsman spawn HOST_BUSY thresholds

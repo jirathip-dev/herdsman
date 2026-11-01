@@ -21,13 +21,9 @@ fn mode(path: &Path) -> String {
 
 pub fn doctor(ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, json: bool) -> Result<i32> {
     let mut rows = vec![];
-    let status = crate::herdr::status(r).unwrap_or_default();
-    let versions = status.lines().map(str::trim);
-    let versions: Vec<_> = versions.filter_map(|line| line.strip_prefix("version: ")).collect();
-    let parse = |v: &str| v.split('.').map(|n| n.parse().unwrap_or(0)).collect::<Vec<u32>>();
-    if let [client, server, ..] = versions[..] {
+    if let Some((client, server, older)) = crate::timer::herdr_versions(r) {
         let line = format!("herdr — client {client}, server {server} → herdr update --handoff");
-        row(&mut rows, parse(server) >= parse(client), '!', &line);
+        row(&mut rows, !older, '!', &line);
     } else {
         rows.push("✗ herdr — not on PATH, or no server → herdr".into());
     }
@@ -103,11 +99,7 @@ fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, rows: &mut Vec<String>) {
     let bad = if tailscale.is_err() { '!' } else { '✗' }; // not installed is a warning
     let maps = tailscale.is_ok_and(|o| o.code == 0 && o.stdout.contains(addr));
     row(rows, maps, bad, &line);
-    // The launchd job: a plist under ~/Library/LaunchAgents that runs `herdsman serve`.
-    let agents = std::fs::read_dir(ctx.home.join("Library/LaunchAgents"));
-    let serves = |text: String| text.contains("herdsman") && text.contains("<string>serve</string>");
-    let mut plists = agents.into_iter().flatten().flatten().map(|entry| entry.path());
-    match plists.find(|plist| std::fs::read_to_string(plist).is_ok_and(serves)) {
+    match serve_plist(ctx) {
         _ if !cfg!(target_os = "macos") => {}
         None => rows.push("✗ launchd — no plist runs herdsman serve → see docs/setup.md".into()),
         Some(plist) => {
@@ -136,8 +128,17 @@ fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, rows: &mut Vec<String>) {
         let stamp = std::fs::read_to_string(ctx.state.with_file_name(format!("{what}.at")));
         let at = stamp.ok().and_then(|text| text.trim().parse::<u64>().ok());
         let age = at.map_or("never".into(), |at| crate::events::age(ctx.now - at));
-        let exe = &ctx.exe;
-        let line = format!("watchdog {what} — ran {age} → (crontab -l; echo '*/5 * * * * {exe} {what}') | crontab -");
+        let line = format!("watchdog {what} — ran {age} → herdsman timer install");
         row(rows, at.is_some_and(|at| ctx.now < at + 900), '✗', &line);
     }
+    let line = format!("timer — {} loaded → herdsman timer install", crate::timer::TICK);
+    row(rows, crate::timer::loaded(ctx, r), '✗', &line);
+}
+
+/// The launchd job: a plist under ~/Library/LaunchAgents that runs `herdsman serve`.
+pub fn serve_plist(ctx: &Ctx) -> Option<std::path::PathBuf> {
+    let agents = std::fs::read_dir(ctx.home.join("Library/LaunchAgents"));
+    let serves = |text: String| text.contains("herdsman") && text.contains("<string>serve</string>");
+    let mut plists = agents.into_iter().flatten().flatten().map(|entry| entry.path());
+    plists.find(|plist| std::fs::read_to_string(plist).is_ok_and(serves))
 }

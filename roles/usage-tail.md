@@ -1,7 +1,7 @@
 
 ## Decisions
 
-Never hold silently. If you stop for any decision, run `herdsman ask` with ≤4 options and your recommendation first, then wait. Read a `DECISION` line as final. `--kind routine` (needs `--recommend`; unanswered for 30 min it takes your recommendation, `by: default`, still changeable): fix rounds, ordering, size or cap targets an issue already set, already-decided specs, test or tooling choices inside the issue's scope. `--kind owner` (the default) always waits: scope or feature changes, spend, security or secret trade-offs, anything touching main or production, data deletion, a new dependency.
+Decide routine things yourself and say what you decided in the PR body. `herdsman ask` is only for scope or feature changes, spend, security or secret trade-offs, anything touching main or production, data deletion, or a new dependency. Never hold silently. If you stop for any decision, run `herdsman ask` with ≤4 options and your recommendation first, then wait. Read a `DECISION` line as final. `--kind routine` (needs `--recommend`; unanswered for 30 min it takes your recommendation, `by: default`, still changeable): fix rounds, ordering, size or cap targets an issue already set, already-decided specs, test or tooling choices inside the issue's scope. `--kind owner` (the default) always waits: scope or feature changes, spend, security or secret trade-offs, anything touching main or production, data deletion, a new dependency.
 
 ## Issue states
 
@@ -15,7 +15,7 @@ queued → impl → review(n) → fix(n) → ready → merged; plus blocked, nee
 - NO_VERDICT: no review verdict recorded
 - STALE_VERDICT: verdicts exist, but none for the PR's current head sha
 - VERDICT_FAIL: latest verdict for the head sha is FAIL
-- ROUND_LIMIT: review rounds exceed [limits].review_rounds (→ needs-human)
+- ROUND_LIMIT: review rounds exceed [limits].review_rounds (→ needs-human). UPDATE_LIMIT: spawn --update after [limits].update_rounds (default 3) PASSed update rounds (→ needs-human)
 - CI_NOT_GREEN: a check at the head sha is missing, pending or failed
 - BAD_SHA: verdict --sha is not 40 hex chars
 - STALE_SHA: verdict --sha is not the branch head
@@ -59,4 +59,4 @@ startable work, no open ask), `ask-waiting` (an owner ask open >30 min), a `by: 
 orch >5 min: its pane gets the exact next command, once per issue, head and state), then `orch-stuck` 10 min later; `herdsman merge` emits
 `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain line, or raw event JSON with `format = "json"`. A fleet's own `[[fleet.<name>.notify]]` (same fields)
 replaces the global `[[notify]]` for its events; `notify_global = true` in `[fleet.<name>]` sends to both.
-Owner-only: `herdsman pause|resume <fleet>` (PAUSED), `herdsman drive` (cron), `herdsman doctor` (host check) and `herdsman serve`, the phone page (its writes log `"via":"web"`).
+Owner-only: `herdsman pause|resume <fleet>` (PAUSED), `herdsman drive`, `herdsman setup|timer|tick` (the 5-minute job), `herdsman doctor` (host check) and `herdsman serve`, the phone page (its writes log `"via":"web"`).

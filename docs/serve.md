@@ -32,6 +32,13 @@ live swaps, re-read on ↻). The Events tab body is read from `GET /frag?id=even
 a repeat visit downloads the page HTML only, the assets come from the service worker's cache. A
 `serve --export` inlines both, so the static demo needs no `/frag`.
 
+Queue tab (#115): each fleet's rows are a `git log --graph` tree in queue order. A row blocked by another row in
+view hangs off it (`│ ├─ └─`; past depth 3 it clamps to `┆─` and an `on #b` tag), a blocker out of view is a red
+`! #b` tag. A dot per row: `●` a lane works on it, `○` waiting, `✓` ready, `!` needs you. A `--serial` issue shows
+`🔒<serial_label>` (default `serial`). `[?]` opens the legend sheet: every state word in plain words (the same line is
+each state word's title on Queue, Lanes and Herd), the dots, and each fleet's serial paths. ▲/▼ move a row among its
+siblings.
+
 Its only writes are ▲/▼ (`queue mv`), Pause/Resume and a role's model/effort (`set`, choices
 from `models = [...]`), each through the CLI's own code path, logged with `"via":"web"`.
 
@@ -113,6 +120,12 @@ device and the same Host/Origin check and 10-a-minute limit as the reply box, an
 `{"type":"answer","via":"web","agent","device","choice"}`, never the question. A free-text
 question, a dsh/Hermes lane or an unparsed pane shows the question (or the last 6 masked
 lines) and a Reply button that opens the sheet's reply box.
+
+A menu's card (#127) also shows the prompt's block above it, masked: its first line as the title
+(`Bash command`), the reason (`Dangerous rm operation on possibly-empty variable path …`, 2 lines), the `│`
+command box (mono 11 px, 3 lines, tap to expand) and, for a prompt the harness auto-denies, `auto-denies in
+0:14` counting down from the pane read. Such a card carries `data-push=0` (no phone alert) until its countdown
+has run out. When the next read shows no prompt and the pane is working again, the card goes.
 
 Lane modes: `horse` (default), `ascii` (a 3-line horse, 2-frame gallop when working) and
 `glyph`. The vector horses are ported from Corral (jirathip-dev/corral,

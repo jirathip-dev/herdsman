@@ -466,7 +466,11 @@ fn page_has_no_dash_placeholders() {
         !html.contains(" - ") && !html.contains(">-<") && !html.contains(" · -") && !html.contains('—'),
         "{html}"
     );
-    assert!(html.contains("<p>#18 queued</p>"), "{html}");
+    // #115: the card no longer repeats `#n state`; the row is the summary.
+    assert!(
+        html.contains("<details class=\"q\" data-q><summary><span>#18</span><span class=a>queued</span>"),
+        "{html}"
+    );
     assert!(
         html.contains("<option value=\"\" selected>default (profile)</option>"),
         "unset model"

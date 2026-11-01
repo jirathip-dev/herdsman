@@ -71,7 +71,7 @@ pub fn waiting_on(
     if s.state == "merged" || pr["state"] == "MERGED" {
         return w("none", "nothing to do (merged): clean me", s.last_ts, None);
     }
-    if pr["state"] == "CLOSED" {
+    if s.state == "closed" || pr["state"] == "CLOSED" {
         return w("none", "nothing to do (closed): clean me", s.last_ts, None);
     }
     // #104: an impl/fix/review lane whose account capped since its spawn respawns on a free one (`kill` pushes `wip/`).
@@ -219,7 +219,7 @@ pub fn scan(
         }
         let (f, branch) = (&cfg.fleet[&s.fleet], crate::gate::branch_of(Some(&s), s.issue));
         let pr = match (s.state.as_str(), live) {
-            ("merged", _) => Value::Null,
+            ("merged" | "closed", _) => Value::Null,
             (_, true) => gh::pr(ctx, r, f, (&s.fleet, s.issue), &branch, ctx.now).unwrap_or_default(),
             _ => gh::cached_pr(ctx, &s.fleet, s.issue),
         };

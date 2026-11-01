@@ -46,7 +46,7 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
     for name in cfg.fleet.keys() {
         let _ = crate::overlap::preview(ctx, cfg, r, name, &events);
     }
-    for s in fold(&events).values().filter(|s| s.state != "merged") {
+    for s in fold(&events).values().filter(|s| !s.done()) {
         let idle = ctx.now.saturating_sub(s.last_ts);
         let mut hits = vec![];
         let mut capped = None;
@@ -431,7 +431,7 @@ pub fn clean(
                 &e.fleet,
                 Some(n),
                 "clean",
-                json!({"worktree": wt, "pane": pane}),
+                json!({"worktree": wt, "pane": pane, "why": why}),
             ),
         )?;
     }
@@ -505,7 +505,7 @@ fn closed_issues<'a>(
 }
 
 /// herdr first; else `git worktree remove` (never `--force`) of the re-checked tree minus `OWN_FILES`.
-fn remove(r: &dyn Runner, cfg: &Config, fleet: &str, wt: &str, ws: &str) -> Result<()> {
+pub fn remove(r: &dyn Runner, cfg: &Config, fleet: &str, wt: &str, ws: &str) -> Result<()> {
     if !ws.is_empty() && herdr::worktree_remove(r, ws)? {
         return Ok(());
     }
@@ -567,7 +567,7 @@ pub fn close(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent
 }
 
 /// `herdsman kill`: the dry-run line (what is lost); with `yes`, unpushed or dirty work goes to
-/// `wip/<agent>-<stamp>` first (refused `SECRET_IN_WIP` when the diff masks), then the pane closes.
+/// `wip/<agent>-<stamp>` first (refused `SECRET_IN_WIP`, naming `file:line`, on a real secret), then the pane closes.
 /// The worktree is kept; an orch's checkout is the owner's and never snapshotted.
 pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent: &str, yes: bool) -> Result<()> {
     let events = read(&ctx.state)?;
@@ -643,34 +643,36 @@ pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
             Ok(d) => d,
             Err(e) => return undo(e),
         };
-        // Added hunk lines only (a file header runs `diff --git` → `@@`), minus hash-shaped lockfile checksums.
-        let hash = |l: &str| {
-            let l = l.trim().trim_end_matches(',').strip_suffix('"').unwrap_or_default();
-            l.strip_prefix("checksum = \"")
-                .is_some_and(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
-                || l.strip_prefix("\"integrity\": \"sha")
-                    .and_then(|v| v.split_once('-'))
-                    .is_some_and(|(a, b)| {
-                        [("256", 44), ("384", 64), ("512", 88)].contains(&(a, b.len()))
-                            && b.bytes().all(|c| c.is_ascii_alphanumeric() || b"+/=".contains(&c))
-                    })
-        };
+        // The first added hunk line (a file header runs `diff --git` → `@@`) with a secret, as `file:line: masked`.
         let mut head = false;
-        let diff: String = diff
-            .lines()
-            .filter(|l| {
-                head = (head || l.starts_with("diff --git ")) && !l.starts_with("@@");
-                !head
-            })
-            .filter_map(|l| l.strip_prefix('+'))
-            .filter(|l| !hash(l))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if crate::lanes::mask(&diff) != diff {
+        let mut file = "";
+        let mut n = 0;
+        let mut hit = None;
+        for l in diff.lines() {
+            head = (head || l.starts_with("diff --git ")) && !l.starts_with("@@");
+            if let Some((_, h)) = l.strip_prefix("@@ ").and_then(|h| h.split_once('+')) {
+                n = h.split([',', ' ']).next().and_then(|s| s.parse().ok()).unwrap_or(1);
+            } else if head {
+                file = l.strip_prefix("+++ b/").unwrap_or(file);
+            } else if let Some(a) = l.strip_prefix('+').filter(|_| hit.is_none()) {
+                // Mask every secret on the line, not only the first.
+                let mut m = a.trim().to_owned();
+                while let Some(v) = crate::lanes::secret(&m) {
+                    m = m.replace(v, "•••");
+                }
+                if m != a.trim() {
+                    hit = Some(format!("{file}:{n}: {m}"));
+                }
+            }
+            if !head && l.starts_with(['+', ' ']) {
+                n += 1;
+            }
+        }
+        if let Some(hit) = hit {
             let _ = git(&["reset", "-q"]);
             return crate::gate::refused(
                 "SECRET_IN_WIP",
-                format!("{agent}'s unpushed diff has a secret-looking value; nothing pushed, pane kept"),
+                format!("{agent}'s unpushed diff has a secret ({hit}); nothing pushed, pane kept"),
             );
         }
         if dirty > 0 {

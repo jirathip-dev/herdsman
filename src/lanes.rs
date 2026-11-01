@@ -2,7 +2,7 @@
 use crate::config::Config;
 use crate::events::{Event, States};
 use crate::runner::{ok, Runner};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -157,6 +157,49 @@ pub fn group(all: &[Lane], changed: impl Fn(&Lane) -> u64) -> Groups<'_> {
 const HIDE: &str = "•••";
 pub const PREFIXES: &[&str] = &["sk-", "ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "xox", "xapp-"];
 
+/// The push guards' check (stricter than [`mask`]): the secret on line `l`, if any — a `PREFIXES`/AWS/Google token,
+/// a JWT, a PEM private key, or a high-entropy non-code value assigned to a `*KEY|TOKEN|SECRET|PASSWORD` name.
+#[allow(clippy::cast_precision_loss)] // char counts of one line
+pub fn secret(l: &str) -> Option<&str> {
+    let has = |s: &str, f: fn(&u8) -> bool| s.as_bytes().iter().any(f);
+    let pre = |w: &str, p: &str| w.starts_with(p) && w.len() >= p.len() + 16 && has(&w[p.len()..], u8::is_ascii_digit);
+    let b64 = |s: &str| !s.is_empty() && !has(s, |b| !b.is_ascii_alphanumeric() && !b"-_".contains(b));
+    let jwt = |w: &str| w.starts_with("eyJ") && w.split('.').count() == 3 && w.split('.').all(b64);
+    let mut words = l.split(|c: char| !c.is_ascii_alphanumeric() && !"-_.".contains(c));
+    let pem = l.contains("-----BEGIN") && l.contains("PRIVATE KEY-----");
+    let tok = words.find(|w| jwt(w) || PREFIXES.iter().chain(&["AKIA", "ASIA", "AIza"]).any(|p| pre(w, p)));
+    // A Telegram bot token (bare, `bot<id>:` or in an API URL): the 8+ digit id right before `:AA`, then 28+ chars.
+    let tg = l.split([' ', '"', '\'', '=', ',', '`', '/']).find_map(|w| {
+        let (d, t) = w.split_once(":AA")?;
+        let id = d.bytes().rev().take_while(u8::is_ascii_digit).count();
+        (id > 7 && t.len() > 27).then(|| &w[d.len() - id..])
+    });
+    // The name is the word before this `=`/`:` or before the line's first one (`const API_KEY: &str = "…"`).
+    let named = |s: &str| {
+        let up = s.split_whitespace().last().unwrap_or("").to_uppercase();
+        ["KEY", "TOKEN", "SECRET", "PASSWORD"].iter().any(|k| up.contains(k))
+    };
+    let first = &l[..l.find(['=', ':']).unwrap_or(0)];
+    tok.or(tg).or(pem.then_some(l.trim())).or_else(|| {
+        // `NAME = value` or `NAME: value` (JSON/YAML): the quoted value, else the first whitespace-delimited token.
+        l.match_indices(['=', ':']).find_map(|(i, _)| {
+            let r = l[i + 1..].trim_start().trim_start_matches(['"', '\'']);
+            let bearer = r.starts_with("Bearer ");
+            let v = r
+                .trim_start_matches("Bearer ")
+                .split(['"', '\'', ' ', '\t'])
+                .next()?
+                .trim_end_matches([';', ',']);
+            let n = v.chars().count() as f64;
+            let bits: f64 = v.chars().map(|c| -(v.matches(c).count() as f64 / n).log2() / n).sum();
+            // Words, `snake_case`/`camelCase` identifiers, code and paths are never secrets.
+            let word = !has(v, u8::is_ascii_digit) || v.contains('_') && v == v.to_ascii_lowercase();
+            let code = v.contains(['(', '{', ' ']) || v.contains("::") || v.starts_with(['/', '~', '.', '$']);
+            ((named(&l[..i]) || named(first) || bearer) && n >= 20.0 && bits >= 3.5 && !word && !code).then_some(v)
+        })
+    })
+}
+
 /// Mask secret-looking runs: `PREFIXES` tokens, JWTs, 32+ char hex/base64, `*KEY=`/`*TOKEN=`/`*SECRET=` values.
 pub fn mask(s: &str) -> String {
     let tok = |c: char| c.is_ascii_alphanumeric() || "-_+/=.".contains(c);
@@ -299,6 +342,32 @@ pub fn pending(screen: &str) -> Option<(String, Vec<String>)> {
     } else {
         Some((question(&lines)?, vec![]))
     }
+}
+
+/// #127: a menu's card from its block (after the last divider above the question): `title` its first line, `command`
+/// the `│` lines but those opening with a word (`Dangerous rm …`), `countdown` from `in M:SS`, the rest `reason`.
+pub fn prompt(screen: &str) -> Option<Value> {
+    let (question, options) = pending(screen).filter(|p| !p.1.is_empty())?;
+    let lines: Vec<&str> = screen.lines().map(str::trim).collect();
+    let q = lines.iter().rposition(|l| l.contains(question.as_str()))?;
+    let rule = |l: &&str| l.split(|c| !GLYPHS[0].contains(c)).any(|r| r.chars().count() >= 20);
+    let bare = |l: &&str| mask(l.trim_matches(|c: char| c.is_whitespace() || c == '│'));
+    let top = lines[..q].iter().rposition(rule).map_or(0, |i| i + 1);
+    let mut block = lines[top..q].iter().filter(|l| !bare(l).is_empty());
+    let (title, mut cmd, mut why, mut cd) = (bare(block.next()?), vec![], vec![], None);
+    let mm_ss = |(m, s): (&str, &str)| Some(m.parse::<u64>().ok()? * 60 + s.get(..2)?.parse::<u64>().ok()?);
+    let prose = |l: &str| l.starts_with(char::is_uppercase) && l.chars().nth(1).is_some_and(char::is_lowercase);
+    for l in block {
+        match l.split(" in ").skip(1).find_map(|s| mm_ss(s.split_once(':')?)) {
+            Some(s) if cd.is_none() => cd = Some(s),
+            _ if l.starts_with('│') && !prose(&bare(l)) => cmd.push(bare(l)),
+            _ => why.push(bare(l)),
+        }
+    }
+    why.truncate(2);
+    let card = json!({"title": title, "reason": why.join(" "), "command": cmd.join("\n"), "countdown": cd,
+        "question": mask(&question), "options": options, "push": cd.is_none_or(|s| s == 0)});
+    Some(card)
 }
 
 /// Transcript lines per turn (a typed `❯`/`>`/`›` prompt opens one, as `me`): text runs, and tool calls

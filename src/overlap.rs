@@ -49,7 +49,7 @@ pub fn preview(ctx: &Ctx, cfg: &Config, r: &dyn Runner, fleet: &str, events: &[E
     git(r, &dir, &["fetch", "-q", "origin"])?;
     let st: Vec<IssueState> = fold(events)
         .into_values()
-        .filter(|s| s.fleet == fleet && s.state != "merged")
+        .filter(|s| s.fleet == fleet && !s.done())
         .collect();
     let pushed = st
         .iter()

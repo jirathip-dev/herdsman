@@ -127,10 +127,10 @@ const MARK = { working: '○', idle: '◦', unknown: '?', parked: '◦', done: '
 const BANDS = [['working', ['working']], ['idle', ['idle', 'unknown', 'parked']], ['done', ['done']], ['blocked/dead', ['blocked', 'dead']]];
 let data = null, wind = 0, storm = false, saved = get('herdp'), placed = false;
 
-// #65: Corral's label card, 2 lines: the name, then state mark + word + age (the issue title is the tooltip).
+// #65: Corral's label card, 2 lines: the name, then state mark + word + age (the issue title is the tooltip; #115: the word's hint).
 function horse(l, k) {
   return `<button type=button class="hh ${hx(l.state)}" data-agent="${hx(l.name)}" data-k=${k}${l.title ? ` title="${hx(l.title)}"` : ''}><svg viewBox="0 0 132 100" style="${hx(l.coat)}"><use href="#hp${POSE[l.state] || 2}"/></svg>` +
-    `<span class=hl><b>${hx(l.name)}</b><span><i class=${hx(l.tone)}>${MARK[l.state] || '?'} ${hx(l.shown)}</i>${l.age ? ' · ' + hx(l.age) : ''}</span></span></button>`;
+    `<span class=hl><b>${hx(l.name)}</b><span><i class=${hx(l.tone)}${hint(l.shown) ? ` title="${hx(hint(l.shown))}"` : ''}>${MARK[l.state] || '?'} ${hx(l.shown)}</i>${l.age ? ' · ' + hx(l.age) : ''}</span></span></button>`;
 }
 const queued = q => `<button type=button class=hqh data-i=${q.issue}><svg viewBox="0 0 132 100" style="${hx(q.coat)}"><use href="#hp2"/></svg>` +
   `<span>#${q.issue}${q.blocked_by ? `<br><i class=r>⛔#${q.blocked_by}</i>` : ''}</span></button>`;

@@ -484,10 +484,19 @@ fn stale_pr(head: &str, mergeable: &str, status: &str) -> String {
 fn a_conflicting_pr_after_pass_gets_update_rounds_then_needs_human() {
     let c = setup("drive-conflict");
     let wt = lane(&c, 10, "impl", "sendmeter-impl-12", "issue-12");
-    for (round, p) in [(1, "a1"), (2, "b2"), (3, "c3")] {
+    for (i, (v, p)) in [("FAIL", "a1"), ("FAIL", "b2")].into_iter().enumerate() {
         ev(
             &c,
-            20 + round,
+            11 + i as u64,
+            "verdict",
+            json!({"verdict": v, "sha": sha(p), "body": v}),
+        );
+    }
+    // #123: round 3 PASSes, then three update rounds PASS; none of them is a review round.
+    for (k, p) in [(1, "c3"), (2, "d4"), (3, "e5"), (4, "f6")] {
+        ev(
+            &c,
+            20 + k,
             "verdict",
             json!({"verdict": "PASS", "sha": sha(p), "body": "PASS"}),
         );
@@ -496,11 +505,7 @@ fn a_conflicting_pr_after_pass_gets_update_rounds_then_needs_human() {
             .reply("gh pr view issue-12", &stale_pr(&sha(p), "CONFLICTING", "DIRTY"))
             .reply("git -C", "");
         let s = &fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 12)];
-        assert_eq!(
-            s.rounds,
-            u32::try_from(round).unwrap(),
-            "each fresh review at the new head is a round"
-        );
+        assert_eq!((s.rounds, s.updates), (3, u32::try_from(k - 1).unwrap()));
         let (_, out) = run(&c, &r, &["waiting", "sendmeter"]);
         assert!(out.contains("conflict: PR #100 conflicts with staging"), "{out}");
         assert!(
@@ -509,15 +514,17 @@ fn a_conflicting_pr_after_pass_gets_update_rounds_then_needs_human() {
         );
         let (out, steps) = drive(&c, &r);
         assert_eq!(steps, ["conflict"], "{out}");
-        if round < 3 {
-            assert_eq!(state(&c), format!("fix({round})"));
+        if k < 4 {
+            assert_eq!(state(&c), format!("fix(3)+u{k}"));
             let brief = std::fs::read_to_string(wt.join(".brief.md")).unwrap();
             assert!(brief.contains("Merge `origin/staging` into this branch"), "{brief}");
             assert!(!brief.contains("Review findings to fix"), "{brief}");
+            lane(&c, 30 + k, "rev", "sendmeter-rev-12", "issue-12-rev");
+            assert_eq!(state(&c), format!("review(3)+u{k}"));
         } else {
-            assert!(out.contains("REFUSED ROUND_LIMIT"), "{out}");
+            assert!(out.contains("REFUSED UPDATE_LIMIT"), "{out}");
             assert_eq!(state(&c), "needs-human");
-            assert_eq!(r.count("herdr agent start"), 0, "no third update lane");
+            assert_eq!(r.count("herdr agent start"), 0, "no fourth update lane");
             idle(&c, &r);
         }
     }
@@ -540,7 +547,7 @@ fn a_behind_pr_after_pass_is_updated_the_same_way() {
     assert!(out.contains("conflict: PR #100 is behind staging"), "{out}");
     let (out, steps) = drive(&c, &r);
     assert_eq!(steps, ["conflict"], "{out}");
-    assert_eq!(state(&c), "fix(1)");
+    assert_eq!(state(&c), "fix(1)+u1");
 }
 
 #[test]
@@ -560,7 +567,7 @@ fn a_pushed_update_or_fix_head_still_conflicting_gets_a_review_not_another_updat
             .reply("git -C", "")
     };
     assert_eq!(drive(&c, &pr_at("a1")).1, ["conflict"]);
-    assert_eq!(state(&c), "fix(1)");
+    assert_eq!(state(&c), "fix(1)+u1");
     // The update lane pushed b2; GitHub has not recomputed `mergeable` yet.
     let (_, out) = run(&c, &pr_at("b2"), &["waiting", "sendmeter"]);
     assert!(out.contains("waiting for orch to spawn review"), "{out}");

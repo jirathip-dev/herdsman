@@ -1,0 +1,9 @@
+[Unit]
+Description=herdsman {label}
+
+[Service]
+Environment=PATH={path}
+ExecStart={args}
+StandardOutput=append:{log}
+StandardError=append:{log}
+{when}

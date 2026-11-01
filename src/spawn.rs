@@ -451,10 +451,10 @@ pub fn spawn(
             ),
         ));
     }
-    let known = events
+    let prior = events
         .iter()
-        .any(|e| e.kind == "spawn" && e.str("worktree") == Some(&wt));
-    if role != "orch" && p.worktree.exists() && !known {
+        .rfind(|e| e.kind == "spawn" && e.str("worktree") == Some(&wt));
+    if role != "orch" && p.worktree.exists() && prior.is_none() {
         if let Some(why) = dirty(r, &p.worktree) {
             dup.push(("WORKTREE_DIRTY", format!("{wt} is no fleet lane and has {why}")));
         }
@@ -469,13 +469,16 @@ pub fn spawn(
     if let Some(n) = issue {
         lane_admit(f, &events, fleet, n, role)?;
     }
-    let rounds = issue
+    let updates = issue
         .and_then(|n| fold(&events).remove(&(fleet.into(), n)))
-        .map_or(0, |s| s.rounds);
-    if o.update && rounds >= cfg.limits.review_rounds {
-        let why = format!("PR still conflicts after round {rounds}/{}", cfg.limits.review_rounds);
-        event("needs-human", json!({"code": "ROUND_LIMIT", "reason": why}))?;
-        return refused("ROUND_LIMIT", why);
+        .map_or(0, |s| s.updates);
+    if o.update && updates >= cfg.limits.update_rounds {
+        let why = format!(
+            "PR still conflicts after {updates}/{} update rounds",
+            cfg.limits.update_rounds
+        );
+        event("needs-human", json!({"code": "UPDATE_LIMIT", "reason": why}))?;
+        return refused("UPDATE_LIMIT", why);
     }
 
     // Host-load gate, before anything is created.
@@ -591,11 +594,19 @@ pub fn spawn(
     let mut d = lane_data(&p, &pane, ws);
     d["confirmed"] = json!(kicked.as_ref().is_ok_and(|c| *c));
     d["error"] = json!(kicked.as_ref().err().map(|e| format!("{e:#}")));
+    d["update"] = json!(o.update);
     if let Some(h) = sha.filter(|h| !h.is_empty()) {
         d["sha"] = json!(h);
     }
     event("spawn", d)?; // #107: logged even when the kick failed, so the running lane is tracked
     let confirmed = kicked?;
+    // #128: once confirmed, the superseded lane's pane goes (its folder is reused); live agents were handled above.
+    if let Some((agent, old)) = prior.and_then(|e| Some((e.str("agent")?, e.str("pane")?))) {
+        if o.supersede && confirmed && old != pane && !agents.iter().any(|a| a["pane_id"] == old) {
+            let _ = herdr::close(r, old);
+            event("lane-closed", json!({"agent": agent, "reason": "superseded"}))?;
+        }
+    }
     pj["pane"] = json!(pane);
     pj["confirmed"] = json!(confirmed);
     print_plan(out, &pj, o.json)?;

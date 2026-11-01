@@ -138,7 +138,7 @@ pub fn serial_use(events: &[Event], st: &States, fleet: &str, cfg: Option<&crate
 pub fn view(events: &[Event], st: &States, fleet: &str) -> Vec<Item> {
     let open = replay(events, fleet)
         .into_iter()
-        .filter(|i| state(st, fleet, i.issue) != "merged");
+        .filter(|i| !matches!(state(st, fleet, i.issue), "merged" | "closed"));
     open.map(|i| Item {
         blocked_by: i.blocked_by.filter(|b| state(st, fleet, *b) != "merged"),
         ..i
@@ -239,10 +239,10 @@ pub fn board(events: &[Event], fleet: &str, now: u64, cfg: Option<&crate::config
         ));
     }
     let queued = |n: u64| q.iter().any(|i| i.issue == n);
-    let rest = mine.iter().filter(|s| !queued(s.issue) && s.state != "merged");
+    let rest = mine.iter().filter(|s| !queued(s.issue) && !s.done());
     let merged = mine
         .iter()
-        .filter(|s| s.state == "merged" && now.saturating_sub(s.last_ts) < 86_400);
+        .filter(|s| s.done() && now.saturating_sub(s.last_ts) < 86_400);
     for s in rest.chain(merged) {
         lines.push(row("-".into(), s.issue, None));
     }

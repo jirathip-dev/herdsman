@@ -52,6 +52,16 @@ pub struct Serve {
     #[serde(default)]
     pub allowed_hosts: Vec<String>,
     pub approve_hint: Option<String>,
+    /// #98 `herdsman setup`: the board job's label (default `dev.herdsman.serve`), address, `tailscale serve` port.
+    pub launchd_label: Option<String>,
+    pub addr: Option<String>,
+    pub tailscale_https_port: Option<u16>,
+}
+
+impl Serve {
+    pub fn addr(&self) -> String {
+        self.addr.clone().unwrap_or_else(|| "127.0.0.1:7777".into())
+    }
 }
 
 /// `[accounts]`: account name -> env var holding its token, plus the settings below.
@@ -91,6 +101,8 @@ pub struct Fleet {
     pub serial_paths: Vec<String>,
     /// How many `--serial` issues may be in flight at once (`SERIAL_BUSY`); unset = 1.
     pub serial_max: Option<usize>,
+    /// #115: the Queue graph's lock mark for `--serial` issues, at most 8 characters; unset = `serial`.
+    pub serial_label: Option<String>,
     /// The only checks merge, `check` and `wait` look at (latest run of each); empty = all.
     #[serde(default)]
     pub required_checks: Vec<String>,
@@ -152,6 +164,7 @@ impl Role {
 #[serde(default)]
 pub struct Limits {
     pub review_rounds: u32,
+    pub update_rounds: u32,
     pub stall_minutes: u64,
     /// Host-load gate for `herdsman spawn` (`HOST_BUSY`).
     pub load_per_cpu: f64,
@@ -169,6 +182,7 @@ impl Default for Limits {
     fn default() -> Self {
         Limits {
             review_rounds: 3,
+            update_rounds: 3,
             stall_minutes: 30,
             load_per_cpu: 2.5,
             swapout_rate: 2000.0,
@@ -251,6 +265,9 @@ impl Config {
             bail!("notify: a type = \"webpush\" notifier needs sub = \"mailto:you@example.com\"");
         }
         for (name, f) in &c.fleet {
+            if !(1..=8).contains(&f.serial_label().chars().count()) {
+                bail!("fleet.{name}.serial_label: must be 1 to 8 characters");
+            }
             if f.notify.iter().any(|n| !n.webpush() && n.cmd.trim().is_empty()) {
                 bail!("fleet.{name}.notify: cmd must not be empty");
             }
@@ -307,6 +324,9 @@ impl Config {
 impl Fleet {
     pub fn driven(&self) -> bool {
         self.driver.as_deref() == Some("herdsman")
+    }
+    pub fn serial_label(&self) -> &str {
+        self.serial_label.as_deref().unwrap_or("serial")
     }
     pub fn role(&self, role: &str) -> Result<&Role> {
         self.role
