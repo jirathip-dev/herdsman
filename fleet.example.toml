@@ -11,6 +11,7 @@ repo = "acme/api"
 local = "~/Projects/api"
 integration = "staging"          # herdsman merge target; main is never a target
 # paused = true                  # `herdsman pause|resume api`: no next, impl/rev spawns refuse PAUSED
+# driver = "herdsman"            # `herdsman drive` runs the loop (cron); default "orch" (an AI orch lane)
 
 [fleet.api.role.orch]
 harness = "hermes"

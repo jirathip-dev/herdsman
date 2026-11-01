@@ -194,6 +194,10 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
     })
 }
 
+/// #92: a fix round may dispute a finding; the next, fresh reviewer decides.
+const PUSHBACK: &str = "If a finding is wrong or out of scope, say so in your report with file:line proof; \
+that is not a fix. The next reviewer decides.";
+
 /// The issue lane's `.brief.md` (`roles/brief*.md` templates).
 fn brief(f: &Fleet, issue: u64, p: &Plan, title: &str, body: &str, fix: Option<&str>) -> String {
     let (branch, integration) = (&p.branch, &f.integration);
@@ -202,7 +206,8 @@ fn brief(f: &Fleet, issue: u64, p: &Plan, title: &str, body: &str, fix: Option<&
         "design" => format!(include_str!("../roles/brief-design.md"), branch = branch, integration = integration),
         _ => format!(include_str!("../roles/brief-impl.md"), branch = branch, integration = integration, issue = issue),
     };
-    let fix = fix.map_or(String::new(), |v| format!("## Review findings to fix (latest FAIL verdict)\n\n{v}\n\n"));
+    let head = "## Review findings to fix (latest FAIL verdict)";
+    let fix = fix.map_or(String::new(), |v| format!("{head}\n\n{PUSHBACK}\n\n{v}\n\n"));
     format!(
         include_str!("../roles/brief.md"),
         agent = p.agent, repo = f.repo, issue = issue, role = role_prompt(&p.role),

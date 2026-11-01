@@ -60,6 +60,34 @@ issue and PR comments, `gh pr review`, `git push` to main, master, staging or th
 integration branch, and edits to fleet and Hermes profile config. Reviewer lanes are
 read-only: no edits except `verdict.md`, no `git commit|push|merge|rebase|reset`.
 
+## Drive
+
+A fleet with `driver = "herdsman"` (default `"orch"`) has no orchestrator lane: `herdsman drive [fleet]`
+does one pass, from cron after `herdsman check` ([setup.md](setup.md)) or the board's **Drive now**
+(paired devices only). Per issue, at most one step a pass, through the same gates as the CLI:
+
+| State | Step |
+| --- | --- |
+| `next` offers an issue | `spawn impl` (start) |
+| impl/fix lane idle, head pushed, PR open, not reviewed at that head | `spawn rev` (review) |
+| `verdict.md` written since the rev spawn, first line `PASS` or `FAIL` | `verdict --sha <head>` |
+| `ready`, CI green | `merge`; CI pending: wait |
+| `ready`, CI red | `verdict FAIL` at the same head (no new round), the failed check's log tail as the finding (ci-red) |
+| `fix(n)` after a FAIL | `spawn impl --supersede` (fix); the brief carries the findings verbatim |
+| FAIL in round `review_rounds` | `verdict` logs `needs-human` with the findings; drive stops |
+| a lane killed | `spawn impl` (respawn) |
+| merged lanes left | `clean --yes` |
+
+Paused fleets are skipped. drive never answers asks (a lane's question stays a needs-you card),
+never passes `--force`, and never bypasses a refusal: `REFUSED` (e.g. `HOST_BUSY`, `CAP`,
+`SERIAL_BUSY`) is printed every pass and logged once per item an hour, and the step is retried
+next pass. Every action logs a passive `driven` event (step, command, result). A pass holds
+`<state dir>/drive.lock` (taken over after 30 min), so cron and the button never overlap; the
+board shows `driver: herdsman · last pass <age> ago`.
+
+A fix lane may push back on a finding in its report with file:line proof; that is not a fix,
+and the next (fresh) reviewer decides.
+
 ## Check and notifiers
 
 `herdsman check` alerts once per state on `stall`, `lane-dead` (a parked lane, clean and pushed with no

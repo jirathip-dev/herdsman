@@ -83,6 +83,16 @@ The orchestrator picks issues off the queue and spawns the lanes. Check it worke
 `<herdr-dir>` is the directory `command -v herdr` prints. Check it worked: `herdsman check`
 by hand exits 0 and prints nothing when all is well.
 
+Fleets with `driver = "herdsman"` have no orchestrator lane: `herdsman drive` runs the loop
+([lanes.md](lanes.md#drive)). Run it right after `herdsman check`, in the same cron line:
+
+```sh
+PATH=<home>/.local/share/herdsman/bin:<herdr-dir>:/usr/bin:/bin
+*/5 * * * * herdsman check ; herdsman drive
+```
+
+`herdsman drive` by hand prints one line per action and nothing when no step is due.
+
 Optional: reinstall when staging goes green, so the binary never lags it. A short script
 you can add to the same crontab:
 

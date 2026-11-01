@@ -101,6 +101,8 @@ pub struct Fleet {
     /// `herdsman pause`: `next` offers nothing and impl/rev spawns refuse PAUSED.
     #[serde(default)]
     pub paused: bool,
+    /// #92: who runs the loop, `"orch"` (an AI lane, the default) or `"herdsman"` (`herdsman drive`).
+    pub driver: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -254,6 +256,9 @@ impl Config {
 }
 
 impl Fleet {
+    pub fn driven(&self) -> bool {
+        self.driver.as_deref() == Some("herdsman")
+    }
     pub fn role(&self, role: &str) -> Result<&Role> {
         self.role.get(role).ok_or_else(|| anyhow!("role '{role}' not configured"))
     }

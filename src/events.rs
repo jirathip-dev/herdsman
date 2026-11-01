@@ -180,9 +180,9 @@ pub fn last_spawn<'a>(events: &'a [Event], agent: &str) -> Option<&'a Event> {
 }
 
 /// Events `herdsman check` and notifiers write about an issue; they are not activity.
-pub const PASSIVE: [&str; 10] = [
+pub const PASSIVE: [&str; 11] = [
     "stall", "lane-dead", "ready-unmerged", "notify-failed", "push-sent",
-    "account-capped", "orch-holding", "ask-waiting", "orch-nudged", "orch-stuck",
+    "account-capped", "orch-holding", "ask-waiting", "orch-nudged", "orch-stuck", "driven",
 ];
 
 /// Why ask `a` closed: answered, its issue merged, or its lane killed, cleaned or respawned; `None` while open.
