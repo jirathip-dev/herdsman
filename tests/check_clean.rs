@@ -442,3 +442,28 @@ fn clean_reclaims_lanes_whose_issue_closed_outside_merge() {
     assert_eq!(r1.count("gh "), 0, "the closed-issue read is cached");
     assert_eq!(kinds(&c, "clean"), 1);
 }
+
+#[test]
+fn orphan_lane_fires_once_per_agent() {
+    let d = tmpdir("orphan-lane");
+    let c = ctx(&d, CONFIG);
+    let rows = [
+        ("sendmeter-rev-93-r1", "working", "/w", "w6:p1"),
+        ("sendmeter-orch", "idle", "/w", "w1:p1"),
+        ("other-impl-5", "idle", "/w", "w2:p1"),
+        (LANE, "working", "/w", "w9:p1"),
+    ];
+    spawn_ev(&c, NOW - 60, 12, LANE);
+    let r = Fake::default().reply("herdr agent list", &agents(&rows));
+    let out = check(&c, &r);
+    assert!(
+        out.contains("sendmeter #93 orphan-lane: herdr agent sendmeter-rev-93-r1 has no spawn event"),
+        "{out}"
+    );
+    assert_eq!(
+        kinds(&c, "orphan-lane"),
+        1,
+        "the logged lane, orch and other fleets are no orphans"
+    );
+    assert_eq!(check(&c, &r), "", "once");
+}

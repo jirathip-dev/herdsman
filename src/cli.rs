@@ -173,7 +173,7 @@ enum Cmd {
     },
     /// One pass of the loop for `driver = "herdsman"` fleets: do every step that's due, then exit; safe from cron
     Drive { fleet: Option<String> },
-    /// Alert once per state on stall, lane-dead, ready-unmerged, orch-holding, ask-waiting; nudge an idle orch; idempotent, safe from cron
+    /// Alert once per state on stall, lane-dead, ready-unmerged, orch-holding, ask-waiting, orphan-lane; nudge an idle orch; idempotent, safe from cron
     Check,
     /// Each `[accounts]` account: ok / capped until hh:mm, and the lanes on it (names only, never tokens)
     Accounts {

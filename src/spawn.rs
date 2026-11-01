@@ -443,6 +443,9 @@ pub fn spawn(
             dup.push(("WORKTREE_DIRTY", format!("{wt} is no fleet lane and has {why}")));
         }
     }
+    if let Some(pane) = orphan(&agents, &events, &p, false).filter(|_| live.len() == 1 && !o.supersede) {
+        return adopt(ctx, cfg, r, out, (fleet, issue, role), &pane).map(|()| true);
+    }
     if let Some((code, msg)) = dup.first().filter(|_| !o.supersede) {
         return refused(code, format!("{msg}; `--supersede` replaces it"));
     }
@@ -528,8 +531,12 @@ pub fn spawn(
     herdr::ok(r, &p.lane_cmd(&pane))?;
     let start = herdr::exec(r, &p.start_cmd(ctx, &pane))?;
     if start.code != 0 {
+        let taken = herdr::failed_with(&start, "agent_name_taken");
+        if let Some(pane) = orphan(&if taken { host::agents(r)? } else { vec![] }, &events, &p, true) {
+            return adopt(ctx, cfg, r, out, (fleet, issue, role), &pane).map(|()| true);
+        }
         // Under load herdr can time out while the harness still comes up: keep it as the lane.
-        if !herdr::timed_out(&start) {
+        if !herdr::failed_with(&start, "timeout") {
             bail!("herdr agent start failed: {}", start.stderr.trim());
         }
         if herdr::harness_in(r, &pane).is_none() {
@@ -541,17 +548,27 @@ pub fn spawn(
         }
         herdr::exec(r, &herdr::rename_argv(&pane, &p.agent))?;
     }
-    let confirmed = h.kick(r, &p, &pane)?;
+    let kicked = h.kick(r, &p, &pane);
     let mut d = lane_data(&p, &pane, ws);
-    d["confirmed"] = json!(confirmed);
+    d["confirmed"] = json!(kicked.as_ref().is_ok_and(|c| *c));
+    d["error"] = json!(kicked.as_ref().err().map(|e| format!("{e:#}")));
     if let Some(h) = sha.filter(|h| !h.is_empty()) {
         d["sha"] = json!(h);
     }
-    event("spawn", d)?;
+    event("spawn", d)?; // #107: logged even when the kick failed, so the running lane is tracked
+    let confirmed = kicked?;
     pj["pane"] = json!(pane);
     pj["confirmed"] = json!(confirmed);
     print_plan(out, &pj, o.json)?;
     Ok(confirmed)
+}
+
+/// #107: the pane of the lane's agent (its planned name, or `unnamed`) in its worktree that no `spawn` logged: adopt it.
+fn orphan(agents: &[Value], events: &[Event], p: &Plan, unnamed: bool) -> Option<String> {
+    let mine = |a: &&Value| a["name"] == p.agent.as_str() || unnamed && a["name"].as_str().is_none_or(str::is_empty);
+    let pane = host::live_in(agents, "\0", &p.worktree).into_iter().find(mine)?["pane_id"].as_str()?; // by cwd only
+    let logged = events.iter().any(|e| e.kind == "spawn" && e.str("pane") == Some(pane));
+    (!logged).then(|| pane.into())
 }
 
 /// `SERIAL_BUSY` (`serial_max` other `--serial` issues in flight) and CAP (`max_impl` / `max_rev`).
