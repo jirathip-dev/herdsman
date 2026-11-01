@@ -21,9 +21,19 @@ herdsman clean --yes                  # reclaim merged or closed-issue lanes
 
 - `HOST_BUSY`: memory pressure warn or worse, swap-out rate or load per CPU over
   `[limits]`. `--force` overrides and logs an `override` event.
+- `DISK_LOW`: free disk on `/` under `[limits] min_free_gb` (default 10 GB). `herdsman clean --yes`
+  frees the build folders (`target/`, `node_modules/`, `.next/`, `dist/`) of merged or closed lanes,
+  even kept ones (never a live lane's, never one git tracks), and reports the bytes freed (approximate: a
+  hard-linked file counts once per link).
 - `LANE_LIVE`: a herdr agent is live in the worktree, or the log has an unfinished lane.
 - `WORKTREE_DIRTY`: unpushed or uncommitted work from no known lane.
 - `SERIAL_BUSY`, `CAP`, `MCP_FORBIDDEN`, `MERGED`: see `herdsman help --agent`.
+
+A fleet's `env` table is exported into every lane's shell. Share one build cache per fleet instead of
+one per lane, e.g. `[fleet.herdsman.env] CARGO_TARGET_DIR = "~/.cache/herdsman/target/herdsman"` (cargo's
+lock makes it safe; lanes queue on it). Node fleets: pnpm's store is already shared; for npm set
+`npm_config_cache`. `clone_node_modules = true` APFS-clones (`cp -cR`) the local checkout's
+`node_modules` into a new lane when `package-lock.json` and `pnpm-lock.yaml` match.
 
 `herdsman close <agent>` closes the pane of a herdr agent that is not a herdsman lane (by name or pane id),
 never touching files or worktrees, and logs a passive `closed-other`; a logged lane is refused `IS_LANE`

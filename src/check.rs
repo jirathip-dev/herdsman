@@ -340,6 +340,7 @@ pub fn clean(
     let agents = host::agents(r).context("cannot list herdr agents; refusing to clean blind")?;
     let mut seen = std::collections::BTreeSet::new();
     let mut failed = 0;
+    let mut freed = 0;
     let mut closed = BTreeMap::new();
     // Newest spawn per worktree wins (it has the current pane).
     for e in events
@@ -376,6 +377,9 @@ pub fn clean(
         seen.insert(wt);
         let pane = e.str("pane").unwrap_or_default();
         let keep = if host::live_in(&agents, e.str("agent").unwrap_or_default(), Path::new(wt)).is_empty() {
+            if yes {
+                freed += purge(r, out, Path::new(wt))?;
+            }
             dirty(r, Path::new(wt))
         } else {
             Some("live agent".to_string())
@@ -428,11 +432,42 @@ pub fn clean(
     }
     if !yes {
         writeln!(out, "dry run: nothing changed; pass --yes to remove")?;
+    } else if freed > 0 {
+        writeln!(out, "freed {freed} bytes of build folders")?;
     }
     if failed > 0 {
         anyhow::bail!("{failed} worktree(s) could not be removed; see above");
     }
     Ok(())
+}
+
+const BUILD_DIRS: [&str; 4] = ["target", "node_modules", ".next", "dist"];
+/// #103: delete a lane's build folders, even when the worktree stays; the bytes freed. One git does not ignore stays.
+fn purge(r: &dyn Runner, out: &mut dyn Write, wt: &Path) -> Result<u64> {
+    let mut freed = 0;
+    for d in BUILD_DIRS {
+        let dir = wt.join(d);
+        if !dir.is_dir() {
+            continue;
+        }
+        if ok(r, "git", &["-C", &wt.to_string_lossy(), "check-ignore", "-q", d]).is_err() {
+            writeln!(out, "keep {}: not git-ignored", dir.display())?;
+            continue;
+        }
+        let size = du(&dir);
+        if std::fs::remove_dir_all(&dir).is_ok() {
+            freed += size;
+        }
+    }
+    Ok(freed)
+}
+
+/// Bytes under `p` (symlinks not followed); the worktree total for the disk row.
+pub fn du(p: &Path) -> u64 {
+    match std::fs::symlink_metadata(p) {
+        Ok(m) if m.is_dir() => std::fs::read_dir(p).map_or(0, |d| d.flatten().map(|e| du(&e.path())).sum()),
+        m => m.map_or(0, |m| m.len()),
+    }
 }
 
 /// The fleet's closed issue numbers, read once per fleet per run; a failed read is reported and counts as none.

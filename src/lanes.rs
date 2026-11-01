@@ -203,20 +203,43 @@ fn word(w: &str) -> (String, bool) {
     (w.into(), false)
 }
 
+/// #105, one set for every harness: ≥ 20 rule glyphs in a row make a divider; detail glyphs open a status's lines.
+const GLYPHS: [&str; 2] = ["─━═╌┄▔▁", "⎿┊│"];
+
 /// Box-drawing rules, prompts and status bars: no activity there.
 fn chrome(l: &str) -> bool {
     l.chars().all(|c| "─━│┃╭╮╰╯┌┐└┘═╌┄▔▁ ".contains(c)) || l.starts_with(['❯', '⏵', '>', '›'])
 }
 
-/// The latest action on screen (Claude `⏺`, Hermes `💻`/`┊`, else non-chrome), masked, ≤ 60 chars.
+/// A screen's transcript and live status. Not transcript: the frame from the second-last divider down, and the line
+/// above it opening with a glyph and holding a timer (`(25m 52s`: a spinner, a status bar) plus blank/detail lines.
+pub fn chat(screen: &str) -> (Vec<&str>, Option<&str>) {
+    let lines: Vec<&str> = screen.lines().collect();
+    let rule = |l: &&str| l.split(|c| !GLYPHS[0].contains(c)).any(|r| r.chars().count() >= 20);
+    let rules: Vec<usize> = (0..lines.len()).filter(|&i| rule(&lines[i])).collect();
+    let cut = rules.len().checked_sub(2).map_or(lines.len(), |i| rules[i]);
+    let after = |l: &str| {
+        let (t, pad) = (l.trim(), l.len() - l.trim_start().len());
+        t.is_empty() || pad >= 20 || pad > 0 && t.starts_with(|c| GLYPHS[1].contains(c))
+    };
+    let timer = |w: &str| matches!(w.strip_suffix(['h', 'm', 's']).map(str::parse::<u32>), Some(Ok(_)));
+    let live = |t: &str| t.starts_with(|c: char| !c.is_alphanumeric()) && t.split(['(', ' ', ')']).any(timer);
+    let i = lines[..cut].iter().rposition(|l| !after(l));
+    let status = i.filter(|&i| live(lines[i].trim()));
+    let body = lines[..status.unwrap_or(cut)].iter().copied().filter(|l| !rule(l));
+    (body.collect(), status.map(|i| lines[i].trim()))
+}
+
+/// The live status line, else the latest action (Claude `⏺`, Hermes `💻`/`┊`, else non-chrome), masked, ≤ 60 chars.
 pub fn activity(harness: &str, screen: &str) -> String {
-    let lines: Vec<&str> = screen.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let (body, status) = chat(screen);
+    let lines: Vec<&str> = body.into_iter().map(str::trim).filter(|l| !l.is_empty()).collect();
     let line = match harness {
         "claude" => lines.iter().rev().find(|l| l.starts_with('⏺')),
         "hermes" => lines.iter().rev().find(|l| l.contains('💻') || l.starts_with('┊')),
         _ => lines.iter().rev().find(|l| !chrome(l)),
     };
-    let m = mask(line.copied().unwrap_or_default());
+    let m = mask(status.or(line.copied()).unwrap_or_default());
     if m.chars().count() > 60 {
         m.chars().take(59).collect::<String>() + "…"
     } else {

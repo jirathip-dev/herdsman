@@ -64,6 +64,47 @@ fn claude_role_dry_run_uses_synced_profile() {
     assert!(read(&c.state).unwrap().is_empty(), "dry-run logs nothing");
 }
 
+/// #103: `[fleet.<n>] env` is exported into the lane's shell after HERDSMAN_LANE, `~/` expanded.
+#[test]
+fn fleet_env_is_exported_into_the_lane() {
+    let d = tmpdir("spawn-env");
+    let cfg = CONFIG.replace(
+        "[fleet.sendmeter.role.impl]",
+        "[fleet.sendmeter.env]\nCARGO_TARGET_DIR = \"~/.cache/herdsman/target/sendmeter\"\nnpm_config_cache = \"/c/npm\"\n\n[fleet.sendmeter.role.impl]",
+    );
+    let c = ctx(&d, &cfg);
+    let p = plan(&c, &Fake::default(), "impl");
+    let home = std::env::var("HOME").unwrap();
+    assert_eq!(
+        words(&p["commands"][2])[4..],
+        [
+            "export".to_string(),
+            "HERDSMAN_LANE='sendmeter:12:impl'".into(),
+            format!("CARGO_TARGET_DIR='{home}/.cache/herdsman/target/sendmeter'"),
+            "npm_config_cache='/c/npm'".into(),
+        ]
+    );
+}
+
+/// #103: `clone_node_modules` needs some lockfile, and every lockfile identical in both checkouts.
+#[test]
+fn lockfiles_match_needs_an_identical_lockfile() {
+    let d = tmpdir("lockfiles");
+    let (local, wt) = (d.join("local"), d.join("wt"));
+    std::fs::create_dir_all(&local).unwrap();
+    std::fs::create_dir_all(&wt).unwrap();
+    let m = || herdsman::spawn::lockfiles_match(&local, &wt);
+    assert!(!m(), "no lockfile anywhere is no match");
+    std::fs::write(local.join("package-lock.json"), "a").unwrap();
+    assert!(!m(), "missing in the lane");
+    std::fs::write(wt.join("package-lock.json"), "a").unwrap();
+    assert!(m());
+    std::fs::write(wt.join("pnpm-lock.yaml"), "b").unwrap();
+    assert!(!m(), "a lockfile only the lane has");
+    std::fs::write(local.join("pnpm-lock.yaml"), "c").unwrap();
+    assert!(!m(), "differing lockfiles");
+}
+
 #[test]
 fn hermes_role_dry_run_kicks_prompt_after_boot() {
     let d = tmpdir("spawn-hermes");
