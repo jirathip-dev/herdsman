@@ -152,8 +152,8 @@ pub fn next(events: &[Event], fleet: &str) -> (i32, String) {
         .into_iter()
         .filter(|i| state(&st, fleet, i.issue) == "queued")
         .collect();
-    if let Some(i) = free.iter().find(|i| i.blocked_by.is_none()) {
-        return (0, i.issue.to_string());
+    if let Some(n) = startable(events, fleet).into_iter().next() {
+        return (0, n);
     }
     match free.first() {
         Some(Item {
@@ -163,6 +163,22 @@ pub fn next(events: &[Event], fleet: &str) -> (i32, String) {
         }) => (2, format!("#{issue} is blocked by #{b}")),
         _ => (1, format!("{fleet}: queue empty")),
     }
+}
+
+/// Every unblocked queued issue with no lane, in queue order: drive tries each, `next` is the first.
+pub fn startable(events: &[Event], fleet: &str) -> Vec<String> {
+    let st = fold(events);
+    let free = |i: &Item| state(&st, fleet, i.issue) == "queued" && i.blocked_by.is_none();
+    let q = view(events, &st, fleet);
+    q.into_iter().filter(free).map(|i| i.issue.to_string()).collect()
+}
+
+/// (code, why) of drive's refused start of queued issue `n` in the last hour: `skipped this pass` (status, board).
+pub fn skipped<'a>(events: &'a [Event], st: &States, fleet: &str, n: u64, now: u64) -> Option<(&'a str, &'a str)> {
+    let s = |e: &&Event| e.kind == "driven" && e.fleet == fleet && e.issue == Some(n) && e.str("step") == Some("start");
+    (state(st, fleet, n) == "queued").then_some(())?;
+    let e = events.iter().rev().find(s).filter(|e| now < e.ts + 3600)?;
+    Some((e.str("code")?, e.str("result")?.split_once(": ").map_or("", |w| w.1)))
 }
 
 pub fn ls_json(events: &[Event], fleet: &str) -> Value {
@@ -187,9 +203,11 @@ pub fn board(events: &[Event], fleet: &str, now: u64, cfg: Option<&crate::config
     let mut lines = vec![format!("{fleet}: {} queued, {active} active{serial}", q.len()), head];
     let row = |pos: String, n: u64, last: Option<String>| {
         let s = st.get(&(fleet.to_string(), n));
+        let skip = skipped(events, &st, fleet, n, now).map(|(c, _)| format!("skip {c}"));
         let lane: String = s
-            .and_then(|s| s.lane.as_deref())
-            .unwrap_or("-")
+            .and_then(|s| s.lane.clone())
+            .or(skip)
+            .unwrap_or_else(|| "-".into())
             .chars()
             .take(20)
             .collect();

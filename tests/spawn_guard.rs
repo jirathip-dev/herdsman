@@ -433,3 +433,101 @@ fn adopt_records_running_lane() {
     );
     assert!(!r.called("herdr agent rename"));
 }
+
+// --- #107: no orphan lanes ---
+
+#[test]
+fn host_busy_creates_no_worktree_dir() {
+    let d = tmpdir("host-busy-nothing");
+    let c = ctx(&d, CONFIG);
+    let r = happy(&c, NO_AGENTS).once("sysctl -n vm.loadavg", 0, "{ 26.90 3.00 2.00 }\n");
+    std::fs::remove_dir_all(wt(&c)).unwrap();
+    assert_refused(&c, &r, &[], "HOST_BUSY");
+    assert!(!wt(&c).exists(), "no worktree dir");
+}
+
+/// `happy`, but `herdr agent prompt` fails as a runner error (the kick cannot be delivered).
+struct KickFails(Fake);
+impl Runner for KickFails {
+    fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<Out> {
+        anyhow::ensure!(
+            !(prog == "herdr" && args[..2] == ["agent", "prompt"]),
+            "agent_not_ready"
+        );
+        self.0.run(prog, args)
+    }
+    fn sleep(&self, secs: u64) {
+        self.0.sleep(secs);
+    }
+}
+
+#[test]
+fn kick_failure_after_start_still_logs_unconfirmed_spawn() {
+    let d = tmpdir("kick-fails");
+    let c = ctx(&d, CONFIG);
+    let (exit, out) = spawn(&c, &KickFails(happy(&c, NO_AGENTS)), &[]);
+    assert_eq!(exit, 1, "{out}");
+    let ev = read(&c.state).unwrap();
+    let s = ev.iter().find(|e| e.kind == "spawn").expect("spawn logged");
+    assert_eq!(
+        (s.str("agent"), s.data["confirmed"].clone()),
+        (Some("sendmeter-impl-12"), json!(false))
+    );
+    assert!(s.str("error").unwrap().contains("agent_not_ready"), "{:?}", s.data);
+}
+
+const TAKEN: &str = r#"{"error":{"code":"agent_name_taken","message":"agent name already in use"}}"#;
+const PANE_P7: &str = r#"{"result":{"pane":{"pane_id":"w9:p7","workspace_id":"w9","agent":"hermes"}}}"#;
+
+/// The guard's `agent list` sees nothing; after `agent_name_taken` the next one shows the orphan in `cwd`.
+fn name_taken(c: &herdsman::Ctx, cwd: &str) -> Fake {
+    let list = agents(&[("sendmeter-impl-12", "working", cwd, "w9:p7")]);
+    happy(c, &list)
+        .once("herdr agent list", 0, NO_AGENTS)
+        .once_err("herdr agent start", 1, TAKEN)
+        .once("herdr pane get w9:p7", 0, PANE_P7)
+        .reply("herdr agent rename w9:p7 sendmeter-impl-12", "{}")
+}
+
+#[test]
+fn agent_name_taken_in_lane_worktree_adopts_the_orphan() {
+    let d = tmpdir("taken-adopt");
+    let c = ctx(&d, CONFIG);
+    let r = name_taken(&c, wt(&c).to_str().unwrap());
+    let (exit, out) = spawn(&c, &r, &[]);
+    assert_eq!(exit, 0, "{out} {:?}", r.calls.borrow());
+    let ev = read(&c.state).unwrap();
+    let s = ev.iter().find(|e| e.kind == "spawn").expect("spawn logged");
+    assert_eq!(
+        (s.str("agent"), s.str("pane")),
+        (Some("sendmeter-impl-12"), Some("w9:p7"))
+    );
+    assert_eq!(s.data["adopted"], true);
+}
+
+#[test]
+fn agent_name_taken_elsewhere_is_refused_as_before() {
+    let d = tmpdir("taken-elsewhere");
+    let c = ctx(&d, CONFIG);
+    let r = name_taken(&c, "/elsewhere");
+    let (exit, out) = spawn(&c, &r, &[]);
+    assert_eq!(exit, 1, "{out}");
+    assert!(!r.called("herdr agent rename"));
+    assert!(read(&c.state).unwrap().is_empty(), "nothing logged");
+}
+
+#[test]
+fn named_orphan_in_worktree_is_adopted_not_lane_live() {
+    let d = tmpdir("dup-orphan");
+    let c = ctx(&d, CONFIG);
+    let list = agents(&[("sendmeter-impl-12", "working", wt(&c).to_str().unwrap(), "w9:p7")]);
+    let r = happy(&c, &list)
+        .once("herdr pane get w9:p7", 0, PANE_P7)
+        .reply("herdr agent rename w9:p7 sendmeter-impl-12", "{}");
+    let (exit, out) = spawn(&c, &r, &[]);
+    assert_eq!(exit, 0, "{out}");
+    assert!(!r.called("herdr agent start"), "nothing started");
+    let ev = read(&c.state).unwrap();
+    assert_eq!(ev.iter().filter(|e| e.kind == "spawn").count(), 1);
+    assert_eq!(ev[0].data["adopted"], true);
+}

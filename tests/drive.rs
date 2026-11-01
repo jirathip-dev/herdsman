@@ -589,3 +589,125 @@ fn a_pushed_update_or_fix_head_still_conflicting_gets_a_review_not_another_updat
     let (code, out) = run(&c, &Fake::default(), &["spawn", "sendmeter", "12", "rev", "--update"]);
     assert!(code == 3 && out.contains("REFUSED BAD_VALUE"), "{out}");
 }
+
+const SERIAL: &str = "serial_paths = [\"supabase/migrations/**\"]";
+
+/// #100: a driven fleet with `extra` config lines, issues `ns` queued.
+fn fanout(name: &str, extra: &str, ns: &[&str]) -> herdsman::Ctx {
+    let c = ctx(
+        &tmpdir(name),
+        &CONFIG.replace(
+            "integration = \"staging\"",
+            &format!("integration = \"staging\"\ndriver = \"herdsman\"\n{extra}"),
+        ),
+    );
+    let add = [&["queue", "sendmeter", "add"][..], ns].concat();
+    assert_eq!(run(&c, &Fake::default(), &add).0, 0);
+    c
+}
+
+fn fan_fake(agents: &str) -> Fake {
+    fake(agents)
+        .reply("git -C", "")
+        .reply("gh issue view", r#"{"title":"t","body":"b"}"#)
+}
+
+/// The herdr agent list with issues `ns`' impl lanes working.
+fn working(c: &herdsman::Ctx, ns: &[u64]) -> String {
+    let wt = |n: u64| {
+        c.worktrees
+            .join(format!("sendmeter/issue-{n}"))
+            .to_string_lossy()
+            .to_string()
+    };
+    let rows: Vec<(String, String)> = ns.iter().map(|n| (format!("sendmeter-impl-{n}"), wt(*n))).collect();
+    let rows: Vec<_> = rows
+        .iter()
+        .map(|(a, w)| (a.as_str(), "working", w.as_str(), "w9:p1"))
+        .collect();
+    agents(&rows)
+}
+
+fn state_of(c: &herdsman::Ctx, n: u64) -> String {
+    fold(&read(&c.state).unwrap())
+        .get(&("sendmeter".to_string(), n))
+        .map_or("queued".into(), |s| s.state.clone())
+}
+
+#[test]
+fn one_pass_starts_every_free_item_in_order_with_a_fresh_host_sample_each() {
+    let c = fanout("drive-fan-all", "", &["1", "2", "3"]);
+    let r = fan_fake(NO_AGENTS);
+    let (out, steps) = drive(&c, &r);
+    assert_eq!(steps, ["start", "start", "start"], "{out}");
+    let at = |n: u64| r.index(&format!("herdr agent start sendmeter-impl-{n}")).unwrap();
+    assert!(at(1) < at(2) && at(2) < at(3), "{:?}", r.calls.borrow());
+    assert_eq!(
+        r.count("sysctl -n kern.memorystatus_vm_pressure_level"),
+        3,
+        "one sample per start"
+    );
+    assert!((1..=3).all(|n| state_of(&c, n) == "impl"));
+    // Nothing free on the second pass: a no-op.
+    idle(&c, &fake(&working(&c, &[1, 2, 3])));
+}
+
+#[test]
+fn a_serial_busy_item_is_skipped_and_keeps_its_place() {
+    let c = fanout("drive-fan-serial", SERIAL, &["9", "1", "--serial"]);
+    assert_eq!(run(&c, &Fake::default(), &["queue", "sendmeter", "add", "2", "3"]).0, 0);
+    let wt = c.worktrees.join("sendmeter/issue-9");
+    std::fs::create_dir_all(&wt).unwrap();
+    let d = json!({"role": "impl", "agent": "sendmeter-impl-9", "worktree": wt, "branch": "issue-9"});
+    append(&c.state, &Event::new(5, "sendmeter", Some(9), "spawn", d)).unwrap();
+    let r = fan_fake(&working(&c, &[9]));
+    let (out, steps) = drive(&c, &r);
+    assert_eq!(steps, ["start", "start", "start"], "{out}");
+    assert!(out.contains("sendmeter #1 start: REFUSED SERIAL_BUSY"), "{out}");
+    assert!(!r.called("herdr agent start sendmeter-impl-1"));
+    assert_eq!((state_of(&c, 2), state_of(&c, 3)), ("impl".into(), "impl".into()));
+    assert_eq!(
+        run(&c, &Fake::default(), &["next", "sendmeter"]),
+        (0, "1\n".into()),
+        "1 stays first"
+    );
+    let status = run(&c, &fake(&working(&c, &[2, 3, 9])), &["status", "sendmeter"]).1;
+    assert!(
+        status.contains("skipped this pass: SERIAL_BUSY (serial #9 is unmerged (impl)"),
+        "{status}"
+    );
+    let board = run(&c, &Fake::default(), &["board", "sendmeter"]).1;
+    assert!(board.contains(" #1     queued      skip SERIAL_BUSY "), "{board}");
+    // The second pass: #1 still refused (logged once an hour), nothing else free: a no-op.
+    let r = fan_fake(&working(&c, &[2, 3, 9]));
+    idle(&c, &r);
+}
+
+#[test]
+fn host_busy_stops_the_pass_and_cap_stops_starting() {
+    let c = fanout("drive-fan-busy", "", &["1", "2", "3"]);
+    let busy = Fake {
+        replies: fan_fake(NO_AGENTS).replies,
+        ..Default::default()
+    }
+    .once("sysctl -n kern.memorystatus_vm_pressure_level", 0, "1\n")
+    .once("sysctl -n kern.memorystatus_vm_pressure_level", 0, "4\n");
+    let (out, steps) = drive(&c, &busy);
+    assert_eq!(steps, ["start", "start"], "{out}");
+    assert!(out.contains("sendmeter #2 start: REFUSED HOST_BUSY"), "{out}");
+    assert_eq!(
+        busy.count("sysctl -n kern.memorystatus_vm_pressure_level"),
+        2,
+        "#3 not tried"
+    );
+    assert_eq!(state_of(&c, 3), "queued");
+
+    let c = fanout("drive-fan-cap", "max_impl = 1", &["1", "2", "3"]);
+    let r = fan_fake(NO_AGENTS);
+    let (out, steps) = drive(&c, &r);
+    assert_eq!(steps, ["start", "start"], "{out}");
+    assert!(out.contains("sendmeter #2 start: REFUSED CAP"), "{out}");
+    assert!(!out.contains("#3"), "{out}");
+    assert_eq!((state_of(&c, 1), state_of(&c, 3)), ("impl".into(), "queued".into()));
+    idle(&c, &fan_fake(&working(&c, &[1])));
+}
