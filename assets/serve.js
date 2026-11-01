@@ -554,4 +554,6 @@ addEventListener('touchend', () => {
   ptr.hidden = true;
   if (py > 70) refresh();
 });
+// #114: iOS Safari ignores user-scalable=no for pinch.
+addEventListener('gesturestart', e => e.preventDefault(), { passive: false });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register(R + 'sw.js').catch(() => {});
