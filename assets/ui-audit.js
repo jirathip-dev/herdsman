@@ -168,8 +168,11 @@
       window.fetch = (u, o) => Promise.resolve(Object.defineProperties(new Response(''), { redirected: { value: true }, url: { value: location.origin + '/?msg=' + encodeURIComponent(msg(o)) } }));
       const submit = op => { const f = $(`#queue input[name=op][value=${op}]`).form; f.inert = false; f.requestSubmit(); return f; };
       submit('mv');
-      setTimeout(() => { toasted = $('.msg.g') && $('.msg.g').textContent; drove = 'drive started for ' + submit('drive').elements.fleet.value; }, 500);
-      setTimeout(() => { drove = $('.msg.g') && $('.msg.g').textContent === drove; }, 1000);
+      setTimeout(() => {
+        toasted = $('.msg.g') && $('.msg.g').textContent;
+        try { drove = 'drive started for ' + submit('drive').elements.fleet.value; } catch (err) { drove = 'threw: ' + err.message; }
+      }, 500);
+      setTimeout(() => { const m = $('.msg.g, .msg.r'); drove = m && m.textContent === drove || `want "${drove}", saw "${m && m.textContent}"`; }, 1000);
     },
   };
   let toasted = null, drove = null, href = null;
