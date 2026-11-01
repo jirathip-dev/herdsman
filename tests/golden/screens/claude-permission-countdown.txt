@@ -1,0 +1,12 @@
+⏺ Bash(cp /Users/me/qg.bak tests/queue_graph.rs && cargo fmt && S=/Users/me/snaps; rm -f $S/*.png; HERDSMAN_SNAPSHOTS=$S cargo test --test queue_graph)
+
+────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ │ cp /Users/me/qg.bak tests/queue_graph.rs && cargo fmt && S=/Users/me/snaps; rm -f $S/*.png; HERDSMAN_SNAPSHOTS=$S cargo test --test queue_graph
+ │ Dangerous rm operation on possibly-empty variable path: $S/*.png in `rm -f $S/*.png` (rewrite it as "${S:?}"/*.png or use a literal path)
+ ⚠ Claude Code will automatically deny this request in 0:14, to avoid blocking progress on an unattended session
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend

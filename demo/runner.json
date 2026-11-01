@@ -20,5 +20,8 @@
  "git -C /srv/acme/worktrees/docs-impl-7 status --porcelain": "",
  "git -C /srv/acme/worktrees/docs-impl-7 rev-list": "0\n",
  "git -C /srv/acme/worktrees/docs-impl-7 rev-parse": "3b1f0c7\n",
- "git -C /srv/acme/worktrees/docs-impl-7 log": "3b1f0c7000000000000000000000000000000000 1793420000\n"
+ "git -C /srv/acme/worktrees/docs-impl-7 log": "3b1f0c7000000000000000000000000000000000 1793420000\n",
+ "herdr status": "client:\n  version: 0.9.5\n\nserver:\n  status: running\n  version: 0.9.5\n",
+ "df -k /": "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk3s1 488245288 470000000 8388608 99% /\n",
+ "du -sk": "3145728\t/srv/acme/worktrees\n"
 }

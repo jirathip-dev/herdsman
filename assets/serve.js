@@ -211,7 +211,66 @@ const el = (tag, cls, text) => Object.assign(document.createElement(tag), { clas
 // #58: controls are bracket text, the label in a span that ellipsises (#68). A select hides behind its short `[opus ▾]` label (the native picker
 // keeps full names); ▲/▼ drop their words; a choice (ask or menu option) wraps in a span, its full text in title (#63 A).
 const short = o => (o ? o.textContent : '').replace(/^default.*/, 'default').replace(/.*\b(opus|sonnet|haiku)\b.*/, '$1');
+// #115: one map of what each state word means: the [?] legend sheet and every state word's title.
+const HINT = { queued: 'waiting its turn', impl: 'being built', 'review(n)': 'being checked, round n',
+  'fix(n)': 'fixing review findings, round n', ready: 'passed, waiting to merge', merged: 'merged into staging',
+  parked: 'lane closed, its work saved on the PR', dead: 'lane gone with unsaved work', 'needs you': 'waiting for your answer',
+  working: 'its lane is running', idle: 'its lane waits for a next step', done: 'its lane finished its turn' };
+const word = t => { const w = t.trim().split(/[\s·]/)[0].replace(/\(\d+\)/, '(n)'); return /^(needs-human|blocked|⏸)/.test(w) ? 'needs you' : w; };
+const hint = t => HINT[word(t)] ? `${word(t)} = ${HINT[word(t)]}` : '';
+const tip = e => { const h = hint(e.textContent); if (h) e.title = h; };
+// #115: a fleet's rows as a `git log --graph`: a row blocked by a row in view hangs off it (│ ├─ └─), children in queue
+// order, depth-first; past depth 3 it clamps (┆─, `on #b`), so the gutter is at most 6 columns. A blocker out of view is
+// a `! #b` tag, a --serial issue the lock and its fleet's label. The card sits in a box; ▲/▼ move among siblings.
+function graph(root) {
+  for (const p of new Set([...root.querySelectorAll('details.q')].map(d => d.parentNode))) {
+    let run = [];
+    for (const c of [...p.children, null]) {
+      if (c && c.matches('details.q') && !c.querySelector('.gt')) { run.push(c); continue; }
+      if (run.length) tree(p, run, c);
+      run = [];
+    }
+  }
+}
+function tree(p, rows, end) {
+  const n = d => d.querySelector('summary>span').textContent.slice(1), by = new Map(rows.map(d => [n(d), d]));
+  const up = d => by.get(d.dataset.b) || null, kids = new Map(rows.map(d => [d, []])), roots = [];
+  // A blocker loop (a → b → a) draws its rows as roots.
+  const par = d => { let x = up(d); const seen = new Set([d]); while (x && !seen.has(x)) { seen.add(x); x = up(x); } return x ? null : up(d); };
+  rows.forEach(d => (par(d) ? kids.get(par(d)) : roots).push(d));
+  const walk = (list, pre, depth) => list.forEach((d, i) => {
+    const last = i === list.length - 1, deep = depth > 3, st = d.querySelector('summary>span:nth-of-type(2)'), s = st.textContent;
+    const dot = st.className === 'r' || /^(⏸|needs)/.test(s) ? '!' : s === 'ready' ? '✓' : /^(impl|review|fix)/.test(s) ? '●' : '○';
+    const elbow = !depth ? '' : deep ? '<i class=c>┆─</i>' : last ? '<i class=e>└─</i>' : '<i class=t>├─</i>';
+    const k = kids.get(d).length && depth < 3 ? ' k' : '';
+    d.classList.add('d' + Math.min(depth, 3));
+    d.querySelector('summary').insertAdjacentHTML('afterbegin', `<i class=gt>${pre.slice(0, 2).join('')}${elbow}<b class="${st.className}${k}">${dot}</b></i>`);
+    const w = el('span', '');
+    st.replaceWith(w);
+    w.append(st);
+    tip(st);
+    const tag = (cls, text, title = '') => { const t = el('span', cls, text); if (title) { t.title = title; t.setAttribute('aria-label', title); } w.append(' ', t); };
+    if (d.dataset.s) tag('tag m', '🔒' + d.dataset.s, 'serial: one lane at a time');
+    if (d.dataset.b && !par(d)) tag('tag r', '! #' + d.dataset.b);
+    if (deep) tag('m', 'on #' + d.dataset.b);
+    const cd = el('div', 'cd');
+    cd.append(...[...d.children].filter(c => c.tagName !== 'SUMMARY'));
+    d.append(cd);
+    // The parser lifts the ▲/▼ forms out of their `<p><span class=btns>`; they go back in one `.btns` line.
+    const sib = list.filter(x => 'q' in x.dataset), j = sib.indexOf(d), old = cd.querySelectorAll('form:has([name=before],[name=after])');
+    const mv = (label, key, to) => { const c = old[0].cloneNode(true), i = c.querySelector('[name=before],[name=after]'); i.name = key; i.value = n(to); c.querySelector('button').textContent = label; return c; };
+    const fs = old.length ? [j > 0 && mv('▲ up', 'before', sib[j - 1]), sib[j + 1] && mv('▼ down', 'after', sib[j + 1])].filter(Boolean) : [];
+    cd.querySelectorAll('.btns').forEach(b => b.parentNode.remove());
+    old.forEach(f => f.remove());
+    if (fs.length) { const line = el('p', 'btns'); line.append(...fs); cd.append(line); }
+    p.insertBefore(d, end);
+    walk(kids.get(d), depth ? [...pre, last ? '<i>  </i>' : '<i class=p>│ </i>'] : [], depth + 1);
+  });
+  walk(roots, [], 0);
+}
 function tidy(root) {
+  graph(root);
+  root.querySelectorAll('.lr>span:nth-of-type(3)').forEach(tip);
   root.querySelectorAll('select').forEach(s => {
     if (s.parentNode.matches('.pk')) return;
     const k = el('label', 'pk'), t = el('span', '');
@@ -326,7 +385,25 @@ function open(e) {
   now.replaceChildren();
   old.replaceChildren();
   say(rev ? 'reviewer lane: read-only' : other ? 'not a herdsman lane: herdsman can only close its pane' : '', other ? null : true);
-  // Lock the page under the sheet (iOS scrolls the body otherwise); reopened mid-close, it is still locked.
+  sh.classList.remove('lg');
+  show(kb() ? 'full' : 'mid');
+  poll();
+  if (!other && !B.dataset.ro && !DEMO) cleanable();
+  timer = setInterval(poll, 5000);
+}
+// #115 amendment A: [?] shows the legend in the same sheet, its lane parts hidden (`.lg`): a line per state from HINT,
+// the dots, and each fleet's serial mark with the paths it guards (none without serial_paths).
+function legend() {
+  agent = null;
+  sh.classList.add('lg');
+  $('.hd b').textContent = 'what the marks mean';
+  const serial = new Set([...$$('#queue [data-sp]')].map(f => `🔒${f.dataset.s} one at a time: touches ${f.dataset.sp}`));
+  const dots = ['● a lane is on it', '○ waiting', '✓ ready', '! needs you'];
+  $('.top').replaceChildren(...Object.entries(HINT).map(([w, h]) => el('p', '', `${w} = ${h}`)), ...[...dots, ...serial].map(t => el('p', '', t)));
+  show('mid');
+}
+// Lock the page under the sheet (iOS scrolls the body otherwise); reopened mid-close, it is still locked.
+function show(d) {
   if (shut) { clearTimeout(shut); shut = 0; S.classList.remove('out'); } else {
     y = scrollY;
     B.style.top = -y + 'px';
@@ -338,10 +415,7 @@ function open(e) {
     S.classList.remove('drag');
   }
   fit();
-  snap(kb() ? 'full' : 'mid');
-  poll();
-  if (!other && !B.dataset.ro && !DEMO) cleanable();
-  timer = setInterval(poll, 5000);
+  snap(d);
 }
 // Slides off-screen, then hides; the scroll lock and the page position come back after the slide.
 function close() {
@@ -410,7 +484,14 @@ ta.oninput = () => {
 ta.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && matches().length) { e.preventDefault(); pick(matches()[0]); } };
 cmds.onclick = e => { const li = e.target.closest('li'); if (li) pick(li.textContent); };
 // Delegated: rows and needs-you cards are swapped in place. A menu option POSTs `/answer`.
+// #127: a prompt's command expands on tap; `auto-denies in m:ss` counts down from the pane read.
+document.addEventListener('click', e => { const c = e.target.closest('.ask .command'); if (c) c.classList.toggle('open'); });
+setInterval(() => $$('.ask .cd').forEach(c => {
+  const s = Math.max(0, c.dataset.until - Math.floor(Date.now() / 1000));
+  c.textContent = `auto-denies in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}), 1000);
 document.addEventListener('click', async e => {
+  if (e.target.closest('.qhelp')) return legend();
   const b = e.target.closest('.lane .lr, .ask .pick, .ask .rp');
   if (!b) return;
   if (b.classList.contains('lr')) return open(b.parentNode);

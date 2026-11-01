@@ -150,3 +150,36 @@ fn unpaused_fleet_resumes_a_parked_impl_to_review() {
     );
     assert_eq!(w.next_cmd.as_deref(), Some("herdsman spawn sendmeter 12 rev"));
 }
+
+/// #128 amendment A: a lane `clean` removed (issue closed on GitHub) is never dead; a truly vanished lane still is.
+#[test]
+fn cleaned_lane_of_a_closed_issue_is_not_dead() {
+    let (c, r) = fixture("closed-not-dead", false);
+    let check = |c: &herdsman::Ctx| {
+        let (code, out) = run(c, &r, &["check"]);
+        assert_eq!(code, 0, "{out}");
+        read(&c.state).unwrap()
+    };
+    let hits = |ev: &[Event], n: u64| {
+        ev.iter()
+            .any(|e| e.issue == Some(n) && matches!(e.kind.as_str(), "stall" | "lane-dead"))
+    };
+    let ev = check(&c);
+    assert!(hits(&ev, 14), "a vanished lane with no clean is dead");
+    let page = get(&Server::new(&c, &r, None), "/");
+    assert!(lane(&page, RISKY).contains("dead"), "{page}");
+
+    let c = fixture("closed-cleaned", false).0;
+    let d = json!({"worktree": format!("/wt/{RISKY}"), "pane": "w1:14", "why": "issue closed"});
+    append(&c.state, &Event::new(NOW - 3600, "sendmeter", Some(14), "clean", d)).unwrap();
+    let st = herdsman::events::fold(&read(&c.state).unwrap());
+    assert_eq!(st[&("sendmeter".to_string(), 14)].state, "closed");
+    assert!(!hits(&check(&c), 14), "no stall or lane-dead for a closed issue");
+    let page = get(&Server::new(&c, &r, None), "/");
+    assert!(
+        !page.contains(&format!("data-agent=\"{RISKY}\"")),
+        "no Dead row: {page}"
+    );
+    let (code, waiting) = run(&c, &r, &["waiting"]);
+    assert!(code == 0 && !waiting.contains("#14"), "{waiting}");
+}

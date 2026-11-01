@@ -141,3 +141,49 @@ fn herd_marks_the_issue_and_park_clears_the_card() {
     assert_eq!(st.state, "parked");
     assert!(!get(&s, "/", &cookie).contains("data-n=12"), "parked: no card");
 }
+
+/// Finding 1/2 of the first review: the card ops act only on a needs-human issue, and a refused
+/// `[one more round]` spawn logs no `round-extended`, so a retry still grants exactly one.
+#[test]
+fn card_ops_need_needs_human_and_a_refused_extend_logs_nothing() {
+    let c = fixture("nh-guard", "FAIL");
+    let r = runner();
+    let s = Server::new(&c, &r, Some(ADDR.into()));
+    let cookie = pair(&s, &c, "", NOW);
+    assert_eq!(run(&c, &r, &["pause", "sendmeter"]).0, 0);
+    let page = get(&s, "/", &cookie);
+    let i = page.find("name=mtime value=").unwrap() + 17;
+    let mt: String = page[i..].chars().take_while(char::is_ascii_digit).collect();
+    let post = |op: &str| {
+        let body = format!("op={op}&fleet=sendmeter&mtime={mt}&issue=12");
+        let req = format!(
+            "POST / HTTP/1.1\r\nHost: {ADDR}\r\n{cookie}Content-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        String::from_utf8_lossy(&s.respond(&req, NOW)).into_owned()
+    };
+    let extended = || {
+        read(&c.state)
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind == "round-extended")
+            .count()
+    };
+
+    for _ in 0..2 {
+        let res = post("extend");
+        assert!(res.contains("REFUSED%20PAUSED"), "PAUSED refuses the spawn: {res}");
+    }
+    assert_eq!(extended(), 0, "a refused spawn logs no extra round");
+    assert_eq!(fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 12)].extra, 0);
+
+    append(&c.state, &Event::new(40, "sendmeter", Some(12), "merged", json!({}))).unwrap();
+    for op in ["park", "extend", "override"] {
+        let res = post(op);
+        assert!(res.contains("not%20needs"), "{op}: {res}");
+    }
+    assert_eq!(
+        fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 12)].state,
+        "merged"
+    );
+}

@@ -61,7 +61,7 @@ fn uncached_rows_have_no_title_and_make_no_gh_call() {
     let s = Server::new(&c, &r, Some("127.0.0.1:7777".into()));
     let page = get(&s, "/");
     assert!(
-        page.contains("<details class=\"q\">") && !page.contains("class=tl"),
+        page.contains("<details class=\"q\" data-q>") && !page.contains("class=tl"),
         "{page}"
     );
     assert_eq!(r.count("gh"), 0, "{:?}", r.calls.borrow());

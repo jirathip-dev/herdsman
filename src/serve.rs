@@ -55,6 +55,8 @@ const VER: u32 = {
 
 type Clients = Arc<Mutex<Vec<(Sender<String>, Option<String>)>>>;
 type Cache = Arc<Mutex<BTreeMap<String, (u64, Option<String>)>>>;
+/// When this board started (the Services board row's uptime).
+static STARTED: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
 
 pub fn serve(ctx: &Ctx, r: &dyn Runner, addr: &str, read_only: bool) -> Result<()> {
     let l = TcpListener::bind(addr)?;
@@ -83,6 +85,7 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
             ..Server::new(ctx, r, s.addr.clone())
         },
     );
+    STARTED.get_or_init(|| ctx.now);
     std::thread::scope(|sc| {
         // #57: the host every 10 s (its 2 s vm_stat delta included) here, never on a request.
         sc.spawn(move || loop {
@@ -935,6 +938,11 @@ impl<'a> Server<'a> {
             // #130: a needs-human card's buttons.
             op @ ("override" | "extend" | "park") => {
                 let (cfg, n) = (Config::load(&ctx.config)?, g("issue").parse().context("no issue")?);
+                // Only from needs-human: a stale card or a double tap never parks a merged issue or extends twice.
+                let state = fold(&read(&ctx.state)?).remove(&(fleet.into(), n)).map(|s| s.state);
+                if state.as_deref() != Some("needs-human") {
+                    bail!("#{n} is {}, not needs-human", state.as_deref().unwrap_or("unknown"));
+                }
                 let ev = |k| Event::new(ctx.now, fleet, Some(n), k, json!({"by": "owner"}));
                 let o = crate::spawn::Opts {
                     supersede: true,
@@ -943,8 +951,8 @@ impl<'a> Server<'a> {
                 match op {
                     "override" => crate::gate::merge(ctx, &cfg, self.r, &mut out, fleet, n, true)?,
                     "extend" => {
-                        append(&ctx.state, &ev("round-extended"))?;
                         crate::spawn::spawn(ctx, &cfg, self.r, &mut out, (fleet, Some(n), "impl"), &o)?;
+                        append(&ctx.state, &ev("round-extended"))?;
                     }
                     _ => append(&ctx.state, &ev("parked"))?,
                 }
@@ -1075,7 +1083,14 @@ impl<'a> Server<'a> {
             let (line, m) = (pr_line(ctx, fc, f, n, None), m.to_lowercase());
             let fail = esc(crate::events::finding(events, f, n).unwrap_or_default());
             let v = match s.verdicts.last() {
-                Some((sha, v)) if v == "PASS" => format!("PASS at {sha:.7} · {line} · {m}"),
+                Some((sha, v)) if v == "PASS" => {
+                    let stale = if pr["headRefOid"].as_str() == Some(sha.as_str()) {
+                        ""
+                    } else {
+                        " (not the head)"
+                    };
+                    format!("PASS at {sha:.7}{stale} · {line} · {m}")
+                }
                 _ => format!("FAIL: {fail}"),
             };
             let merge = format!("<button name=op value=override data-confirm=\"Merge #{n} past the round limit?\">merge anyway</button>");
@@ -1089,7 +1104,8 @@ impl<'a> Server<'a> {
         st.values().filter(|s| s.state == "needs-human").map(card).collect()
     }
 
-    /// A blocked lane's card: a Claude menu's options as buttons (`/answer`), else the question
+    /// A blocked lane's card: a Claude menu's options as buttons (`/answer`) under its title, reason, command
+    /// and countdown (#127: `data-push=0` while that runs; none once the pane works again), else the question
     /// (or the last 6 masked lines) and a Reply button that opens the lane's sheet. Unpaired: no
     /// pane text, only the 1-line activity and a pairing hint.
     fn blocked(&self, ctx: &Ctx, l: &lanes::Lane, paired: bool) -> String {
@@ -1099,14 +1115,21 @@ impl<'a> Server<'a> {
             .and_then(|p| herdr::read(&self.cached(ctx.now, 2), p).ok())
             .unwrap_or_default();
         let rw = self.addr.is_some() && paired;
+        let c = lanes::prompt(&screen).unwrap_or_default();
         let body = match lanes::pending(&screen).filter(|_| l.harness == "claude") {
+            None if l.harness == "claude" && lanes::chat(&screen).1.is_some() => return String::new(),
             _ if !paired => format!(
                 "<p class=m>{}</p><p class=m>pair this phone to answer{}</p>",
                 esc(&lanes::activity(&l.harness, &screen)),
                 self.pairb()
             ),
             Some((q, opts)) => {
-                format!("<p>{}</p>", esc(&lanes::mask(&q)))
+                let s = |k: &str| format!("<p class={k}>{}</p>", esc(c[k].as_str().unwrap_or_default()));
+                let cd = c["countdown"].as_u64().map(|n| (ctx.now + n, n / 60, n % 60));
+                let cd = cd.map(|(u, m, s)| format!("<p class=cd data-until={u}>auto-denies in {m}:{s:02}</p>"));
+                ["title", "reason", "command"].map(s).concat()
+                    + &cd.unwrap_or_default()
+                    + &format!("<p>{}</p>", esc(&lanes::mask(&q)))
                     + &opts
                         .iter()
                         .zip(1..)
@@ -1133,8 +1156,9 @@ impl<'a> Server<'a> {
             ""
         };
         format!(
-            "<div class=ask data-ask=\"{}\"><p><b>needs you</b> <span class=m>{}</span></p>{body}{reply}</div>",
+            "<div class=ask data-ask=\"{}\" data-push={}><p><b>needs you</b> <span class=m>{}</span></p>{body}{reply}</div>",
             esc(&l.name),
+            u8::from(c["push"].as_bool().unwrap_or(true)),
             esc(&who)
         )
     }
@@ -1156,14 +1180,20 @@ impl<'a> Server<'a> {
             s.active_lane()
                 .and_then(|x| ls.iter().find(|l| l.name == x.1 && l.pane.is_none()))
         };
-        let mut h = String::new();
+        // #115: serve.js draws the rows as a graph from data-b/-q/-s; [?] opens its legend, data-sp its serial line.
+        let mut h = String::from(
+            "<p class=qh><button type=button class=qhelp aria-label=\"what the marks mean\">?</button></p>",
+        );
         for (f, fc) in &cfg.fleet {
             let q = queue::view(events, st, f);
+            let (sl, sp) = (esc(fc.serial_label()), esc(&fc.serial_paths.join(", ")));
+            let sa = (!sp.is_empty()).then(|| format!(" data-s=\"{sl}\" data-sp=\"{sp}\""));
+            let sa = sa.unwrap_or_default();
             let mine: Vec<&IssueState> = st.values().filter(|s| s.fleet == *f).collect();
             let queued = |n: u64| q.iter().any(|i| i.issue == n);
             let rest: Vec<u64> = mine
                 .iter()
-                .filter(|s| !queued(s.issue) && s.state != "merged" && s.state != "queued")
+                .filter(|s| !queued(s.issue) && !s.done() && s.state != "queued")
                 .map(|s| s.issue)
                 .collect();
             let items: Vec<(u64, Option<u64>, Option<usize>)> = q
@@ -1184,10 +1214,7 @@ impl<'a> Server<'a> {
                 let is_dead = state == "dead";
                 let a = ago(now, s.map_or(0, |s| s.last_ts));
                 let lane = s.and_then(|s| s.lane.as_deref()).unwrap_or_default();
-                let mut card = vec![
-                    esc(&join(&[&format!("#{n} {logged}"), lane, &a])),
-                    pr_line(ctx, Some(fc), f, n, s),
-                ];
+                let mut card = vec![esc(lane), pr_line(ctx, Some(fc), f, n, s)];
                 if is_dead {
                     card.push("<span class=r>dead: the log has this lane open, herdr has no such agent</span>".into());
                 }
@@ -1215,7 +1242,14 @@ impl<'a> Server<'a> {
                     let down = q.get(k + 1).map(|x| mv("▼ down", "after", x.issue)).unwrap_or_default();
                     card.push(format!("<span class=btns>{up}{down}</span>"));
                 }
-                let row = row("q", "", &format!("#{n}"), state, &a, &card);
+                let s = k.filter(|&k| q[k].serial).map(|_| format!(" data-s=\"{sl}\""));
+                let b = blocked_by.map_or(String::new(), |b| format!(" data-b={b}"));
+                let data = format!(
+                    "class=\"q\"{}{b}{}",
+                    if k.is_some() { " data-q" } else { "" },
+                    s.unwrap_or_default()
+                );
+                let row = row("q", "", &format!("#{n}"), state, &a, &card).replacen("class=\"q\"", &data, 1);
                 body += &match titles(ctx, f, n) {
                     Some(t) => row.replacen("</summary>", &format!("<span class=tl>{}</span></summary>", esc(&t)), 1),
                     None => row,
@@ -1226,7 +1260,7 @@ impl<'a> Server<'a> {
             }
             let mut done: Vec<&&IssueState> = mine
                 .iter()
-                .filter(|s| s.state == "merged" && now.saturating_sub(s.last_ts) < 86_400)
+                .filter(|s| s.done() && now.saturating_sub(s.last_ts) < 86_400)
                 .collect();
             done.sort_by_key(|s| std::cmp::Reverse(s.last_ts));
             if !done.is_empty() {
@@ -1248,8 +1282,9 @@ impl<'a> Server<'a> {
                             )
                         });
                         format!(
-                            "<p>#{} <span class=g>merged</span> {}{link}</p>",
+                            "<p>#{} <span class=g>{}</span> {}{link}</p>",
                             s.issue,
+                            s.state,
                             age(now.saturating_sub(s.last_ts))
                         )
                     })
@@ -1292,7 +1327,7 @@ impl<'a> Server<'a> {
                     (n, d) => format!("{n} lanes ({d} dead)"),
                 };
                 h += &format!(
-                    "<details class=paused><summary><span>{} · <span class=r>paused</span> · {what}</span></summary>{}{body}</details>",
+                    "<details class=paused{sa}><summary><span>{} · <span class=r>paused</span> · {what}</span></summary>{}{body}</details>",
                     esc(f),
                     button("resume", "Resume")
                 );
@@ -1303,7 +1338,11 @@ impl<'a> Server<'a> {
             } else {
                 String::new()
             };
-            h += &format!("<h2><span>{}</span>{drive}{}</h2>", esc(f), button("pause", "Pause"));
+            h += &format!(
+                "<h2{sa}><span>{}</span>{drive}{}</h2>",
+                esc(f),
+                button("pause", "Pause")
+            );
             if fc.driven() {
                 let last = crate::drive::last_pass(ctx, f).map(|t| age(now.saturating_sub(t)));
                 let last = last.map_or("no pass yet".into(), |a| format!("last pass {a} ago"));
@@ -1452,7 +1491,7 @@ impl<'a> Server<'a> {
                 "round {}",
                 s.state
                     .split_once('(')
-                    .map_or(s.rounds.to_string(), |r| r.1.trim_end_matches(')').into())
+                    .map_or(s.rounds.to_string(), |r| r.1.replace(')', ""))
             )
         });
         let o = |v: &Option<String>| v.clone().unwrap_or_default();
@@ -1532,6 +1571,17 @@ impl<'a> Server<'a> {
             Some(Err(why)) => format!("<p class=kv>spawn gate <b class=r>HOST_BUSY</b>: {}</p>", esc(&why)),
             None => String::new(),
         };
+        // #98: green, amber or red per service, the fix on red.
+        if let Some(c) = cfg {
+            let up = age(ctx.now.saturating_sub(*STARTED.get_or_init(|| ctx.now)));
+            let board = format!("v{} · up {up}", env!("CARGO_PKG_VERSION"));
+            h += "<h2>Services</h2>";
+            for (item, t, detail, fix) in crate::timer::services(ctx, c, &self.cached(ctx.now, 60), Some(board)) {
+                let fix = (t == "r").then(|| format!(" → {}", esc(&fix)));
+                let (item, detail, fix) = (esc(&item), esc(&detail), fix.unwrap_or_default());
+                h += &format!("<p class=kv>{item} · <b class={t}>{detail}</b>{fix}</p>");
+            }
+        }
         if let Some(c) = cfg.filter(|c| !c.accounts.names.is_empty()) {
             let capped = |a: &&String| crate::access::capped_until(c, events, a, ctx.now).is_some();
             let all = c.accounts.names.len();
@@ -1607,26 +1657,10 @@ impl<'a> Server<'a> {
                 .map(|k| crate::webpush::public(&k))
                 .unwrap_or_default();
             // #87: on/off from fleet.toml; the last `push-sent`, unless a webpush `notify-failed` is newer.
-            let (subs, sent) = (
+            let (subs, row) = (
                 crate::webpush::load(&ctx.state),
-                events.iter().rfind(|e| e.kind == "push-sent"),
+                crate::timer::phone(ctx, cfg, events).1,
             );
-            let failed = events
-                .iter()
-                .rfind(|e| e.kind == "notify-failed" && e.str("cmd") == Some("webpush"));
-            let when = sent.map_or("never sent".into(), |e| format!("last sent {} ago", ago(ctx.now, e.ts)));
-            let row = match (
-                cfg.and_then(Config::webpush_sub),
-                failed.filter(|f| sent.is_none_or(|e| f.ts >= e.ts)),
-            ) {
-                (None, _) => "off: no webpush notifier".to_string(),
-                (_, Some(f)) => format!("on · last failure: {}", f.str("error").unwrap_or("?")),
-                _ => format!(
-                    "on · {} device{} · {when}",
-                    subs.len(),
-                    if subs.len() == 1 { "" } else { "s" }
-                ),
-            };
             let key = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, key);
             h += &format!("<h2>Alerts</h2><p class=kv>{}</p>", esc(&row));
             h += &format!("<button id=push type=button hidden data-key={key}>Enable alerts</button>");

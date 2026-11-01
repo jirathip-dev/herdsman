@@ -5,6 +5,9 @@ use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use std::path::Path;
 
+/// The program name, for PATH lookups and the Services row.
+pub const BIN: &str = "herdr";
+
 /// Run a herdr argv built here (`*_argv`); the caller reads the exit code.
 pub fn exec(r: &dyn Runner, a: &[String]) -> Result<Out> {
     r.run("herdr", a)

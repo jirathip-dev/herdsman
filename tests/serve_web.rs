@@ -647,7 +647,7 @@ fn page_fits_390px_without_horizontal_scroll() {
                 .contains("overflow-wrap:anywhere")
     );
     assert!(
-        html.contains("<details class=\"q\"><summary><span>#12</span>"),
+        html.contains("<details class=\"q\" data-q><summary><span>#12</span>"),
         "rows are details"
     );
     assert!(
@@ -738,7 +738,7 @@ fn queue_shows_open_work_only_and_folds_paused_retired_and_noise() {
             17,
             999_500 + k,
             if k % 2 == 0 { "clean" } else { "notify-failed" },
-            json!({}),
+            json!({"why": "merged"}),
         );
     }
     let list =
@@ -756,7 +756,7 @@ fn queue_shows_open_work_only_and_folds_paused_retired_and_noise() {
         !queue.contains("fleet-impl-3") && !queue.contains("<span>fleet</span>"),
         "no retired fleet"
     );
-    let rows = queue.matches("<details class=\"q\">").count();
+    let rows = queue.matches("<details class=\"q\"").count();
     assert_eq!(rows, 2 + 2, "open items only: sendmeter #17 #18, synergy #1039 #1040");
     assert!(queue.contains("<span>done today: 30</span>"), "{queue}");
     let done = &queue[queue.find("done today").unwrap()..];

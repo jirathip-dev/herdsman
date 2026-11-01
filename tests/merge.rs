@@ -126,6 +126,42 @@ fn refuses_when_round_limit_exceeded() {
     assert_eq!(st.state, "needs-human");
 }
 
+/// #123: three review rounds plus a PASSed `--update` round: merge allowed, rounds stay 3.
+#[test]
+fn update_round_does_not_count_toward_review_rounds() {
+    let (a, b) = (
+        "3333333333333333333333333333333333333333",
+        "4444444444444444444444444444444444444444",
+    );
+    let (_d, c) = setup("update-round", CONFIG, &[("FAIL", OLD), ("FAIL", a), ("PASS", b)]);
+    let up = json!({"role": "impl", "agent": "sendmeter-impl-12", "branch": "issue-12", "update": true});
+    append(&c.state, &Event::new(30, "sendmeter", Some(12), "spawn", up)).unwrap();
+    let rev = json!({"role": "rev", "agent": "sendmeter-rev-12"});
+    append(&c.state, &Event::new(31, "sendmeter", Some(12), "spawn", rev)).unwrap();
+    let st = &fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 12)];
+    assert_eq!(st.state, "review(3)+u1");
+    let pass = json!({"verdict": "PASS", "sha": HEAD});
+    append(&c.state, &Event::new(32, "sendmeter", Some(12), "verdict", pass)).unwrap();
+    let st = &fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 12)];
+    assert_eq!((st.state.as_str(), st.rounds, st.updates), ("ready", 3, 1));
+    let r = pr("staging", green());
+    let (exit, out) = run_cli(&c, &r);
+    assert_eq!(exit, 0, "{out}");
+    assert!(r.called("gh pr merge 34"), "{out}");
+}
+
+/// #123: an update round whose merge-only check FAILs is a normal review round.
+#[test]
+fn failed_update_round_counts_as_a_review_round() {
+    let (_d, c) = setup("update-fail", CONFIG, &[("PASS", OLD)]);
+    let up = json!({"role": "impl", "agent": "sendmeter-impl-12", "branch": "issue-12", "update": true});
+    append(&c.state, &Event::new(30, "sendmeter", Some(12), "spawn", up)).unwrap();
+    let fail = json!({"verdict": "FAIL", "sha": HEAD});
+    append(&c.state, &Event::new(31, "sendmeter", Some(12), "verdict", fail)).unwrap();
+    let st = &fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 12)];
+    assert_eq!((st.state.as_str(), st.rounds, st.updates), ("fix(2)", 2, 0));
+}
+
 #[test]
 fn reverdict_on_same_sha_is_one_round() {
     let v = [
