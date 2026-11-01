@@ -20,6 +20,16 @@
   const VIEWS = {
     queue: () => tab('queue'),
     'queue-open': () => { tab('queue'); const d = $('#queue details.q'); d.open = true; d.scrollIntoView(); },
+    // #139: the demo's acme-web #46 row, its ask decided by default, re-answered through [change] (3 long choices),
+    // opened and moved to the top (a scrolled view shoots blank).
+    'queue-change': () => {
+      tab('queue');
+      const d = [...$$('#queue details.q')].find(d => d.querySelector('[name=choice]'));
+      if (!d) return early.push('no queue row with a [change] form in the demo');
+      d.open = true;
+      $('#queue').prepend(d);
+      if (!DBG.get('check')) $('#needs').hidden = true; // the shot shows the row; the check keeps the needs cards
+    },
     // #92: the demo's `driver = "herdsman"` fleet (docs): its heading and `driver: herdsman · last pass …` line, moved
     // to the top (a scrolled view shoots blank).
     'queue-drive': () => {
@@ -174,7 +184,7 @@
   const HP = { herd1: 0, herd2: 1, 'herd-night': 0, 'herd-night-storm': 0 }; // the views measuring one Herd page
   const ROOTS = { sheet: () => [$('#sheet')], 'sheet-parked': () => [$('#sheet')], 'sheet-other': () => [$('#sheet')], ...Object.fromEntries(Object.entries(HP).map(([v, n]) => [v, () => [hp(n), $('.hlt'), $('.hx'), $('.hwx')]])) };
   const CTL = 'button:not(.lr,.hh,.hqh), .pk, [role=button]', ROW = 'summary, .lr, .hh, .hqh', NAME = '.nw, .hl b';
-  const CHOICE = '.ask button[name=choice], .ask .pick'; // amendment A: wraps, ≤ 4 lines, instead of 28 px
+  const CHOICE = 'button[name=choice], .pick'; // amendment A (#139: wherever it renders): wraps, ≤ 4 lines, instead of 28 px
   // A closed <details> keeps its content's boxes (content-visibility), so ask the browser what is shown.
   const seen = e => e.checkVisibility({ visibilityProperty: true });
   const label = e => (e.getAttribute('aria-label') || e.textContent).trim().replace(/\s+/g, ' ').slice(0, 24) || e.tagName.toLowerCase();
@@ -200,6 +210,8 @@
       const cs = getComputedStyle(e), lines = (e.offsetHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)) / parseFloat(cs.lineHeight);
       if (!e.matches(CHOICE) && cs.height !== '28px') bad.push(`${label(e)}: control height ${cs.height}`);
       if (e.matches(CHOICE) && (e.offsetHeight < 28 || lines > 4.05)) bad.push(`${label(e)}: choice ${e.offsetHeight}px, ${lines.toFixed(1)} lines (28 px .. 4 lines)`);
+      // #139: the CSS brackets a label once; one that carries its own reads `[[change]]`.
+      if (/^\s*\[/.test(e.textContent) && getComputedStyle(e, '::before').content === '"["') bad.push(`${label(e)}: label in brackets of its own, shown [[…]]`);
     }
     for (const e of [...ctl, ...rows]) {
       e.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }); // `.hp` scrolls smooth otherwise
@@ -243,6 +255,11 @@
         const lh = cs.lineHeight === 'normal' ? 1.2 * parseFloat(cs.fontSize) : parseFloat(cs.lineHeight);
         if (h > 2 * lh + 1) bad.push(`${label(e)}: name ${h | 0}px tall, over 2 lines`);
       }
+    }
+    // #139: nothing in an open queue row's card pokes past the card's right edge.
+    for (const d of all('details.q[open]')) {
+      const right = d.getBoundingClientRect().right;
+      for (const e of [...d.querySelectorAll('*')].filter(seen)) if (e.getBoundingClientRect().right > right + 1) bad.push(`${label(e)}: right edge ${e.getBoundingClientRect().right | 0} past the card's ${right | 0}`);
     }
     const se = document.scrollingElement;
     if (se.scrollWidth > se.clientWidth) bad.push(`page scrolls sideways: ${se.scrollWidth}>${se.clientWidth}`);

@@ -8,7 +8,7 @@ function audit(root) {
   for (const e of ctl) {
     const cs = getComputedStyle(e), name = (e.getAttribute('aria-label') || e.textContent).trim().slice(0, 24);
     // #63 amendment A: a choice wraps (≤ 4 lines) and its ring is 4 px tall, so stacked choices 8 px apart never overlap.
-    const choice = e.matches('.ask button[name=choice], .ask .pick'), v = choice ? 3 : 7;
+    const choice = e.matches('button[name=choice], .pick'), v = choice ? 3 : 7;
     if (!choice && cs.height !== '28px') bad.push(`${name}: height ${cs.height}`);
     if (!['11px', '13px'].includes(cs.fontSize)) bad.push(`${name}: font ${cs.fontSize}`);
     if (!['rgba(0, 0, 0, 0)', 'transparent'].includes(cs.backgroundColor)) bad.push(`${name}: background ${cs.backgroundColor}`);
