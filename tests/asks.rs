@@ -366,6 +366,9 @@ fn routine_needs_a_recommendation_and_no_owner_topic() {
         "Push to main?",
         "Worth $40 a month?",
         "Add a dependency?",
+        "Store the secrets in the repo?",
+        "Drop the deleted rows?",
+        "Pull in two dependencies?",
     ] {
         let (code, out) = routine(&c, q);
         assert_eq!(code, 3, "{q}");

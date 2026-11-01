@@ -1,6 +1,6 @@
 //! `herdsman serve`, the phone page (docs/serve.md): std `TcpListener`, one request at a time;
 //! `/live` SSE clients get a thread each, fed by the 1 s watcher thread.
-use crate::config::{Config, Role};
+use crate::config::{Config, Limits, Role};
 use crate::events::{age, append, fold, plain, read, Event, IssueState, States};
 use crate::gate::{refused, Refusal};
 use crate::host::{self, Host};
@@ -294,19 +294,19 @@ fn join(parts: &[&str]) -> String {
         .join(" · ")
 }
 
-const REC: &str = " <small>(recommended)</small>";
-
 /// Ask `a`'s answer form: option buttons (recommended first) and a free-text box.
 fn answer_form(ctx: &Ctx, a: &Event, send: &str) -> String {
+    const REC: &str = " <small>(recommended)</small>";
     let rec = a.data["recommend"].as_u64();
     let btn = |(o, n): (&serde_json::Value, u64)| {
         let (o, mark) = (esc(o.as_str().unwrap_or("?")), if Some(n) == rec { REC } else { "" });
         format!("<button name=choice value={n}>{n}. {o}{mark}</button>")
     };
-    let opts = a.data["options"].as_array().into_iter().flatten();
-    let mut btns: Vec<String> = opts.zip(1..).map(btn).collect();
-    btns.sort_by_key(|b| !b.contains(REC));
-    format!("<form method=post>{}<input type=hidden name=id value=\"{}\"><input name=text aria-label=answer placeholder=\"or type an answer\"><button>{send}</button>{}</form>", hidden("answer", &a.fleet, &mtime(ctx)), esc(a.str("id").unwrap_or_default()), btns.concat())
+    let mut opts: Vec<_> = a.data["options"].as_array().into_iter().flatten().zip(1..).collect();
+    opts.sort_by_key(|o| Some(o.1) != rec);
+    let btns: String = opts.into_iter().map(btn).collect();
+    let id = esc(a.str("id").unwrap_or_default());
+    format!("<form method=post>{}<input type=hidden name=id value=\"{id}\"><input name=text aria-label=answer placeholder=\"or type an answer\"><button>{send}</button>{btns}</form>", hidden("answer", &a.fleet, &mtime(ctx)))
 }
 
 fn hidden(op: &str, fleet: &str, mt: &str) -> String {
@@ -1030,8 +1030,10 @@ impl<'a> Server<'a> {
         crate::events::open_asks(events).into_iter().map(|a| {
             let s = |k| a.str(k).unwrap_or_default();
             let who = join(&[&a.fleet, &a.issue.map_or(String::new(), |n| format!("#{n}")), s("agent"), &age(ctx.now.saturating_sub(a.ts))]);
-            // #99: a routine ask counts down to its default; an owner ask waits.
-            let kind = a.data["recommend"].as_u64().filter(|_| s("kind") == "routine").map_or("owner · waits for you".into(), |n| format!("routine · defaults to {n} in {}", age((a.ts + 60 * cfg.map_or(30, |c| c.limits.ask_default_minutes)).saturating_sub(ctx.now))));
+            let mins = cfg.map_or(Limits::default().ask_default_minutes, |c| c.limits.ask_default_minutes);
+            let rec = a.data["recommend"].as_u64().filter(|_| s("kind") == "routine");
+            let left = age((a.ts + 60 * mins).saturating_sub(ctx.now));
+            let kind = rec.map_or("owner · waits for you".into(), |n| format!("routine · defaults to {n} in {left}"));
             format!("<div class=ask><p><b>needs you</b> <span class=m>{}</span> <span class=m>· {kind}</span></p><p>{}</p>{}</div>", esc(&who), esc(s("question")), if self.addr.is_some() { answer_form(ctx, a, "Send") } else { String::new() })
         }).collect::<String>() + &blocked
     }

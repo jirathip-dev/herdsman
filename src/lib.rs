@@ -247,7 +247,8 @@ pub fn pause(ctx: &Ctx, out: &mut dyn Write, fleet: &str, paused: bool, via: Opt
 }
 
 /// #99: owner words a routine ask may not use (`OWNER_TOPIC`); a backstop, not the definition (roles/usage-tail.md).
-const OWNER_WORDS: &str = "main production prod secret token delete spend cost dependency dependencies scope";
+const OWNER_WORDS: &str = "main production prod prods secret secrets token tokens delete deleted deletes deleting \
+    deletion spend spends spending spent cost costs costly dependency dependencies scope scopes";
 
 /// `herdsman ask`: log a `needs-decision` for the asking lane (`HERDSMAN_LANE`, else the orch), notify, print its id.
 pub fn ask(
@@ -265,7 +266,7 @@ pub fn ask(
     if kind == "routine" && rec.is_none() {
         return gate::refused("NO_RECOMMENDATION", "a routine ask needs --recommend <n>");
     }
-    if kind == "routine" && (text.contains('$') || words.any(|w| OWNER_WORDS.split(' ').any(|o| o == w))) {
+    if kind == "routine" && (text.contains('$') || words.any(|w| OWNER_WORDS.split_whitespace().any(|o| o == w))) {
         return gate::refused("OWNER_TOPIC", "this ask touches an owner topic; ask it as --kind owner");
     }
     if q.trim().is_empty() || opts.len() > 4 || rec.is_some_and(|n| n == 0 || n > opts.len()) {
@@ -310,7 +311,6 @@ pub fn answer(
     let Some(ask) = events.iter().find(|e| is(e, "needs-decision")) else {
         return gate::refused("NO_SUCH_ASK", format!("{fleet} has no ask {id}"));
     };
-    // #99: a decision taken by default stays changeable once.
     let last = events.iter().rev().find(|e| is(e, "decision"));
     if let Some(d) = last.filter(|d| d.str("by") != Some("default")) {
         return gate::refused(

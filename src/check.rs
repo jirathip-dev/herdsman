@@ -110,7 +110,6 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
         }
     }
     let open = open_asks(&events);
-    // #99: a routine ask nobody answered in `ask_default_minutes` takes its recommended option, `by: default`.
     let routine = |a: &&&Event| a.str("kind") == Some("routine");
     let due = |a: &&&Event| ctx.now.saturating_sub(a.ts) >= cfg.limits.ask_default_minutes * 60;
     for a in open.iter().filter(routine).filter(due) {

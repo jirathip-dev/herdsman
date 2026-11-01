@@ -109,8 +109,8 @@ and waits for a `DECISION <id>: <text>` prompt.
   `DECISION <id>: <option> (default after 30 min, nobody replied)`. The phone hears of the default taken, never of
   the routine ask merely waiting, and a routine ask raises no `ask-waiting`.
 - A routine ask whose question or options use an owner word (`main`, `production`/`prod`, `secret`, `token`,
-  `delete`, `spend`, `cost`, `$`, `dependency`, `scope`) is refused `OWNER_TOPIC`. The list is a backstop, not the
-  definition.
+  `delete`, `spend`, `cost`, `$`, `dependency`, `scope`, or a plural or inflection such as `secrets`, `deleting`) is
+  refused `OWNER_TOPIC`. The list is a backstop, not the definition.
 
 The needs-you card tags each ask `routine · defaults to 2 in 24m` or `owner · waits for you`. A defaulted
 decision shows on its issue row as `decided by default: <option>` with **[change]**: answering again (also
