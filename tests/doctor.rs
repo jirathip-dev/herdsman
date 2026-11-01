@@ -88,6 +88,7 @@ fn good() -> Fake {
         .reply("lsof ", "herdsman 1 u LISTEN\n")
         .reply("tailscale serve status", "|-- / proxy http://127.0.0.1:7777\n")
         .reply("launchctl print gui/", "state = running\n")
+        .reply("systemctl --user is-active", "active\n")
 }
 
 fn line<'a>(out: &'a str, check: &str) -> &'a str {
@@ -132,7 +133,7 @@ fn all_good_exits_zero_and_never_writes() {
         }
         assert!(line(&out, check).starts_with('✓'), "{out}");
     }
-    for check in ["vapid.key", "push", "watchdog check", "watchdog drive"] {
+    for check in ["vapid.key", "push", "watchdog check", "watchdog drive", "timer"] {
         assert!(line(&out, check).starts_with('✓'), "{out}");
     }
     assert!(line(&out, "account main").contains("TOKEN_MAIN set"), "{out}");
@@ -279,7 +280,16 @@ fn each_check_fails_with_its_fix_and_exit_one() {
                 r
             },
             "watchdog drive",
-            "| crontab -",
+            "→ herdsman timer install",
+        ),
+        (
+            // macOS: the serve job's probe passes, the tick job's fails; Linux probes systemd.
+            |_, _, r| match cfg!(target_os = "macos") {
+                true => r.once("launchctl print", 0, "").once("launchctl print", 1, ""),
+                false => r.once("systemctl --user is-active", 3, ""),
+            },
+            "timer",
+            "dev.herdsman.tick loaded → herdsman timer install",
         ),
     ];
     for (i, (brk, check, fix)) in cases.into_iter().enumerate() {

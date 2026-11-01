@@ -55,6 +55,8 @@ const VER: u32 = {
 
 type Clients = Arc<Mutex<Vec<(Sender<String>, Option<String>)>>>;
 type Cache = Arc<Mutex<BTreeMap<String, (u64, Option<String>)>>>;
+/// When this board started (the Services board row's uptime).
+static STARTED: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
 
 pub fn serve(ctx: &Ctx, r: &dyn Runner, addr: &str, read_only: bool) -> Result<()> {
     let l = TcpListener::bind(addr)?;
@@ -83,6 +85,7 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
             ..Server::new(ctx, r, s.addr.clone())
         },
     );
+    STARTED.get_or_init(|| ctx.now);
     std::thread::scope(|sc| {
         // #57: the host every 10 s (its 2 s vm_stat delta included) here, never on a request.
         sc.spawn(move || loop {
@@ -1457,6 +1460,17 @@ impl<'a> Server<'a> {
             Some(Err(why)) => format!("<p class=kv>spawn gate <b class=r>HOST_BUSY</b>: {}</p>", esc(&why)),
             None => String::new(),
         };
+        // #98: green, amber or red per service, the fix on red.
+        if let Some(c) = cfg {
+            let up = age(ctx.now.saturating_sub(*STARTED.get_or_init(|| ctx.now)));
+            let board = format!("v{} · up {up}", env!("CARGO_PKG_VERSION"));
+            h += "<h2>Services</h2>";
+            for (item, t, detail, fix) in crate::timer::services(ctx, c, &self.cached(ctx.now, 60), Some(board)) {
+                let fix = (t == "r").then(|| format!(" → {}", esc(&fix)));
+                let (item, detail, fix) = (esc(&item), esc(&detail), fix.unwrap_or_default());
+                h += &format!("<p class=kv>{item} · <b class={t}>{detail}</b>{fix}</p>");
+            }
+        }
         if let Some(c) = cfg.filter(|c| !c.accounts.names.is_empty()) {
             h += "<h2>Accounts</h2>";
             for name in c.accounts.names.keys() {
@@ -1524,26 +1538,10 @@ impl<'a> Server<'a> {
                 .map(|k| crate::webpush::public(&k))
                 .unwrap_or_default();
             // #87: on/off from fleet.toml; the last `push-sent`, unless a webpush `notify-failed` is newer.
-            let (subs, sent) = (
+            let (subs, row) = (
                 crate::webpush::load(&ctx.state),
-                events.iter().rfind(|e| e.kind == "push-sent"),
+                crate::timer::phone(ctx, cfg, events).1,
             );
-            let failed = events
-                .iter()
-                .rfind(|e| e.kind == "notify-failed" && e.str("cmd") == Some("webpush"));
-            let when = sent.map_or("never sent".into(), |e| format!("last sent {} ago", ago(ctx.now, e.ts)));
-            let row = match (
-                cfg.and_then(Config::webpush_sub),
-                failed.filter(|f| sent.is_none_or(|e| f.ts >= e.ts)),
-            ) {
-                (None, _) => "off: no webpush notifier".to_string(),
-                (_, Some(f)) => format!("on · last failure: {}", f.str("error").unwrap_or("?")),
-                _ => format!(
-                    "on · {} device{} · {when}",
-                    subs.len(),
-                    if subs.len() == 1 { "" } else { "s" }
-                ),
-            };
             let key = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, key);
             h += &format!("<h2>Alerts</h2><p class=kv>{}</p>", esc(&row));
             h += &format!("<button id=push type=button hidden data-key={key}>Enable alerts</button>");

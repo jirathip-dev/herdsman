@@ -52,6 +52,16 @@ pub struct Serve {
     #[serde(default)]
     pub allowed_hosts: Vec<String>,
     pub approve_hint: Option<String>,
+    /// #98 `herdsman setup`: the board job's label (default `dev.herdsman.serve`), address, `tailscale serve` port.
+    pub launchd_label: Option<String>,
+    pub addr: Option<String>,
+    pub tailscale_https_port: Option<u16>,
+}
+
+impl Serve {
+    pub fn addr(&self) -> String {
+        self.addr.clone().unwrap_or_else(|| "127.0.0.1:7777".into())
+    }
 }
 
 /// `[accounts]`: account name -> env var holding its token, plus the settings below.

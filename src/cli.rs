@@ -173,6 +173,25 @@ enum Cmd {
     },
     /// One pass of the loop for `driver = "herdsman"` fleets: do every step that's due, then exit; safe from cron
     Drive { fleet: Option<String> },
+    /// Write and load the tick and board jobs, tailscale serve, profiles sync, then doctor (its exit code); safe to rerun
+    Setup {
+        /// Write the jobs without loading them
+        #[arg(long)]
+        no_load: bool,
+    },
+    /// The 5-minute `herdsman tick` job: a launchd agent on macOS, a systemd user timer on Linux
+    Timer {
+        #[arg(value_parser = ["install", "remove", "status"])]
+        action: String,
+        /// The job's label
+        #[arg(long, default_value = crate::timer::TICK)]
+        label: String,
+        /// install: write the job without loading it
+        #[arg(long)]
+        no_load: bool,
+    },
+    /// One timer pass: check, then drive; refusals exit 0, a real error logs `tick-failed` (alerts at most hourly)
+    Tick,
     /// Alert once per state on stall, lane-dead, ready-unmerged, orch-holding, ask-waiting, orphan-lane; nudge an idle orch; idempotent, safe from cron
     Check,
     /// Each `[accounts]` account: ok / capped until hh:mm, and the lanes on it (names only, never tokens)
@@ -327,7 +346,9 @@ pub fn usage_doc() -> String {
     cmd.build();
     let mut s = String::from(include_str!("../roles/usage-head.md"));
     // The owner's commands; the sections below name them.
-    let owner = ["accounts", "doctor", "drive", "pause", "resume", "serve"];
+    let owner = [
+        "accounts", "doctor", "drive", "pause", "resume", "serve", "setup", "tick", "timer",
+    ];
     let subs = cmd
         .get_subcommands()
         .filter(|c| !c.is_hide_set() && !owner.contains(&c.get_name()));
@@ -557,6 +578,8 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
             }
         }
         Cmd::Doctor { json } => return crate::doctor::doctor(ctx, r, out, json),
+        Cmd::Setup { no_load } => return crate::timer::setup(ctx, r, out, !no_load),
+        Cmd::Tick => return crate::timer::tick(ctx, r, out),
         cmd => {
             let cfg = Config::load(&ctx.config)?;
             match cmd {
@@ -596,6 +619,9 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     crate::answer(ctx, &cfg, r, out, (&fleet, &id), &choice, (&by, None))?;
                 }
                 Cmd::Check => check::check(ctx, &cfg, r, out)?,
+                Cmd::Timer { action, label, no_load } => {
+                    return crate::timer::timer(ctx, &cfg, r, out, (&action, &label, !no_load));
+                }
                 Cmd::Drive { fleet } => crate::drive::drive(ctx, &cfg, r, out, fleet.as_deref())?,
                 Cmd::Waiting(Scope { fleet, json }) => {
                     let all = crate::waiting::scan(
