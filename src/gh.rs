@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const PR_FIELDS: &str = "number,title,state,baseRefName,headRefOid,mergeable,statusCheckRollup";
+pub const PR_FIELDS: &str = "number,title,state,baseRefName,headRefOid,mergeable,mergeStateStatus,statusCheckRollup";
 pub const PR_TTL: u64 = 60;
 const SPEC_FIELDS: &str = "title,body,updatedAt,comments";
 

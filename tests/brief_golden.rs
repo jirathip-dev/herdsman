@@ -1,4 +1,4 @@
-//! #34: the lane briefs (impl, impl fix round, rev, design, orch) are byte-identical to staging's.
+//! #34: the lane briefs (impl, impl fix round, #102 impl update round, rev, design, orch) are byte-identical to staging's.
 //! Goldens in tests/golden/briefs/ were written by staging's build; `BLESS=1` rewrites them.
 //! #82: the fixture fleet is renamed `api` (`acme/api`), so the goldens carry neutral names.
 mod common;
@@ -34,7 +34,7 @@ fn fake() -> Fake {
 }
 
 /// Spawn one lane and return its brief, with the temp dir replaced by `<TMP>`.
-fn brief(name: &str, issue: &str, role: &str, fail: bool) -> String {
+fn brief(name: &str, issue: &str, role: &str, fail: bool, update: bool) -> String {
     let d = tmpdir(&format!("brief-{name}"));
     let c = ctx(
         &d,
@@ -48,7 +48,8 @@ fn brief(name: &str, issue: &str, role: &str, fail: bool) -> String {
         let data = json!({"verdict": "FAIL", "sha": "a".repeat(40), "body": body});
         append(&c.state, &Event::new(10, "api", Some(12), "verdict", data)).unwrap();
     }
-    let (code, out) = run(&c, &fake(), &["spawn", "api", issue, role]);
+    let args = ["spawn", "api", issue, role, "--update"];
+    let (code, out) = run(&c, &fake(), &args[..4 + usize::from(update)]);
     assert!(code == 0 || code == 4, "{name}: {code} {out}");
     let path = match role {
         "orch" => d.join("state/orch-api.md"),
@@ -64,15 +65,16 @@ fn brief(name: &str, issue: &str, role: &str, fail: bool) -> String {
 #[test]
 fn lane_briefs_match_staging() {
     let cases = [
-        ("impl", "12", "impl", false),
-        ("impl-fix", "12", "impl", true),
-        ("rev", "12", "rev", false),
-        ("design", "12", "design", false),
-        ("orch", "-", "orch", false),
+        ("impl", "12", "impl", false, false),
+        ("impl-fix", "12", "impl", true, false),
+        ("impl-update", "12", "impl", false, true),
+        ("rev", "12", "rev", false, false),
+        ("design", "12", "design", false, false),
+        ("orch", "-", "orch", false, false),
     ];
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/briefs");
-    for (name, issue, role, fail) in cases {
-        let got = brief(name, issue, role, fail);
+    for (name, issue, role, fail, update) in cases {
+        let got = brief(name, issue, role, fail, update);
         let file = dir.join(format!("{name}.md"));
         if std::env::var_os("BLESS").is_some() {
             std::fs::create_dir_all(&dir).unwrap();
