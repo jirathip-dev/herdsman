@@ -34,7 +34,9 @@ lock makes it safe; lanes queue on it). Node fleets: pnpm's store is already sha
 `npm_config_cache`. `clone_node_modules = true` APFS-clones (`cp -cR`) the local checkout's
 `node_modules` into a new lane when `package-lock.json` and `pnpm-lock.yaml` match.
 
-`herdsman stop <agent>` sends Esc (logs `stop`). `herdsman kill <agent>` prints what is lost
+`herdsman close <agent>` closes the pane of a herdr agent that is not a herdsman lane (by name or pane id),
+never touching files or worktrees, and logs a passive `closed-other`; a logged lane is refused `IS_LANE`
+(use stop, kill or clean). `herdsman stop <agent>` sends Esc (logs `stop`). `herdsman kill <agent>` prints what is lost
 (state, unpushed commits, dirty files, open PR); with `--yes` it commits dirty files as `wip: kill
 snapshot`, pushes the branch to `wip/<agent>-<yyyymmdd-hhmm>` (never main/staging, never force;
 refused `SECRET_IN_WIP` when the diff has a secret-looking value), closes the pane and logs
