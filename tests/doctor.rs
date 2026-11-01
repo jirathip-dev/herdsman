@@ -125,6 +125,11 @@ fn all_good_exits_zero_and_never_writes() {
         "launchd",
         "phone",
     ] {
+        // The launchd job is macOS only; Linux has no row for it.
+        if check == "launchd" && !cfg!(target_os = "macos") {
+            assert!(!out.contains(" launchd — "), "{out}");
+            continue;
+        }
         assert!(line(&out, check).starts_with('✓'), "{out}");
     }
     for check in ["vapid.key", "push", "watchdog check", "watchdog drive"] {
@@ -278,6 +283,9 @@ fn each_check_fails_with_its_fix_and_exit_one() {
         ),
     ];
     for (i, (brk, check, fix)) in cases.into_iter().enumerate() {
+        if check == "launchd" && !cfg!(target_os = "macos") {
+            continue;
+        }
         let (c, d) = setup(&format!("doc-fail-{i}"), "claude");
         let r = brk(&c, &d, good());
         let (code, out) = run(&c, &r, &["doctor"]);
