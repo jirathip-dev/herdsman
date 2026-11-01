@@ -1,0 +1,39 @@
+
+                                            ✦ dsh-TUI  v0.17.0
+                                            ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓  ▓▓
+                                            ▓▓  ▓▓ ▓▓     ▓▓     ▓▓  ▓▓ ▓▓     ▓▓     ▓▓     ▓▓ ▓▓
+                                            ▓▓  ▓▓ ▓▓▒▒▒  ▓▓▒▒▒  ▓▓▒▒▒▒  ▒▒▒▒▒ ▓▓▒▒▒  ▓▓▒▒▒  ▓▓▓
+                        ▄▀▄       ▄         ▓▓  ▓▓ ▓▓     ▓▓     ▓▓         ▓▓ ▓▓     ▓▓     ▓▓ ▓▓
+                        ▀▀▀▀▄  ▄▄▀▀▀        ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓     ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓  ▓▓
+        ▄▄▄▄▄▄▄▄▄       ▀▀▀▀▀▀▀▀▀▀▀▀
+      ▄▀▀▀▀▀▀▀▀▀▀▀▀▄▄     ▀▀▀▀▀▀▀▀▀         ▓▓  ▓▓   ▒▒▒▒   ▓▓▒▒▒▒  ▓▓  ▓▓  ▓▓▒▒▒▒  ▓▓▒▒▒▒  ▓▓▒▒▒▒
+    ▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄  ▄▀▀▀▀▀            ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓▓ ▓▓  ▓▓      ▓▓      ▓▓
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀            ▓▓▒▒▓▓  ▓▓▒▒▓▓  ▓▓▒▒▒▒  ▓▓ ▓▓▓  ▓▓▒▒▒    ▒▒▒▒▒   ▒▒▒▒▒
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀             ▓▓  ▓▓  ▓▓  ▓▓  ▓▓ ▓▓   ▓▓  ▓▓  ▓▓          ▓▓      ▓▓
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀              ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓▒▒▒▒  ▓▓▒▒▒▒  ▓▓▒▒▒▒
+     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀               deepseek-flash · Max effort
+       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄              /private/tmp/claude-501/-Users-me--herdr-worktrees-herdsman-issue-105…
+          ▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀              Tip: /restart is refused while a turn runs — Ctrl+C first · /tips more tips
+
+          Explore the uncharted!
+
+  ❯ Run the shell command `sleep 8; ls` and then tell me in one sentence what files are there.
+
+  ⏺ ⏵ Running the sleep-and-list command
+
+  • Bash(sleep 8; ls) · 10s
+   ⎿ scr
+
+   ⠦ Thinking…
+    │ The output is "scr" — hmm, that's odd. Possibly a file named "scr". Let me verify with a longer listing
+    │
+    │
+
+  🌓 Reticulating splines · total 22s · ↑ 6.7k · ↓ 9 tokens
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  ⌸ ❯                                                                                                                ⛶
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+                                                                                                       6.8k/1.0M 0.6%
+   deepseek-flash · max · cache 89.5% · ≈¥0.00 idle · scratchpad                                 ctx 0.6% (6.8k/1.0m)
+   esc to interrupt

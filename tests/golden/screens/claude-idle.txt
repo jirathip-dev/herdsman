@@ -1,0 +1,68 @@
+
+ ▐▛███▛█   Claude Code v2.1.309
+▝▜██████▀  Sonnet 5.5 · Claude API
+ ▝▝   ▝▝   ~/.herdr/worktrees/herdsman/rev-59-r1
+
+
+
+❯ Read /Users/me/.herdr/worktrees/herdsman/rev-59-r1/.brief.md and execute it fully.
+
+  Read 1 file, ran 3 shell commands
+
+❯ Also read /Users/me/.herdr/worktrees/herdsman/rev-59-r1/.addendum.md (orchestrator notes).
+
+  Read 1 file, ran 1 shell command
+
+⏺ Status: tests and clippy pass. Next I'm checking rustfmt and CI, then opening the snapshots from the addendum.
+
+
+  Read 2 files, ran 2 shell commands
+
+⏺ Write(verdict.md)
+  ⎿  Wrote 54 lines to verdict.md
+      1 FAIL
+      2
+      3 Reviewed head sha: a2f3d4dd6467207f5d9087ab1600209bab8a077f (PR #79, base staging). PR evidence names thi
+      4
+❯ Also read /Users/me/.herdr/worktrees/herdsman/rev-59-r1/.addendum.md (orchestrator notes).
+      5 Biggest remaining gap: the pairing panel on the phone is a fixed overlay with no way out. It hides the bl
+        ocked card, and nothing clears it on expiry.
+      6
+        exactly +20 (+77/-57), which is within the ≤ +20 budget.
+      8
+      9 ## Blocking
+     … +74 lines
+
+⏺ FAIL. I reviewed head sha a2f3d4dd6467207f5d9087ab1600209bab8a077f; the verdict is in verdict.md.
+
+  Tests and clippy pass, and CI is green. src/ net is exactly +20, which meets the budget. The PR evidence names this
+  sha, so it isn't stale.
+
+  Blocking: the phone's pairing panel can't be dismissed and never expires.
+  - It is a fixed overlay. While pairing is pending, tapping it does nothing, and nothing clears it if the code expires.
+  - The screenshots show it covering the top of the blocked card, which is the content the user is trying to unlock.
+  - The issue asked for a panel, not an overlay that hides the blocked lane, so under docs/ui.md I count it as a visual
+    change beyond the issue.
+
+  Non-blocking:
+  - There is no phone recording, only three headless screenshots.
+  - devices.json is updated without a lock, and the server and the serve approve command can race on it.
+  - A phone that doesn't claim within 10 minutes leaves an approved device listed that no browser holds.
+  - Behind tailscale serve the per-address limit effectively becomes 2 requests in total.
+  - Some unrelated lines in src/serve.rs were collapsed to fit the budget.
+
+  Checked and holding:
+  - A second browser can't get a token, and claiming before approval or after expiry is refused.
+  - Single-use codes, the 3-pending limit and the logs (device label only) work as specified.
+  - The old code-entry endpoint returns 404.
+  - The test for the escaped Host-tab hint would fail on the old code.
+  - Snapshots contain fixture data only.
+
+  Not verified: a real phone, the live stream flip, the Telegram conductor path, and the race under real concurrent use.
+
+✻ Churned for 2m 52s · done 1:01 AM
+
+─────────────────────────────────────────────────────────────── herdsman · rev #59 r1 · Pairing without typing: phone… ─
+❯ herdsman verdict herdsman 59 FAIL --sha a2f3d4dd6467207f5d9087ab1600209bab8a077f --file verdict.md
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

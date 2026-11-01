@@ -57,6 +57,20 @@ fn demo_export_writes_the_file_set_without_running_anything() {
     let dsh: Value =
         serde_json::from_str(&std::fs::read_to_string(site.join("lane/acme-api-impl-17.json")).unwrap()).unwrap();
     assert_eq!(dsh["harness"], "dsh");
+    // #105 gate 2: the sheet's lane has a titled input divider and a spinner on screen; neither is chat.
+    let sheet =
+        std::fs::read_to_string(site.join("lane/acme-web-impl-48-contrast-audit-for-every-settings-pane-abxx.json"))
+            .unwrap();
+    for gone in [
+        "────",
+        "acme-web · impl #48",
+        "Combobulating",
+        "Tip:",
+        "bypass permissions",
+    ] {
+        assert!(!sheet.contains(gone), "`{gone}` in the sheet: {sheet}");
+    }
+    assert!(sheet.contains("raising it one step."), "{sheet}");
     // Herd: 3 repos plus Others, every lane state (#83: parked too), a 6-item queue with one blocked.
     let h: Value = serde_json::from_str(&std::fs::read_to_string(site.join("herd.json")).unwrap()).unwrap();
     let fleets = h["fleets"].as_array().unwrap();

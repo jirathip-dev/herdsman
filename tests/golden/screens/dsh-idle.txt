@@ -1,0 +1,38 @@
+
+                                            ▓▓  ▓▓ ▓▓▒▒▒  ▓▓▒▒▒  ▓▓▒▒▒▒  ▒▒▒▒▒ ▓▓▒▒▒  ▓▓▒▒▒  ▓▓▓
+                        ▄▀▄       ▄         ▓▓  ▓▓ ▓▓     ▓▓     ▓▓         ▓▓ ▓▓     ▓▓     ▓▓ ▓▓
+                        ▀▀▀▀▄  ▄▄▀▀▀        ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓     ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓▒▒▒▒ ▓▓  ▓▓
+        ▄▄▄▄▄▄▄▄▄       ▀▀▀▀▀▀▀▀▀▀▀▀
+      ▄▀▀▀▀▀▀▀▀▀▀▀▀▄▄     ▀▀▀▀▀▀▀▀▀         ▓▓  ▓▓   ▒▒▒▒   ▓▓▒▒▒▒  ▓▓  ▓▓  ▓▓▒▒▒▒  ▓▓▒▒▒▒  ▓▓▒▒▒▒
+    ▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄  ▄▀▀▀▀▀            ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓▓ ▓▓  ▓▓      ▓▓      ▓▓
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀            ▓▓▒▒▓▓  ▓▓▒▒▓▓  ▓▓▒▒▒▒  ▓▓ ▓▓▓  ▓▓▒▒▒    ▒▒▒▒▒   ▒▒▒▒▒
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀             ▓▓  ▓▓  ▓▓  ▓▓  ▓▓ ▓▓   ▓▓  ▓▓  ▓▓          ▓▓      ▓▓
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀              ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓  ▓▓▒▒▒▒  ▓▓▒▒▒▒  ▓▓▒▒▒▒
+     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀               deepseek-flash · Max effort
+       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄              /private/tmp/claude-501/-Users-me--herdr-worktrees-herdsman-issue-105…
+          ▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀              Tip: /restart is refused while a turn runs — Ctrl+C first · /tips more tips
+
+          Explore the uncharted!
+
+  ❯ Run the shell command `sleep 8; ls` and then tell me in one sentence what files are there.
+
+  ⏺ ⏵ Running the sleep-and-list command
+
+  • Bash(sleep 8; ls) · 10s
+   ⎿ scr
+
+  ⚓ Thinking · 5s (ctrl+o to expand)
+
+  • Bash(ls -la) · 0s
+   ⎿ total 0
+     drwx------@  3 me  wheel    96 Nov  1 11:22 .
+     drwx------@  4 me  wheel   128 Nov  1 11:21 ..
+     drwxr-xr-x@ 88 me  wheel  2816 Nov  1 11:31 scr
+
+  ⏺ The directory contains a single entry, the scr directory.
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  ⌸ ❯                                                                                                                ⛶
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+                                                                                                       7.1k/1.0M 0.7%
+   deepseek-flash · max · cache 96.5% · ≈¥0.00 idle · scratchpad                                 ctx 0.7% (7.1k/1.0m)
