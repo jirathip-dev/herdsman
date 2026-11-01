@@ -1110,9 +1110,15 @@ impl<'a> Server<'a> {
             s.active_lane()
                 .and_then(|x| ls.iter().find(|l| l.name == x.1 && l.pane.is_none()))
         };
-        let mut h = String::new();
+        // #115: serve.js draws the rows as a graph from data-b/-q/-s; [?] opens its legend, data-sp its serial line.
+        let mut h = String::from(
+            "<p class=qh><button type=button class=qhelp aria-label=\"what the marks mean\">?</button></p>",
+        );
         for (f, fc) in &cfg.fleet {
             let q = queue::view(events, st, f);
+            let (sl, sp) = (esc(fc.serial_label()), esc(&fc.serial_paths.join(", ")));
+            let sa = (!sp.is_empty()).then(|| format!(" data-s=\"{sl}\" data-sp=\"{sp}\""));
+            let sa = sa.unwrap_or_default();
             let mine: Vec<&IssueState> = st.values().filter(|s| s.fleet == *f).collect();
             let queued = |n: u64| q.iter().any(|i| i.issue == n);
             let rest: Vec<u64> = mine
@@ -1138,10 +1144,7 @@ impl<'a> Server<'a> {
                 let is_dead = state == "dead";
                 let a = ago(now, s.map_or(0, |s| s.last_ts));
                 let lane = s.and_then(|s| s.lane.as_deref()).unwrap_or_default();
-                let mut card = vec![
-                    esc(&join(&[&format!("#{n} {logged}"), lane, &a])),
-                    pr_line(ctx, Some(fc), f, n, s),
-                ];
+                let mut card = vec![esc(lane), pr_line(ctx, Some(fc), f, n, s)];
                 if is_dead {
                     card.push("<span class=r>dead: the log has this lane open, herdr has no such agent</span>".into());
                 }
@@ -1169,7 +1172,14 @@ impl<'a> Server<'a> {
                     let down = q.get(k + 1).map(|x| mv("▼ down", "after", x.issue)).unwrap_or_default();
                     card.push(format!("<span class=btns>{up}{down}</span>"));
                 }
-                let row = row("q", "", &format!("#{n}"), state, &a, &card);
+                let s = k.filter(|&k| q[k].serial).map(|_| format!(" data-s=\"{sl}\""));
+                let b = blocked_by.map_or(String::new(), |b| format!(" data-b={b}"));
+                let data = format!(
+                    "class=\"q\"{}{b}{}",
+                    if k.is_some() { " data-q" } else { "" },
+                    s.unwrap_or_default()
+                );
+                let row = row("q", "", &format!("#{n}"), state, &a, &card).replacen("class=\"q\"", &data, 1);
                 body += &match titles(ctx, f, n) {
                     Some(t) => row.replacen("</summary>", &format!("<span class=tl>{}</span></summary>", esc(&t)), 1),
                     None => row,
@@ -1246,7 +1256,7 @@ impl<'a> Server<'a> {
                     (n, d) => format!("{n} lanes ({d} dead)"),
                 };
                 h += &format!(
-                    "<details class=paused><summary><span>{} · <span class=r>paused</span> · {what}</span></summary>{}{body}</details>",
+                    "<details class=paused{sa}><summary><span>{} · <span class=r>paused</span> · {what}</span></summary>{}{body}</details>",
                     esc(f),
                     button("resume", "Resume")
                 );
@@ -1257,7 +1267,11 @@ impl<'a> Server<'a> {
             } else {
                 String::new()
             };
-            h += &format!("<h2><span>{}</span>{drive}{}</h2>", esc(f), button("pause", "Pause"));
+            h += &format!(
+                "<h2{sa}><span>{}</span>{drive}{}</h2>",
+                esc(f),
+                button("pause", "Pause")
+            );
             if fc.driven() {
                 let last = crate::drive::last_pass(ctx, f).map(|t| age(now.saturating_sub(t)));
                 let last = last.map_or("no pass yet".into(), |a| format!("last pass {a} ago"));

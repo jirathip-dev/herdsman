@@ -52,6 +52,7 @@ local = "~/Projects/web"
 integration = "staging"
 serial_paths = ["supabase/migrations/**"]   # `--serial` lanes, serial_max at a time (SERIAL_BUSY / SERIAL_UNMARKED)
 # serial_max = 2   # serial issues in flight at once; default 1 (board/status: `serial n/max`)
+# serial_label = "schema"   # the Queue graph's lock mark for serial issues (🔒schema), ≤ 8 characters; default "serial"
 # required_checks = ["quality"]   # gate/check/wait look only at these (latest run each); unset = all checks
 # max_impl = 2   # optional caps (CAP); unset = no cap, the host check protects the Mac
 # max_rev = 2
