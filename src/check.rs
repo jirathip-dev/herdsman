@@ -502,12 +502,12 @@ fn closed_issues<'a>(
 }
 
 /// herdr first; else `git worktree remove` (never `--force`) of the re-checked tree minus `OWN_FILES`.
-fn remove(r: &dyn Runner, cfg: &Config, fleet: &str, wt: &str, ws: &str) -> Result<()> {
-    if !ws.is_empty() && herdr::worktree_remove(r, ws)? {
-        return Ok(());
-    }
+pub fn remove(r: &dyn Runner, cfg: &Config, fleet: &str, wt: &str, ws: &str) -> Result<()> {
     if let Some(why) = dirty(r, Path::new(wt)) {
         anyhow::bail!("{why}");
+    }
+    if !ws.is_empty() && herdr::worktree_remove(r, ws)? {
+        return Ok(());
     }
     for f in OWN_FILES {
         match std::fs::remove_file(Path::new(wt).join(f)) {

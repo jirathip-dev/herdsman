@@ -249,6 +249,8 @@ pub const PASSIVE: &[&str] = &[
     "driven",
     "amended",
     "closed-other",
+    "lane-closed",
+    "lane-kept",
 ];
 
 /// Why ask `a` closed: answered, its issue merged, or its lane killed, cleaned or respawned; `None` while open.

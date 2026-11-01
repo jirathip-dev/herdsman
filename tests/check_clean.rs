@@ -500,3 +500,61 @@ fn orphan_lane_fires_once_per_agent() {
     );
     assert_eq!(check(&c, &r), "", "once");
 }
+
+/// #128: a verdict closes the reviewer's pane and removes its worktree; a dirty one stays, with the reason logged.
+#[test]
+fn verdict_closes_the_reviewer_lane_unless_dirty() {
+    for (status, kind) in [("?? verdict.md\n", "lane-closed"), (" M src/x.rs\n", "lane-kept")] {
+        let d = tmpdir("verdict-close");
+        let c = ctx(&d, CONFIG);
+        let w = c.worktrees.join("sendmeter/rev-12-r1");
+        std::fs::create_dir_all(&w).unwrap();
+        let w = w.to_string_lossy().into_owned();
+        spawn_ev(&c, 10, 12, LANE);
+        let rev =
+            json!({"role": "rev", "agent": "sendmeter-rev-12-r1", "worktree": w, "pane": "wR:p1", "workspace": "wR"});
+        ev(&c, 20, 12, "spawn", rev);
+        let f = d.join("verdict.md");
+        std::fs::write(&f, "FAIL\n1. blocking\n").unwrap();
+        let r = Fake::default()
+            .reply("gh api repos/jirathip-dev/sendmeter/branches/issue-12", HEAD)
+            .reply(&format!("git -C {w} status"), status)
+            .reply(&format!("git -C {w} rev-list"), "0\n")
+            .reply("herdr", "{}");
+        let args = [
+            "verdict",
+            "sendmeter",
+            "12",
+            "FAIL",
+            "--sha",
+            HEAD,
+            "--file",
+            f.to_str().unwrap(),
+        ];
+        let (code, out) = run(&c, &r, &args);
+        assert_eq!(code, 0, "{out}");
+        let e = read(&c.state).unwrap().pop().unwrap();
+        assert_eq!(
+            (e.kind.as_str(), e.str("agent")),
+            (kind, Some("sendmeter-rev-12-r1")),
+            "{out}"
+        );
+        let gone = kind == "lane-closed";
+        assert_eq!(r.called("herdr pane close wR:p1"), gone, "{out}");
+        assert_eq!(r.called("herdr worktree remove --workspace wR"), gone, "{out}");
+        assert_eq!(
+            e.str("reason").unwrap(),
+            if gone {
+                "verdict recorded".to_string()
+            } else {
+                format!("{w}: 1 uncommitted change(s)")
+            }
+        );
+        let st = &herdsman::events::fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 12)];
+        assert_eq!(
+            (st.state.as_str(), st.last_event.as_str()),
+            ("fix(1)", "verdict"),
+            "history kept"
+        );
+    }
+}

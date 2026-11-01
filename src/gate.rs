@@ -1,12 +1,13 @@
 //! `herdsman verdict` and `herdsman merge`: the review → merge gate.
 use crate::config::{Config, Fleet};
 use crate::events::{emit, fold, read, Event, IssueState};
-use crate::gh;
 use crate::runner::{argv, json, ok, Runner};
 use crate::Ctx;
+use crate::{check, gh, herdr};
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::io::Write;
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct Refusal {
@@ -86,7 +87,21 @@ pub fn verdict(
         )?;
         writeln!(out, "round limit reached → needs-human")?;
     }
-    Ok(())
+    // #128: the verdict is the reviewer's only work: remove its worktree and close its pane, or keep a dirty one.
+    let events = read(&ctx.state)?;
+    let is_rev = |e: &&Event| e.is("spawn", fleet, issue) && e.str("role") == Some("rev");
+    let rev = events.iter().rfind(is_rev);
+    let Some((e, wt)) = rev.and_then(|e| Some((e, e.str("worktree").filter(|w| Path::new(w).exists())?))) else {
+        return Ok(());
+    };
+    let (agent, pane) = (e.str("agent"), e.str("pane").unwrap_or_default());
+    let ws = e.str("workspace").unwrap_or_default();
+    let gone = check::remove(r, cfg, fleet, wt, ws).map(|()| herdr::close(r, pane));
+    let kind = if gone.is_ok() { "lane-closed" } else { "lane-kept" };
+    let reason = gone.map_or_else(|why| format!("{wt}: {why:#}"), |_| "verdict recorded".into());
+    writeln!(out, "{kind} {}: {reason}", agent.unwrap_or_default())?;
+    let d = json!({"agent": agent, "reason": reason});
+    emit(&ctx.state, cfg, Event::new(ctx.now, fleet, Some(issue), kind, d))
 }
 
 #[doc(hidden)]
