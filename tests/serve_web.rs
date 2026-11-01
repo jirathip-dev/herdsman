@@ -726,7 +726,7 @@ fn queue_shows_open_work_only_and_folds_paused_retired_and_noise() {
             17,
             999_500 + k,
             if k % 2 == 0 { "clean" } else { "notify-failed" },
-            json!({}),
+            json!({"why": "merged"}),
         );
     }
     let list =

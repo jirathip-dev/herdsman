@@ -43,7 +43,7 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
         .map_err(|e| eprintln!("herdsman check: herdr agent list failed ({e:#}); skipping lane checks"))
         .ok();
     let stall = cfg.limits.stall_minutes * 60;
-    for s in fold(&events).values().filter(|s| s.state != "merged") {
+    for s in fold(&events).values().filter(|s| !s.done()) {
         let idle = ctx.now.saturating_sub(s.last_ts);
         let mut hits = vec![];
         let mut capped = None;
@@ -428,7 +428,7 @@ pub fn clean(
                 &e.fleet,
                 Some(n),
                 "clean",
-                json!({"worktree": wt, "pane": pane}),
+                json!({"worktree": wt, "pane": pane, "why": why}),
             ),
         )?;
     }

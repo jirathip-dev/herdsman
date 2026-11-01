@@ -291,8 +291,8 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
             ..Default::default()
         };
         let s = m.entry((e.fleet.clone(), n)).or_insert_with(new);
-        // A merged issue never leaves `merged`, whatever is logged after it.
-        if PASSIVE.contains(&e.kind.as_str()) || s.state == "merged" {
+        // A merged issue never leaves `merged`, whatever is logged after it; a closed one only for a new spawn.
+        if PASSIVE.contains(&e.kind.as_str()) || s.state == "merged" || s.state == "closed" && e.kind != "spawn" {
             continue;
         }
         // Design lanes are the owner's: they never move the issue through review or merge.
@@ -337,6 +337,8 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
                 };
             }
             "merged" | "blocked" | "needs-human" => s.state.clone_from(&e.kind),
+            // #128: `clean` removes only merged or GitHub-closed lanes (logs before #128 carry no `why`).
+            "clean" if e.str("why") != Some("merged") => s.state = "closed".into(),
             // Back to the state before the killed lane: queued / fix(n) for an impl, impl / fix(n) for a review.
             "lane-killed" if e.str("role").and_then(|r| s.lanes.get(r)).map(String::as_str) == e.str("agent") => {
                 let role = e.str("role").unwrap_or_default();
@@ -364,6 +366,11 @@ impl IssueState {
         self.verdicts.iter().any(|(s, _)| s.eq_ignore_ascii_case(sha))
     }
 
+    /// Merged, or closed on GitHub: no lane, alert or queue slot any more.
+    pub fn done(&self) -> bool {
+        self.state == "merged" || self.state == "closed"
+    }
+
     /// The lane that should be working now: impl in impl/fix, rev in review; none once ready, blocked or merged.
     pub fn active_lane(&self) -> Option<(&str, &str)> {
         let role = if self.state.starts_with("review") {
@@ -380,7 +387,7 @@ impl IssueState {
     pub fn unfinished(&self, role: &str) -> bool {
         match role {
             "rev" => self.state.starts_with("review"),
-            _ => self.lanes.contains_key(role) && self.state != "merged",
+            _ => self.lanes.contains_key(role) && !self.done(),
         }
     }
 }
