@@ -330,3 +330,138 @@ fn a_paired_device_answers_from_the_card_and_bad_text_is_refused() {
     );
     assert_eq!(run(&c, &Fake::default(), &["asks"]).1, "", "the ask is closed");
 }
+
+/// #99: a routine ask, `Raise the src budget?` style without owner words, recommending option 2.
+fn routine(c: &herdsman::Ctx, q: &str) -> (i32, String) {
+    let args = [
+        "ask",
+        "sendmeter",
+        "36",
+        q,
+        "--option",
+        "split",
+        "--option",
+        "keep",
+        "--recommend",
+        "2",
+        "--kind",
+        "routine",
+    ];
+    run(c, &Fake::default(), &args)
+}
+
+#[test]
+fn routine_needs_a_recommendation_and_no_owner_topic() {
+    let d = tmpdir("ask-routine-bad");
+    let c = ctx(&d, CONFIG);
+    let (code, out) = run(
+        &c,
+        &Fake::default(),
+        &["ask", "sendmeter", "36", "Split it?", "--kind", "routine"],
+    );
+    assert_eq!(code, 3);
+    assert!(out.contains("REFUSED NO_RECOMMENDATION"), "{out}");
+    for q in [
+        "Rotate the token first?",
+        "Push to main?",
+        "Worth $40 a month?",
+        "Add a dependency?",
+        "Store the secrets in the repo?",
+        "Drop the deleted rows?",
+        "Pull in two dependencies?",
+    ] {
+        let (code, out) = routine(&c, q);
+        assert_eq!(code, 3, "{q}");
+        assert!(out.contains("REFUSED OWNER_TOPIC"), "{q}: {out}");
+    }
+    assert!(kinds(&c, "needs-decision").is_empty());
+    assert_eq!(
+        routine(&c, "Split the snapshot tests per pane?").0,
+        0,
+        "maintain/mainly are not `main`"
+    );
+    assert_eq!(kinds(&c, "needs-decision")[0].str("kind"), Some("routine"));
+    ask(&c);
+    assert_eq!(
+        kinds(&c, "needs-decision")[1].str("kind"),
+        Some("owner"),
+        "unmarked asks are owner asks"
+    );
+}
+
+#[test]
+fn a_routine_ask_defaults_at_30_min_and_an_owner_ask_never_does() {
+    let d = tmpdir("ask-default");
+    let mut c = ctx(&d, CONFIG);
+    orch_spawn(&c, NOW - 3600);
+    c.now = NOW - 40 * 60;
+    assert_eq!(run(&c, &Fake::default(), &["queue", "sendmeter", "add", "36"]).0, 0);
+    ask(&c); // q1, owner
+    c.now = NOW - 30 * 60;
+    assert_eq!(routine(&c, "Split the snapshot tests per pane?").0, 0); // q2
+    let r = Fake::default()
+        .reply("herdr agent prompt", "")
+        .reply("herdr pane send-keys", "");
+    c.now = NOW - 60;
+    let page = |c: &herdsman::Ctx| {
+        let s = Server::new(c, &r, Some("127.0.0.1:7777".into()));
+        String::from_utf8_lossy(&s.respond("GET / HTTP/1.1\r\nHost: 127.0.0.1:7777\r\n\r\n", c.now)).into_owned()
+    };
+    let p = page(&c);
+    assert!(
+        p.contains("routine · defaults to 2 in 60s") && p.contains("owner · waits for you"),
+        "{p}"
+    );
+    check(&c, &r);
+    assert!(kinds(&c, "decision").is_empty(), "29 min: no default yet");
+    c.now = NOW;
+    check(&c, &r);
+    let dec = kinds(&c, "decision");
+    assert_eq!(dec.len(), 1, "only the routine ask defaults");
+    assert_eq!(
+        (dec[0].str("id"), dec[0].str("choice"), dec[0].str("by")),
+        (Some("q2"), Some("keep"), Some("default"))
+    );
+    assert!(
+        r.called("herdr agent prompt sendmeter-orch DECISION q2: keep (default after 30 min, nobody replied)"),
+        "{:?}",
+        r.calls.borrow()
+    );
+    c.now = NOW + 3 * 3600;
+    check(&c, &r);
+    assert_eq!(kinds(&c, "decision").len(), 1, "the owner ask still waits");
+    assert!(page(&c).contains("decided by default: keep"));
+
+    // [change]: a new decision on the defaulted ask, prompted; after that it is the owner's and final.
+    let (code, out) = run(&c, &r, &["answer", "sendmeter", "q2", "1"]);
+    assert_eq!(code, 0, "{out}");
+    let dec = kinds(&c, "decision");
+    assert_eq!(
+        (dec.len(), dec[1].str("choice"), dec[1].str("by")),
+        (2, Some("split"), Some("owner"))
+    );
+    assert!(r.called("herdr agent prompt sendmeter-orch DECISION q2: split"));
+    assert!(!page(&c).contains("decided by default"));
+    assert!(run(&c, &r, &["answer", "sendmeter", "q2", "2"])
+        .1
+        .contains("REFUSED ALREADY_ANSWERED"));
+}
+
+#[test]
+fn a_manual_answer_before_30_min_prevents_the_default() {
+    let d = tmpdir("ask-default-manual");
+    let mut c = ctx(&d, CONFIG);
+    orch_spawn(&c, NOW - 3600);
+    c.now = NOW - 40 * 60;
+    assert_eq!(routine(&c, "Split the snapshot tests per pane?").0, 0);
+    let r = Fake::default()
+        .reply("herdr agent prompt", "")
+        .reply("herdr pane send-keys", "");
+    c.now = NOW - 20 * 60;
+    assert_eq!(run(&c, &r, &["answer", "sendmeter", "q1", "1"]).0, 0);
+    c.now = NOW;
+    check(&c, &r);
+    let dec = kinds(&c, "decision");
+    assert_eq!((dec.len(), dec[0].str("by")), (1, Some("owner")));
+    assert_eq!(r.count("herdr agent prompt"), 1);
+}

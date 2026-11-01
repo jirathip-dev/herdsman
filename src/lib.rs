@@ -248,6 +248,10 @@ pub fn pause(ctx: &Ctx, out: &mut dyn Write, fleet: &str, paused: bool, via: Opt
     Ok(())
 }
 
+/// #99: owner words a routine ask may not use (`OWNER_TOPIC`); a backstop, not the definition (roles/usage-tail.md).
+const OWNER_WORDS: &str = "main production prod prods secret secrets token tokens delete deleted deletes deleting \
+    deletion spend spends spending spent cost costs costly dependency dependencies scope scopes";
+
 /// `herdsman ask`: log a `needs-decision` for the asking lane (`HERDSMAN_LANE`, else the orch), notify, print its id.
 pub fn ask(
     ctx: &Ctx,
@@ -256,9 +260,17 @@ pub fn ask(
     (fleet, issue): (&str, Option<u64>),
     q: &str,
     opts: &[String],
-    rec: Option<usize>,
+    (rec, kind): (Option<usize>, &str),
 ) -> Result<()> {
     cfg.fleet(fleet)?;
+    let text = format!("{q} {}", opts.join(" ")).to_lowercase();
+    let mut words = text.split(|c: char| !c.is_alphanumeric());
+    if kind == "routine" && rec.is_none() {
+        return gate::refused("NO_RECOMMENDATION", "a routine ask needs --recommend <n>");
+    }
+    if kind == "routine" && (text.contains('$') || words.any(|w| OWNER_WORDS.split_whitespace().any(|o| o == w))) {
+        return gate::refused("OWNER_TOPIC", "this ask touches an owner topic; ask it as --kind owner");
+    }
     if q.trim().is_empty() || opts.len() > 4 || rec.is_some_and(|n| n == 0 || n > opts.len()) {
         return gate::refused(
             "BAD_VALUE",
@@ -281,7 +293,7 @@ pub fn ask(
     let agent = spawned
         .and_then(|e| e.str("agent"))
         .map_or(format!("{fleet}-orch"), String::from);
-    let d = json!({"id": id, "question": q, "options": opts, "recommend": rec, "agent": agent});
+    let d = json!({"id": id, "question": q, "options": opts, "recommend": rec, "agent": agent, "kind": kind});
     emit(&ctx.state, cfg, Event::new(ctx.now, fleet, issue, "needs-decision", d))?;
     Ok(writeln!(out, "{id}")?)
 }
@@ -301,7 +313,8 @@ pub fn answer(
     let Some(ask) = events.iter().find(|e| is(e, "needs-decision")) else {
         return gate::refused("NO_SUCH_ASK", format!("{fleet} has no ask {id}"));
     };
-    if let Some(d) = events.iter().find(|e| is(e, "decision")) {
+    let last = events.iter().rev().find(|e| is(e, "decision"));
+    if let Some(d) = last.filter(|d| d.str("by") != Some("default")) {
         return gate::refused(
             "ALREADY_ANSWERED",
             format!(
@@ -335,7 +348,10 @@ pub fn answer(
             with_via(json!({"id": id, "choice": text, "by": by}), via),
         ),
     )?;
-    let Some(pane) = pane.filter(|_| herdr::prompt(r, agent, &format!("DECISION {id}: {text}")).is_ok()) else {
+    let mins = cfg.limits.ask_default_minutes;
+    let note = (by == "default").then(|| format!(" (default after {mins} min, nobody replied)"));
+    let msg = format!("DECISION {id}: {text}{}", note.unwrap_or_default());
+    let Some(pane) = pane.filter(|_| herdr::prompt(r, agent, &msg).is_ok()) else {
         let open = ask
             .issue
             .filter(|_| events::closed(&events, ask) != Some("closed: merged"));

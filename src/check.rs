@@ -80,7 +80,7 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
                 if access::capped_screen(cfg, &screen) {
                     let why = format!("{name}: {role} lane {lane} hit the usage limit; spawns skip {name} for now");
                     hits.push(("account-capped", format!("{lane}:{name}"), why));
-                    capped = Some(name);
+                    capped = Some((name, access::cap_until(cfg, r, &screen, ctx.now)));
                 }
             }
             if let Some(p) = pane.filter(|_| status.is_some()) {
@@ -115,7 +115,8 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
         for (kind, key, reason) in hits {
             let mut d = json!({"key": key, "reason": reason});
             if kind == "account-capped" {
-                d["account"] = json!(capped);
+                d["account"] = json!(capped.map(|c| c.0));
+                d["until"] = json!(capped.map(|c| c.1));
             }
             fire(ctx, cfg, out, &events, (&s.fleet, Some(s.issue)), kind, d)?;
         }
@@ -133,7 +134,15 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
         }
     }
     let open = open_asks(&events);
-    for a in open.iter().filter(|a| ctx.now.saturating_sub(a.ts) > 30 * 60) {
+    let routine = |a: &&&Event| a.str("kind") == Some("routine");
+    let due = |a: &&&Event| ctx.now.saturating_sub(a.ts) >= cfg.limits.ask_default_minutes * 60;
+    for a in open.iter().filter(routine).filter(due) {
+        let id = a.str("id").unwrap_or_default();
+        let rec = a.data["recommend"].to_string();
+        crate::answer(ctx, cfg, r, out, (&a.fleet, id), &rec, ("default", None))?;
+    }
+    let waiting = |a: &&&Event| !routine(a) && ctx.now.saturating_sub(a.ts) > 30 * 60;
+    for a in open.iter().filter(waiting) {
         let why = format!(
             "{} unanswered for {}: {}",
             a.str("id").unwrap_or("?"),

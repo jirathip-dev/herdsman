@@ -63,7 +63,7 @@ pub fn drive(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, only:
 }
 
 /// One fleet: each item's due step, then start every startable queued issue in order, then clean merged lanes.
-/// Each spawn samples the host afresh; a refused item is skipped, `CAP` ends starts, `HOST_BUSY` all fleets' (`false`).
+/// Each spawn samples the host afresh; a refused item is skipped, `CAP` ends starts, `HOST_BUSY`/`ALL_CAPPED` all fleets'.
 fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &str, start: bool) -> Result<bool> {
     let events = read(&ctx.state)?;
     let agents = host::agents(r)?;
@@ -102,8 +102,8 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
     for n in queue::startable(&events, fleet).into_iter().take_while(|_| start) {
         let at = (fleet, n.parse().ok(), "start");
         let code = act(ctx, cfg, r, out, &events, at, &["spawn", fleet, &n, "impl"])?;
-        go &= !matches!(code, Some("HOST_BUSY" | "DISK_LOW"));
-        if matches!(code, Some("HOST_BUSY" | "DISK_LOW" | "CAP")) {
+        go &= !matches!(code, Some("HOST_BUSY" | "DISK_LOW" | "ALL_CAPPED"));
+        if matches!(code, Some("HOST_BUSY" | "DISK_LOW" | "CAP" | "ALL_CAPPED")) {
             break;
         }
     }

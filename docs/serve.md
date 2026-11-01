@@ -93,7 +93,8 @@ chars, or a control character other than newline). Removing a device also needs 
 text. Secure cookies need https (`tailscale serve`) or localhost.
 
 Open asks (`herdsman ask`) show as a red **needs you** card above every tab: the question, option
-buttons (recommended first) and a free-text box. Answering POSTs `op=answer` (`herdsman answer … --by owner`,
+buttons (recommended first) and a free-text box, tagged `routine · defaults to 2 in 24m` or `owner · waits
+for you` (#99, [docs/lanes.md](lanes.md#asks)). Answering POSTs `op=answer` (`herdsman answer … --by owner`,
 logged `"via":"web"`) under the same Host/Origin checks and needs a paired device (401 otherwise). In the
 Queue tab the asked issue shows `⏸ waiting: decision`.
 

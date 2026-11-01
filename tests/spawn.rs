@@ -227,8 +227,8 @@ fn help_agent_doc_is_short_and_complete() {
     let (code, out) = run(&c, &Fake::default(), &["help", "--agent"]);
     assert_eq!(code, 0);
     // The combined doc (184 lines at #43 + #46) plus 5 lines of slack, plus #95's `close` verb (3 lines),
-    // +1 for #102's `--update`.
-    assert!(out.lines().count() <= 193, "{} lines", out.lines().count());
+    // +1 for #102's `--update`, +1 for #99's `--kind`.
+    assert!(out.lines().count() <= 194, "{} lines", out.lines().count());
     for w in [
         "herdsman spawn",
         "herdsman merge",
