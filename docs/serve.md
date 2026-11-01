@@ -114,6 +114,12 @@ device and the same Host/Origin check and 10-a-minute limit as the reply box, an
 question, a dsh/Hermes lane or an unparsed pane shows the question (or the last 6 masked
 lines) and a Reply button that opens the sheet's reply box.
 
+A menu's card (#127) also shows the prompt's block above it, masked: its first line as the title
+(`Bash command`), the reason (`Dangerous rm operation on possibly-empty variable path …`, 2 lines), the `│`
+command box (mono 11 px, 3 lines, tap to expand) and, for a prompt the harness auto-denies, `auto-denies in
+0:14` counting down from the pane read. Such a card carries `data-push=0` (no phone alert) until its countdown
+has run out. When the next read shows no prompt and the pane is working again, the card goes.
+
 Lane modes: `horse` (default), `ascii` (a 3-line horse, 2-frame gallop when working) and
 `glyph`. The vector horses are ported from Corral (jirathip-dev/corral,
 `ios/FleetNotifier/UI/Herd/HerdArt.swift` and `ios/tools/herd-art/horsesvg.py`, MIT ©

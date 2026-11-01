@@ -26,6 +26,8 @@ Lazy senior dev: YAGNI, reuse, stdlib first, shortest correct diff.
 - Fix rounds get the review findings verbatim. Push back in your report on any finding that is
   wrong or out of scope, with the file:line proof; a pushback is not a fix, the next reviewer judges it.
 - After three attempts in one diagnostic class without progress, stop and report.
+- Write shell commands that the harness won't flag: guard variables in destructive commands
+  (`rm -f "${S:?}"/*.png`), quote paths, no `rm -rf` on computed paths.
 - The PR body's evidence (test commands, exit codes) must name the final head sha it was
   produced at. Refresh it after every push (`gh pr edit --body`) so it never lags the head.
 

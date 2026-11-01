@@ -1043,7 +1043,8 @@ impl<'a> Server<'a> {
         }).collect::<String>() + &blocked
     }
 
-    /// A blocked lane's card: a Claude menu's options as buttons (`/answer`), else the question
+    /// A blocked lane's card: a Claude menu's options as buttons (`/answer`) under its title, reason, command
+    /// and countdown (#127: `data-push=0` while that runs; none once the pane works again), else the question
     /// (or the last 6 masked lines) and a Reply button that opens the lane's sheet. Unpaired: no
     /// pane text, only the 1-line activity and a pairing hint.
     fn blocked(&self, ctx: &Ctx, l: &lanes::Lane, paired: bool) -> String {
@@ -1053,14 +1054,21 @@ impl<'a> Server<'a> {
             .and_then(|p| herdr::read(&self.cached(ctx.now, 2), p).ok())
             .unwrap_or_default();
         let rw = self.addr.is_some() && paired;
+        let c = lanes::prompt(&screen).unwrap_or_default();
         let body = match lanes::pending(&screen).filter(|_| l.harness == "claude") {
+            None if l.harness == "claude" && lanes::chat(&screen).1.is_some() => return String::new(),
             _ if !paired => format!(
                 "<p class=m>{}</p><p class=m>pair this phone to answer{}</p>",
                 esc(&lanes::activity(&l.harness, &screen)),
                 self.pairb()
             ),
             Some((q, opts)) => {
-                format!("<p>{}</p>", esc(&lanes::mask(&q)))
+                let s = |k: &str| format!("<p class={k}>{}</p>", esc(c[k].as_str().unwrap_or_default()));
+                let cd = c["countdown"].as_u64().map(|n| (ctx.now + n, n / 60, n % 60));
+                let cd = cd.map(|(u, m, s)| format!("<p class=cd data-until={u}>auto-denies in {m}:{s:02}</p>"));
+                ["title", "reason", "command"].map(s).concat()
+                    + &cd.unwrap_or_default()
+                    + &format!("<p>{}</p>", esc(&lanes::mask(&q)))
                     + &opts
                         .iter()
                         .zip(1..)
@@ -1087,8 +1095,9 @@ impl<'a> Server<'a> {
             ""
         };
         format!(
-            "<div class=ask data-ask=\"{}\"><p><b>needs you</b> <span class=m>{}</span></p>{body}{reply}</div>",
+            "<div class=ask data-ask=\"{}\" data-push={}><p><b>needs you</b> <span class=m>{}</span></p>{body}{reply}</div>",
             esc(&l.name),
+            u8::from(c["push"].as_bool().unwrap_or(true)),
             esc(&who)
         )
     }
