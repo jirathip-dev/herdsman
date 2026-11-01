@@ -28,11 +28,8 @@ jobs:
         run: |
           extra=$(sed -n '/^\[dependencies\]/,/^\[/p' Cargo.toml | grep -oE '^[a-z0-9_-]+' | grep -vxE 'clap|serde|serde_json|toml|anyhow|thiserror|p256|aes-gcm|hkdf|sha2|base64' || true)
           test -z "$extra" || { echo "not allowed: $extra"; exit 1; }
-      - name: line cap (≤ 10000 formatted non-test Rust lines under src/; #93 re-based #60's packed cap on rustfmt output, raises need the owner's OK)
-        run: |
-          n=$(find src -name '*.rs' -print0 | xargs -0 cat | wc -l)
-          echo "src lines (formatted): $n"
-          test "$n" -le 10000
+      - name: line cap (formatted non-test Rust lines under src/ at most line_cap in ci/cap.toml; raises need the owner's OK, docs/cap-history/)
+        run: ./target/release/herdsman cap-check --config ci/cap.toml
       - name: assets budget (warn only; ≤ 1500 lines of JS/CSS under assets/)
         run: |
           n=$(cat assets/*.js assets/*.css | wc -l)

@@ -43,3 +43,8 @@
 {"ts":1793429588,"fleet":"acme-web","issue":48,"type":"override","reason":"acme-web spawn over the host limits: load 9.6 on 8 cores, memory pressure warn; owner said start #48 anyway, the release train leaves tonigh"}
 {"ts":1793429600,"fleet":"acme-web","issue":48,"type":"spawn","role":"impl","agent":"acme-web-impl-48-contrast-audit-for-every-settings-pane-abxx","harness":"claude","model":"opus","effort":"xhigh","branch":"issue-48"}
 {"ts":1793429610,"fleet":"acme-web","type":"queue","issues":[49],"op":"add"}
+{"ts":1793420000,"fleet":"acme-api","issue":22,"type":"verdict","verdict":"FAIL","sha":"2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a","round":1,"body":"FAIL\n\nblocking: src/openapi.rs:41 the spec omits the /v1/orders cursor params\n"}
+{"ts":1793422000,"fleet":"acme-api","issue":22,"type":"verdict","verdict":"FAIL","sha":"2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c","round":2,"body":"FAIL\n\nblocking: src/openapi.rs:41 the spec omits the /v1/orders cursor params\n"}
+{"ts":1793424000,"fleet":"acme-api","issue":22,"type":"verdict","verdict":"FAIL","sha":"2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d","round":3,"body":"FAIL\n\nblocking: src/openapi.rs:41 the spec omits the /v1/orders cursor params\n"}
+{"ts":1793426000,"fleet":"acme-api","issue":22,"type":"verdict","verdict":"PASS","sha":"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b","round":4,"body":"PASS\n\nnon-blocking: docs/api.md could link the spec\n"}
+{"ts":1793426100,"fleet":"acme-api","issue":22,"type":"needs-human","code":"ROUND_LIMIT","reason":"review rounds ran out (4/3)"}

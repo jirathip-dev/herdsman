@@ -2,7 +2,7 @@
 //! `/live` SSE clients get a thread each, fed by the 1 s watcher thread.
 use crate::config::{Config, Limits, Role};
 use crate::events::{age, append, fold, plain, read, Event, IssueState, States};
-use crate::gate::{refused, Refusal};
+use crate::gate::{gate, refused, Refusal};
 use crate::host::{self, Host};
 use crate::runner::{Out, Runner};
 use crate::{devices, gh, herdr, lanes, queue, Ctx};
@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 const SW: &str = include_str!("../assets/sw.js");
 /// #57: served under `/a/<VER>/` as immutable (the SW precaches them); the page links them.
-const ASSETS: [(&str, &str, &[u8]); 5] = [
+const ASSETS: &[(&str, &str, &[u8])] = &[
     ("serve.css", "text/css", include_bytes!("../assets/serve.css")),
     ("herd.css", "text/css", include_bytes!("../assets/herd.css")),
     ("serve.js", "text/javascript", include_bytes!("../assets/serve.js")),
@@ -29,7 +29,7 @@ const ASSETS: [(&str, &str, &[u8]); 5] = [
     ("horses.svg", "image/svg+xml", include_bytes!("../assets/horses.svg")),
 ];
 /// At the root, the fixed paths the manifest and iOS name: cached a day (`/sw.js`, VER filled in, is no-store).
-const FILES: [(&str, &str, &[u8]); 4] = [
+const FILES: &[(&str, &str, &[u8])] = &[
     (
         "manifest.webmanifest",
         "application/manifest+json",
@@ -285,7 +285,7 @@ fn row(class: &str, lead: &str, a: &str, state: &str, age: &str, lines: &[String
 }
 
 /// Form ops only a paired device may POST.
-const PAIRED_OPS: [&str; 3] = ["unpair", "answer", "drive"];
+const PAIRED_OPS: &[&str] = &["unpair", "answer", "drive", "override", "extend", "park"];
 
 /// The non-empty fields, ` · `-joined (no `-` placeholders).
 fn join(parts: &[&str]) -> String {
@@ -318,13 +318,13 @@ fn hidden(op: &str, fleet: &str, mt: &str) -> String {
     format!("<input type=hidden name=op value={op}><input type=hidden name=fleet value=\"{}\"><input type=hidden name=mtime value={mt}>", esc(fleet))
 }
 
-const GALLOP: [&str; 2] = ["    _/>\n~(___)\n /  \\", "    _/>\n~(___)\n  ><"];
+const GALLOP: &[&str] = &["    _/>\n~(___)\n /  \\", "    _/>\n~(___)\n  ><"];
 const STAND: &str = "    _/>\n~(___)\n  | |";
 const REST: &str = "\n    _/>\n~(___)_";
 const REAR: &str = "     />\n ~(_/\n  / \\";
 
 /// Corral's 8 coats (HerdArt.swift): body, shade, mane; chestnut, palomino, dun and buckskin carry a blaze.
-const COATS: [(&str, &str, &str, bool); 8] = [
+const COATS: &[(&str, &str, &str, bool)] = &[
     ("8a5a33", "6f4527", "2e2019", false),
     ("a05c2c", "7d4520", "5d3317", true),
     ("3b3b44", "2a2a31", "17161a", false),
@@ -935,6 +935,29 @@ impl<'a> Server<'a> {
                     line
                 }
             }
+            // #130: a needs-human card's buttons.
+            op @ ("override" | "extend" | "park") => {
+                let (cfg, n) = (Config::load(&ctx.config)?, g("issue").parse().context("no issue")?);
+                // Only from needs-human: a stale card or a double tap never parks a merged issue or extends twice.
+                let state = fold(&read(&ctx.state)?).remove(&(fleet.into(), n)).map(|s| s.state);
+                if state.as_deref() != Some("needs-human") {
+                    bail!("#{n} is {}, not needs-human", state.as_deref().unwrap_or("unknown"));
+                }
+                let ev = |k| Event::new(ctx.now, fleet, Some(n), k, json!({"by": "owner"}));
+                let o = crate::spawn::Opts {
+                    supersede: true,
+                    ..Default::default()
+                };
+                match op {
+                    "override" => crate::gate::merge(ctx, &cfg, self.r, &mut out, fleet, n, true)?,
+                    "extend" => {
+                        crate::spawn::spawn(ctx, &cfg, self.r, &mut out, (fleet, Some(n), "impl"), &o)?;
+                        append(&ctx.state, &ev("round-extended"))?;
+                    }
+                    _ => append(&ctx.state, &ev("parked"))?,
+                }
+                format!("#{n}: {op}")
+            }
             "unpair" => {
                 let mut all = devices::load(ctx);
                 all.retain(|d| d.hash != g("hash"));
@@ -1043,7 +1066,42 @@ impl<'a> Server<'a> {
             let question = esc(s("question"));
             let form = self.addr.as_ref().map_or(String::new(), |_| answer_form(ctx, a, "Send"));
             format!("<div class=ask><p><b>needs you</b> <span class=m>{who}</span> <span class=m>· {kind}</span></p><p>{question}</p>{form}</div>")
-        }).collect::<String>() + &blocked
+        }).collect::<String>() + &blocked + &self.needs_human(ctx, cfg, events, st, paired)
+    }
+
+    /// #130: each `needs-human` issue's card: why, the last verdict, then (paired) merge anyway (PASS at head,
+    /// CI green, mergeable), one more round, park.
+    fn needs_human(&self, ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States, paired: bool) -> String {
+        let (mt, rw) = (mtime(ctx), self.addr.is_some() && paired);
+        let card = |s: &IssueState| {
+            let (f, n) = (&s.fleet, s.issue);
+            let (pr, fc) = (gh::cached_pr(ctx, f, n), cfg.and_then(|c| c.fleet.get(f)));
+            let why = events.iter().rev().find(|e| e.is("needs-human", f, n));
+            let why = esc(why.and_then(|e| e.str("reason")).unwrap_or("gate"));
+            let m = pr["mergeable"].as_str().unwrap_or("?");
+            let ok = fc.is_some_and(|c| gate(c, &pr, Some(s), u32::MAX).is_ok()) && m == "MERGEABLE";
+            let (line, m) = (pr_line(ctx, fc, f, n, None), m.to_lowercase());
+            let fail = esc(crate::events::finding(events, f, n).unwrap_or_default());
+            let v = match s.verdicts.last() {
+                Some((sha, v)) if v == "PASS" => {
+                    let stale = if pr["headRefOid"].as_str() == Some(sha.as_str()) {
+                        ""
+                    } else {
+                        " (not the head)"
+                    };
+                    format!("PASS at {sha:.7}{stale} · {line} · {m}")
+                }
+                _ => format!("FAIL: {fail}"),
+            };
+            let merge = format!("<button name=op value=override data-confirm=\"Merge #{n} past the round limit?\">merge anyway</button>");
+            let (merge, hid) = (if ok { merge.as_str() } else { "" }, hidden("", f, &mt));
+            let form = format!("<form method=post>{hid}<input type=hidden name=issue value={n}>{merge}<button name=op value=extend>one more round</button><button name=op value=park>park</button></form>");
+            let a = age(ctx.now.saturating_sub(s.last_ts));
+            let title = esc(&gh::cached_title(ctx, f, n).unwrap_or_default());
+            let (who, form) = (esc(&format!("{f} · #{n} · {a}")), if rw { form } else { String::new() });
+            format!("<div class=ask data-n={n}><p><b>needs you</b> <span class=m>{who}</span></p><p>#{n} {title} · {why}</p><p class=m>{v}</p>{form}</div>")
+        };
+        st.values().filter(|s| s.state == "needs-human").map(card).collect()
     }
 
     /// A blocked lane's card: a Claude menu's options as buttons (`/answer`) under its title, reason, command
@@ -1351,15 +1409,16 @@ impl<'a> Server<'a> {
             }).collect()
         };
         let queued = |f: &String| -> Vec<_> {
+            let open = |s: &IssueState| s.state == "queued" || s.state == "needs-human";
             let waiting = queue::view(&events, &st, f)
                 .into_iter()
-                .filter(|i| st.get(&(f.clone(), i.issue)).is_none_or(|s| s.state == "queued"));
+                .filter(|i| st.get(&(f.clone(), i.issue)).is_none_or(open));
             waiting.map(|i| json!({"issue": i.issue, "title": gh::cached_title(ctx, f, i.issue), "blocked_by": i.blocked_by, "coat": coat(&format!("{f}#{}", i.issue))})).collect()
         };
         let fleets: Vec<_> = cfg
             .fleet
             .keys()
-            .map(|f| json!({"name": f, "lanes": lanes(Some(f)), "queue": queued(f)}))
+            .map(|f| json!({"name": f, "lanes": lanes(Some(f)), "queue": queued(f), "needs": st.values().filter(|s| &s.fleet == f && s.state == "needs-human").map(|s| s.issue).collect::<Vec<_>>()}))
             .collect();
         let lim = &cfg.limits;
         let sky = [
@@ -1687,8 +1746,8 @@ pub fn export(ctx: &Ctx, r: &dyn Runner, dir: &std::path::Path, demo: bool) -> R
     .map(|(n, b)| (n.to_string(), b));
     for (name, body) in files
         .into_iter()
-        .chain(FILES.map(|f| (f.0.to_string(), f.2)))
-        .chain(ASSETS.map(|a| (v.clone() + a.0, a.2)))
+        .chain(FILES.iter().map(|f| (f.0.to_string(), f.2)))
+        .chain(ASSETS.iter().map(|a| (v.clone() + a.0, a.2)))
     {
         std::fs::write(dir.join(name), body)?;
     }
@@ -1824,7 +1883,7 @@ fn role_form(cfg: &Config, fleet: &str, role: &str, r: &Role, rw: bool, mt: &str
 }
 
 /// Noise folded into one count per run of consecutive events unless `all`.
-const NOISE: [&str; 2] = ["clean", "notify-failed"];
+const NOISE: &[&str] = &["clean", "notify-failed"];
 
 fn events_tab(ctx: &Ctx, cfg: Option<&Config>, events: &[Event], st: &States, all: bool) -> String {
     let repo = |fleet: &str| cfg.and_then(|c| c.fleet.get(fleet)).map(|f| f.repo.clone());
