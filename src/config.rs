@@ -306,7 +306,10 @@ pub fn glob(g: &[u8], s: &[u8]) -> bool {
 }
 
 pub fn expand(p: &str) -> PathBuf {
-    p.strip_prefix("~/").map_or_else(|| PathBuf::from(p), |rest| home().join(rest))
+    match p.strip_prefix("~/") {
+        Some(rest) => home().join(rest),
+        None => PathBuf::from(p),
+    }
 }
 
 pub fn home() -> PathBuf {

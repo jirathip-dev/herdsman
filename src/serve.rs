@@ -994,7 +994,7 @@ impl<'a> Server<'a> {
             let (subs, sent) = (crate::webpush::load(&ctx.state), events.iter().rfind(|e| e.kind == "push-sent"));
             let failed = events.iter().rfind(|e| e.kind == "notify-failed" && e.str("cmd") == Some("webpush"));
             let when = sent.map_or("never sent".into(), |e| format!("last sent {} ago", ago(ctx.now, e.ts)));
-            let row = match (cfg.and_then(Config::webpush_sub), failed.filter(|f| sent.is_none_or(|e| f.ts > e.ts))) {
+            let row = match (cfg.and_then(Config::webpush_sub), failed.filter(|f| sent.is_none_or(|e| f.ts >= e.ts))) {
                 (None, _) => "off: no webpush notifier".to_string(),
                 (_, Some(f)) => format!("on · last failure: {}", f.str("error").unwrap_or("?")),
                 _ => format!("on · {} device{} · {when}", subs.len(), if subs.len() == 1 { "" } else { "s" }),

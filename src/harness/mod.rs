@@ -19,7 +19,10 @@ pub const EFFORTS: [&str; 5] = ["none", "low", "medium", "high", "xhigh"];
 
 /// The levels `harness` takes: Claude `--effort` (`none` omits it), Hermes `--reasoning`; dsh none yet.
 pub fn efforts(harness: &str) -> &'static [&'static str] {
-    if harness == "dsh" { &["none"] } else { &EFFORTS }
+    match harness {
+        "dsh" => &["none"],
+        _ => &EFFORTS,
+    }
 }
 
 pub trait Harness {

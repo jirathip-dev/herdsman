@@ -418,7 +418,9 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
         Cmd::Serve { addr, read_only, .. } => serve::serve(ctx, r, &addr, read_only)?,
         Cmd::Push { cmd: PushCmd::Test } => {
             let cfg = Config::load(&ctx.config)?;
-            let Some(sub) = cfg.webpush_sub() else { bail!("no `type = \"webpush\"` notifier in fleet.toml (docs/serve.md)") };
+            let Some(sub) = cfg.webpush_sub() else {
+                bail!("no `type = \"webpush\"` notifier in fleet.toml (docs/serve.md)")
+            };
             let ev = crate::events::Event::new(ctx.now, "herdsman", None, "push-test", json!({"reason": "test alert"}));
             writeln!(out, "{}", crate::webpush::send(&ctx.state, sub, &ev, None)?)?;
         }
@@ -566,7 +568,9 @@ fn run_hook(ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mut dyn Read
 /// main, master, staging and every fleet's integration branch.
 fn protected_branches(ctx: &Ctx) -> Vec<String> {
     let mut branches: Vec<String> = ["main", "master", "staging"].map(String::from).to_vec();
-    branches.extend(Config::load(&ctx.config).iter().flat_map(|c| c.fleet.values()).map(|f| f.integration.clone()));
+    if let Ok(cfg) = Config::load(&ctx.config) {
+        branches.extend(cfg.fleet.values().map(|f| f.integration.clone()));
+    }
     branches
 }
 

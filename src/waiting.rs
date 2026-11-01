@@ -47,9 +47,11 @@ pub fn waiting_on(events: &[Event], s: &IssueState, head: Option<(&str, u64)>, p
     if let Some(a) = open_asks(events).into_iter().find(mine) {
         return w("owner", &format!("waiting on your answer ({})", a.str("id").unwrap_or("?")), a.ts, None);
     }
-    let done = [("merged", s.state == "merged" || pr["state"] == "MERGED"), ("closed", pr["state"] == "CLOSED")];
-    if let Some((how, _)) = done.iter().find(|d| d.1) {
-        return w("none", &format!("nothing to do ({how}): clean me"), s.last_ts, None);
+    if s.state == "merged" || pr["state"] == "MERGED" {
+        return w("none", "nothing to do (merged): clean me", s.last_ts, None);
+    }
+    if pr["state"] == "CLOSED" {
+        return w("none", "nothing to do (closed): clean me", s.last_ts, None);
     }
     let pushed = pr["headRefOid"].as_str().unwrap_or_default();
     match s.state.split('(').next().unwrap_or_default() {

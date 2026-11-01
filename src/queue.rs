@@ -115,9 +115,11 @@ pub fn view(events: &[Event], st: &States, fleet: &str) -> Vec<Item> {
 pub fn next(events: &[Event], fleet: &str) -> (i32, String) {
     let st = fold(events);
     let free: Vec<Item> = view(events, &st, fleet).into_iter().filter(|i| state(&st, fleet, i.issue) == "queued").collect();
-    match (free.iter().find(|i| i.blocked_by.is_none()), free.first()) {
-        (Some(i), _) => (0, i.issue.to_string()),
-        (_, Some(Item { issue, blocked_by: Some(b), .. })) => (2, format!("#{issue} is blocked by #{b}")),
+    if let Some(i) = free.iter().find(|i| i.blocked_by.is_none()) {
+        return (0, i.issue.to_string());
+    }
+    match free.first() {
+        Some(Item { issue, blocked_by: Some(b), .. }) => (2, format!("#{issue} is blocked by #{b}")),
         _ => (1, format!("{fleet}: queue empty")),
     }
 }
