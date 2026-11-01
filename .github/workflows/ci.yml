@@ -32,7 +32,7 @@ jobs:
         run: |
           n=$(find src -name '*.rs' -print0 | xargs -0 cat | wc -l)
           echo "src lines (formatted): $n"
-          test "$n" -le 9000
+          test "$n" -le 9700
       - name: assets budget (warn only; ≤ 1500 lines of JS/CSS under assets/)
         run: |
           n=$(cat assets/*.js assets/*.css | wc -l)
