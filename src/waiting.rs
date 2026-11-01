@@ -257,6 +257,8 @@ pub fn scan(
             &f.required_checks,
             path.as_deref().zip(word.as_deref()),
         );
+        let to = f.driven().then_some("for drive (next pass ≤ 5 min)");
+        w.what = w.what.replace("for orch", to.unwrap_or("for orch"));
         // #83: a paused fleet's lane with no pane and a clean, pushed worktree is parked until `resume`.
         let safe = || wt.is_some_and(|wt| crate::spawn::dirty(r, std::path::Path::new(wt)).is_none());
         if f.paused

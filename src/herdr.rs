@@ -108,6 +108,12 @@ pub fn reply(r: &dyn Runner, dsh: bool, agent: &str, pane: &str, text: &str) -> 
     Ok(())
 }
 
+/// #143: whether a prompt the caller just entered moved the agent off idle within 20 s, typing it once more if not.
+pub fn landed(r: &dyn Runner, agent: &str, pane: &str, text: &str) -> bool {
+    let up = || exec(r, &wait_working_argv(agent, "20000")).is_ok_and(|o| o.code == 0);
+    up() || (reply(r, false, agent, pane, text).is_ok() && up())
+}
+
 pub fn close(r: &dyn Runner, pane: &str) -> Result<String> {
     ok(r, &argv(&["pane", "close", pane]))
 }

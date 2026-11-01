@@ -659,7 +659,10 @@ fn a_pushed_update_or_fix_head_still_conflicting_gets_a_review_not_another_updat
     assert_eq!(state(&c), "fix(1)+u1");
     // The update lane pushed b2; GitHub has not recomputed `mergeable` yet.
     let (_, out) = run(&c, &pr_at("b2"), &["waiting", "sendmeter"]);
-    assert!(out.contains("waiting for orch to spawn review"), "{out}");
+    assert!(
+        out.contains("waiting for drive (next pass ≤ 5 min) to spawn review"),
+        "{out}"
+    );
     assert!(
         out.contains("herdsman spawn sendmeter 12 rev") && !out.contains("--update"),
         "{out}"
@@ -679,7 +682,7 @@ fn a_pushed_update_or_fix_head_still_conflicting_gets_a_review_not_another_updat
     );
     let (_, out) = run(&c, &pr_at("c3"), &["waiting", "sendmeter"]);
     assert!(
-        out.contains("waiting for orch to spawn review") && !out.contains("--update"),
+        out.contains("waiting for drive (next pass ≤ 5 min) to spawn review") && !out.contains("--update"),
         "{out}"
     );
     let (code, out) = run(&c, &Fake::default(), &["spawn", "sendmeter", "12", "rev", "--update"]);

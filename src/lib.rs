@@ -365,6 +365,11 @@ pub fn answer(
         )?);
     };
     herdr::keys(r, pane, "Enter")?;
+    if !herdr::landed(r, agent, pane, &msg) {
+        let d = json!({"id": id, "agent": agent, "reason": msg});
+        let ev = Event::new(ctx.now, fleet, ask.issue, "decision-undelivered", d);
+        emit(&ctx.state, cfg, ev)?;
+    }
     Ok(writeln!(out, "{fleet} {id}: {text} -> {agent}")?)
 }
 
