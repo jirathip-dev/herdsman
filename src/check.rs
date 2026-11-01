@@ -144,6 +144,22 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
         let rec = a.data["recommend"].to_string();
         crate::answer(ctx, cfg, r, out, (&a.fleet, id), &rec, ("default", None))?;
     }
+    // #143: an undelivered DECISION is typed again once while its agent sits idle and nothing since names it.
+    for (i, u) in events.iter().enumerate().filter(|e| e.1.kind == "decision-undelivered") {
+        let agent = u.str("agent");
+        let quiet = events[i + 1..].iter().all(|e| e.str("agent") != agent);
+        let idle = agents
+            .iter()
+            .flatten()
+            .find(|a| a["name"].as_str() == agent && matches!(a["agent_status"].as_str(), Some("idle" | "done")));
+        let (Some(pane), Some(msg)) = (idle.and_then(|a| a["pane_id"].as_str()), u.str("reason")) else {
+            continue;
+        };
+        if quiet && herdr::reply(r, false, agent.unwrap_or_default(), pane, msg).is_ok() {
+            let d = json!({"key": u.str("id"), "agent": agent, "reason": msg});
+            fire(ctx, cfg, out, &events, (&u.fleet, u.issue), "decision-redelivered", d)?;
+        }
+    }
     let waiting = |a: &&&Event| !routine(a) && ctx.now.saturating_sub(a.ts) > 30 * 60;
     for a in open.iter().filter(waiting) {
         let why = format!(

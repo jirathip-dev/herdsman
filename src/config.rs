@@ -221,6 +221,7 @@ pub const WEBPUSH_ON: &[&str] = &[
     "needs-human",
     "orch-stuck",
     "ask-waiting",
+    "decision-undelivered",
     "state-write-failed",
 ];
 

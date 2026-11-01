@@ -64,7 +64,8 @@ fn ask_answer_round_trip_prompts_the_asker_once() {
 
     let r = Fake::default()
         .reply("herdr agent prompt", "")
-        .reply("herdr pane send-keys", "");
+        .reply("herdr pane send-keys", "")
+        .reply("herdr agent wait", "");
     let (code, out) = run(&c, &r, &["answer", "sendmeter", "q1", "2", "--by", "conductor"]);
     assert_eq!(code, 0, "{out}");
     assert!(
@@ -293,7 +294,8 @@ fn a_paired_device_answers_from_the_card_and_bad_text_is_refused() {
     ask(&c);
     let r = Fake::default()
         .reply("herdr agent prompt", "")
-        .reply("herdr pane send-keys", "");
+        .reply("herdr pane send-keys", "")
+        .reply("herdr agent wait", "");
     let s = Server::new(&c, &r, Some("127.0.0.1:7777".into()));
     let cookie = pair(&s, &c, "", NOW);
     let page = String::from_utf8_lossy(&s.respond("GET / HTTP/1.1\r\nHost: 127.0.0.1:7777\r\n\r\n", NOW)).into_owned();
@@ -401,7 +403,8 @@ fn a_routine_ask_defaults_at_30_min_and_an_owner_ask_never_does() {
     assert_eq!(routine(&c, "Split the snapshot tests per pane?").0, 0); // q2
     let r = Fake::default()
         .reply("herdr agent prompt", "")
-        .reply("herdr pane send-keys", "");
+        .reply("herdr pane send-keys", "")
+        .reply("herdr agent wait", "");
     c.now = NOW - 60;
     let page = |c: &herdsman::Ctx| {
         let s = Server::new(c, &r, Some("127.0.0.1:7777".into()));
@@ -456,7 +459,8 @@ fn a_manual_answer_before_30_min_prevents_the_default() {
     assert_eq!(routine(&c, "Split the snapshot tests per pane?").0, 0);
     let r = Fake::default()
         .reply("herdr agent prompt", "")
-        .reply("herdr pane send-keys", "");
+        .reply("herdr pane send-keys", "")
+        .reply("herdr agent wait", "");
     c.now = NOW - 20 * 60;
     assert_eq!(run(&c, &r, &["answer", "sendmeter", "q1", "1"]).0, 0);
     c.now = NOW;
@@ -464,4 +468,52 @@ fn a_manual_answer_before_30_min_prevents_the_default() {
     let dec = kinds(&c, "decision");
     assert_eq!((dec.len(), dec[0].str("by")), (1, Some("owner")));
     assert_eq!(r.count("herdr agent prompt"), 1);
+}
+
+/// #143: an answer is delivered once the agent leaves idle; else one retry, then a pushed `decision-undelivered`.
+#[test]
+fn an_answer_the_agent_never_picks_up_is_retried_once_then_pushed() {
+    let d = tmpdir("ask-landed");
+    let c = ctx(&d, CONFIG);
+    orch_spawn(&c, NOW - 60);
+    ask(&c);
+    let r = Fake::default()
+        .reply("herdr agent prompt", "")
+        .reply("herdr pane send-keys", "")
+        .reply("herdr agent wait sendmeter-orch --until working", "");
+    assert_eq!(run(&c, &r, &["answer", "sendmeter", "q1", "2"]).0, 0);
+    let n = |r: &Fake| {
+        (
+            r.count("herdr agent prompt"),
+            r.count("herdr pane send-keys"),
+            r.count("herdr agent wait"),
+        )
+    };
+    assert_eq!(n(&r), (1, 1, 1), "working at once: nothing more");
+    assert!(kinds(&c, "decision-undelivered").is_empty());
+
+    let d = tmpdir("ask-undelivered");
+    let c = ctx(&d, CONFIG);
+    orch_spawn(&c, NOW - 60);
+    ask(&c);
+    let idle = Fake::default()
+        .reply("herdr agent prompt", "")
+        .reply("herdr pane send-keys", "")
+        .reply("herdr agent list", &agents(&[(ORCH, "idle", "/x", "w1:p1")]));
+    assert_eq!(run(&c, &idle, &["answer", "sendmeter", "q1", "2"]).0, 0);
+    assert_eq!(n(&idle), (2, 2, 2), "one retry");
+    let u = kinds(&c, "decision-undelivered");
+    assert_eq!(
+        (u.len(), u[0].str("id"), u[0].str("agent"), u[0].str("reason")),
+        (1, Some("q1"), Some(ORCH), Some("DECISION q1: no, trim"))
+    );
+    assert!(herdsman::config::WEBPUSH_ON.contains(&"decision-undelivered"), "pushed");
+
+    // `check` types it once more while the agent sits idle, then never again.
+    let out = check(&c, &idle);
+    assert!(out.contains("decision-redelivered: DECISION q1: no, trim"), "{out}");
+    assert!(check(&c, &idle).is_empty());
+    assert_eq!(n(&idle).0, 3);
+    assert!(idle.called("herdr agent prompt sendmeter-orch DECISION q1: no, trim"));
+    assert_eq!(kinds(&c, "decision-redelivered").len(), 1);
 }

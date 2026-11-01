@@ -579,3 +579,21 @@ fn a_long_reason_never_squeezes_the_name() {
         "the older lane does not repeat it; no `(10m)` suffix in the row"
     );
 }
+
+/// #143: a driver fleet has no orch: its waits name `drive`.
+#[test]
+fn a_driver_fleets_status_never_says_orch() {
+    let (c, r) = fixture("waiting-driven");
+    let driven = CONFIG.replace(
+        "integration = \"staging\"",
+        "integration = \"staging\"\ndriver = \"herdsman\"",
+    );
+    std::fs::write(&c.config, driven).unwrap();
+    run(&c, &r, &["waiting", "sendmeter"]);
+    let (_, st) = run(&c, &r, &["status", "sendmeter"]);
+    assert!(
+        st.contains("pushed fix 605297c, waiting for drive (next pass ≤ 5 min) to spawn review"),
+        "{st}"
+    );
+    assert!(!st.contains("orch"), "{st}");
+}
