@@ -32,6 +32,7 @@ local = "~/src/<repo>"
 integration = "staging"                      # merge target; main never is
 required_checks = ["test"]                   # gate on these checks only; unset = all
 serial_paths = ["db/migrations/**"]          # `--serial` lanes: serial_max (default 1) at a time
+serial_label = "schema"                      # their Queue mark, 🔒schema; ≤ 8 characters, default "serial"
 
 [fleet.app.role.orch]
 harness = "hermes"

@@ -151,3 +151,26 @@ main{transition:transform .2s}
 .unp{margin:auto;padding:var(--s3);text-align:center;border:1px solid var(--a);border-radius:8px;color:var(--a)}
 #dot.demo{color:var(--l)}
 [inert]{opacity:.6}
+/* #115: the Queue tab as a git-log style graph (serve.js `graph()`). A row's gutter is its node line in box-drawing text
+   (│ ├─ └─, then the state dot); each solid glyph also draws its stroke as a 1 px line down the whole row (an open card too),
+   so the graph has no gaps at line height 1.5. A clamped row (depth > 3) keeps its dashed ┆─ glyph alone. --d is the drawn
+   depth (0-3), the gutter 2·d+1 columns (≤ 6 + the dot); --y is the node line's middle. The row separator starts at the
+   #n column, so it never crosses the graph. The card is a box beside the gutter; a hanging row's title wraps. */
+details.q{position:relative;border-bottom:0;--gw:calc((2 * var(--d, 0) + 1) * 1ch);--y:calc(var(--s1) + var(--fs) * .75);
+  background:linear-gradient(var(--line),var(--line)) no-repeat calc(var(--gw) + var(--s2)) 100%/100% 1px}
+.d0{--d:0}.d1{--d:1}.d2{--d:2}.d3{--d:3}
+details.q>summary{grid-template-columns:var(--gw) 6ch minmax(0,1fr) auto;align-content:start;padding:var(--s1) 0}
+details.q .tl{grid-column:2/-1}
+details.q:not(.d0) .tl{white-space:normal}
+details.q[open]{padding-bottom:var(--s2)}
+.cd{margin-left:calc(var(--gw) + var(--s2));padding:0 var(--s2);border:1px solid #30363d;border-radius:6px;background:#161b22}
+.cd>p{margin:var(--s2) 0}
+.gt,.gt i{font-style:normal;white-space:pre;color:var(--mute)}
+.gt b{font-weight:400}
+.gt .p::before,.gt .t::before,.gt .e::before,.gt .k::before{content:"";position:absolute;top:0;bottom:0;margin-left:.5ch;border-left:1px solid var(--mute);translate:-50%}
+.gt .e::before{bottom:auto;height:var(--y)}
+.gt .k::before{top:calc(var(--y) + var(--fs) * .4)}
+/* #115 amendment A: the [?] legend, right-aligned over the queue; it opens in the lane sheet with the lane parts hidden. */
+.qh{display:flex;justify-content:flex-end;margin:var(--s2) 0 0}
+.sh.lg :is(.acts,.cf,.chat,.pairf,.cmds,.reply,.st){display:none}
+.sh.lg .top{max-height:none;border:0}

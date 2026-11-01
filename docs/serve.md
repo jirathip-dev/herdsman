@@ -32,6 +32,13 @@ live swaps, re-read on ↻). The Events tab body is read from `GET /frag?id=even
 a repeat visit downloads the page HTML only, the assets come from the service worker's cache. A
 `serve --export` inlines both, so the static demo needs no `/frag`.
 
+Queue tab (#115): each fleet's rows are a `git log --graph` tree in queue order. A row blocked by another row in
+view hangs off it (`│ ├─ └─`; past depth 3 it clamps to `┆─` and an `on #b` tag), a blocker out of view is a red
+`! #b` tag. A dot per row: `●` a lane works on it, `○` waiting, `✓` ready, `!` needs you. A `--serial` issue shows
+`🔒<serial_label>` (default `serial`). `[?]` opens the legend sheet: every state word in plain words (the same line is
+each state word's title on Queue, Lanes and Herd), the dots, and each fleet's serial paths. ▲/▼ move a row among its
+siblings.
+
 Its only writes are ▲/▼ (`queue mv`), Pause/Resume and a role's model/effort (`set`, choices
 from `models = [...]`), each through the CLI's own code path, logged with `"via":"web"`.
 
