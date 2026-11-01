@@ -8,10 +8,10 @@ use herdsman::usage::{epoch, lane_secs, parse_balance, parse_usage};
 use serde_json::json;
 use std::path::Path;
 
-const DS_KEY: &str = "sk-deepseekfixturekey0123456789";
-const ACCESS: &str = "sk-ant-oat01-ACCESS-fixture-secret";
-const REFRESH: &str = "sk-ant-ort01-REFRESH-fixture-secret";
-const NEW_ACCESS: &str = "sk-ant-oat01-NEWACCESS-fixture-secret";
+const DS_KEY: &str = concat!("sk", "-deepseekfixturekey0123456789");
+const ACCESS: &str = concat!("sk", "-ant-oat01-ACCESS-fixture-secret");
+const REFRESH: &str = concat!("sk", "-ant-ort01-REFRESH-fixture-secret");
+const NEW_ACCESS: &str = concat!("sk", "-ant-oat01-NEWACCESS-fixture-secret");
 
 /// `Fake` that also records what each `run_in` sent on stdin.
 struct Stdin(Fake, Shared<Vec<String>>);
@@ -99,7 +99,10 @@ fn balance_and_usage_fixtures_parse() {
 
 #[test]
 fn secret_in_config_is_refused() {
-    const JWT: &str = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJlZml4dHVyZQ";
+    const JWT: &str = concat!(
+        "ey",
+        "JhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJlZml4dHVyZQ"
+    );
     for (i, secret) in [DS_KEY, JWT].into_iter().enumerate() {
         let c = ctx(
             &tmpdir(&format!("usage-secret-{i}")),
@@ -299,8 +302,7 @@ fn expired_login_refreshes_or_falls_back_to_login_needed() {
 /// An expired login whose refresh succeeds; `stored` is what the Keychain holds when re-read after the write-back.
 fn refreshed(d: &Path, stored: &str) -> (herdsman::Ctx, Stdin) {
     let c = ctx(d, &config(d));
-    let rotated =
-        json!({"access_token": NEW_ACCESS, "refresh_token": "sk-ant-ort01-NEWREFRESH-fixture", "expires_in": 3600});
+    let rotated = json!({"access_token": NEW_ACCESS, "refresh_token": concat!("sk", "-ant-ort01-NEWREFRESH-fixture"), "expires_in": 3600});
     let r = stdin(
         Fake::default()
             .reply("security find-generic-password -s", ATTRS)

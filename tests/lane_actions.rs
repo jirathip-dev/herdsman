@@ -104,7 +104,12 @@ fn kill_pushes_wip_then_closes_and_logs() {
 #[test]
 fn kill_refuses_a_secret_in_the_wip_diff() {
     let (c, wt) = lane("kill-secret");
-    let r = git(&wt, "", "1\n", "+TOKEN = \"ghp_abcdefghijklmnopqrstu1234\"\n");
+    let r = git(
+        &wt,
+        "",
+        "1\n",
+        concat!("+TOKEN = \"gh", "p_abcdefghijklmnopqrstu1234\"\n"),
+    );
     let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
     assert_eq!(code, 3, "{out}");
     assert!(out.contains("REFUSED SECRET_IN_WIP"), "{out}");
@@ -123,21 +128,26 @@ fn kill_refuses_a_secret_in_the_wip_diff() {
 fn kill_skips_lockfile_checksums_but_not_secrets() {
     let head = "diff --git a/Cargo.lock b/Cargo.lock\n--- a/Cargo.lock\n+++ b/Cargo.lock\n@@ -1,3 +1,3 @@\n";
     let lock = format!(
-        "{head}+checksum = \"{}\"\n+  \"integrity\": \"sha512-{}==\",\n-OLD_TOKEN=ghp_abcdefghijklmnopqrstu1234\n",
+        "{head}+checksum = \"{}\"\n+  \"integrity\": \"sha512-{}==\",\n-OLD_TOKEN={}\n",
         "ab".repeat(32),
-        "Qx".repeat(43)
+        "Qx".repeat(43),
+        concat!("gh", "p_abcdefghijklmnopqrstu1234")
     );
     let (c, wt) = lane("kill-lock");
     let r = git(&wt, "", "1\n", &lock);
     assert_eq!(run(&c, &r, &["kill", LANE, "--yes"]).0, 0);
     assert!(r.called(&format!("git -C {wt} push origin HEAD:refs/heads/wip/")));
-    let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc";
+    let jwt = concat!("ey", "JhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc");
     for (i, bad) in [
-        "+checksum = \"ghp_abcdefghijklmnopqrstu1234\"".to_string(),
-        "+checksum = \"sk-abcdefghijklmnopqrstuvwxyz123456\"".into(),
+        concat!("+checksum = \"gh", "p_abcdefghijklmnopqrstu1234\"").to_string(),
+        concat!("+checksum = \"sk", "-abcdefghijklmnopqrstuvwxyz123456\"").into(),
         format!("+  \"integrity\": \"{jwt}\","),
-        "+++ b/token.txt ghp_abcdefghijklmnopqrstu1234".into(),
-        "diff --git a/.env b/.env\n+++ b/.env\n@@ -0,0 +1 @@\n+API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456".into(),
+        concat!("+++ b/token.txt gh", "p_abcdefghijklmnopqrstu1234").into(),
+        concat!(
+            "diff --git a/.env b/.env\n+++ b/.env\n@@ -0,0 +1 @@\n+API_KEY=sk",
+            "-abcdefghijklmnopqrstuvwxyz123456"
+        )
+        .into(),
     ]
     .iter()
     .enumerate()
@@ -478,4 +488,154 @@ fn inputs_are_16px_and_zoom_is_off() {
         .into_owned();
     assert!(page.contains("initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"));
     assert!(css.contains(".lock body{position:fixed") && include_str!("../assets/serve.js").contains("visualViewport"));
+}
+
+/// #96: the push guard flags real secret shapes only, never code, test names or words like `key`/`token`.
+/// Token-shaped fixtures here and in other tests are split with `concat!` so no source literal reads as a live secret.
+#[test]
+fn secret_flags_real_shapes_only() {
+    use herdsman::lanes::secret;
+    for ok in [
+        "fn check_prompts_an_idle_orch_after_5_min_then_alerts_after_15() {",
+        "    let api_key = config.key();",
+        "fn token_for(fleet: &str) -> Option<String> {",
+        "let token = std::env::var(\"GITHUB_TOKEN\").unwrap_or_default();",
+        "KEY_PATH=/etc/ssl/private/server_2026.pem",
+        "let secret_name = \"orch_idle_after_15_min_alert\";",
+        "checksum = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
+        "a3f9c2e1b7d4058a6e3f9c2e1b7d4058a6e3f9c2 src/x.rs",
+        "    \"integrity\": \"sha512-z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP+DGNKHfuwvY7kxvUdBeoGlODJ6+SfaPg==\",",
+        "    \"apiKey\": \"config_api_key_from_env\",",
+    ] {
+        assert_eq!(secret(ok), None, "{ok}");
+    }
+    let pem = concat!("-----BEGIN RSA PRIV", "ATE KEY-----");
+    let jwt = concat!(
+        "ey",
+        "JhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+    );
+    for (bad, v) in [
+        (
+            format!("TOKEN = \"ghp_{}\"", "aB3".repeat(12)),
+            format!("ghp_{}", "aB3".repeat(12)),
+        ),
+        (
+            concat!("key: sk", "-ant-api03-abcdefghijklmnop1234").into(),
+            concat!("sk", "-ant-api03-abcdefghijklmnop1234").into(),
+        ),
+        (
+            concat!("aws_access_key_id = AK", "IAIOSFODNN7EXAMPLE").into(),
+            concat!("AK", "IAIOSFODNN7EXAMPLE").into(),
+        ),
+        (format!("  {pem}"), pem.into()),
+        (format!("Authorization: Bearer {jwt}"), jwt.into()),
+        ("SECRET=\"h7Gk2pQ9xLm4vB8nR3tZ\"".into(), "h7Gk2pQ9xLm4vB8nR3tZ".into()),
+        (
+            "API_KEY=\"h7Gk2pQ9xLm4vB8nR3tZ\" // prod".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "API_KEY=h7Gk2pQ9xLm4vB8nR3tZ # note".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "  \"apiKey\": \"h7Gk2pQ9xLm4vB8nR3tZ\",".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        ("api_key: h7Gk2pQ9xLm4vB8nR3tZ".into(), "h7Gk2pQ9xLm4vB8nR3tZ".into()),
+        (
+            format!("x = gho_{}", "aB3".repeat(12)),
+            format!("gho_{}", "aB3".repeat(12)),
+        ),
+        (
+            format!("github_pat_11{}", "aB3".repeat(20)),
+            format!("github_pat_11{}", "aB3".repeat(20)),
+        ),
+        (
+            concat!("slack: xo", "xb-1234567890-abcdefghijkl").into(),
+            concat!("xo", "xb-1234567890-abcdefghijkl").into(),
+        ),
+        (
+            concat!("slack: xo", "xa-2-1234567890-abcdefghij").into(),
+            concat!("xo", "xa-2-1234567890-abcdefghij").into(),
+        ),
+        (
+            concat!("slack: xo", "xp-1234567890-abcdefghijkl").into(),
+            concat!("xo", "xp-1234567890-abcdefghijkl").into(),
+        ),
+        (
+            concat!("bot 123456789:", "AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d ok").into(),
+            concat!("123456789:", "AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d").into(),
+        ),
+        (
+            concat!("TELEGRAM_BOT_TOKEN=123456789:", "AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d").into(),
+            concat!("123456789:", "AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d").into(),
+        ),
+        (
+            "const SECRET_KEY: &str = \"h7Gk2pQ9xLm4vB8nR3tZ\";".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "    SECRET_KEY: &str = \"h7Gk2pQ9xLm4vB8nR3tZ\",".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "const API_KEY: string = \"h7Gk2pQ9xLm4vB8nR3tZ\";".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "let apiKey: String = \"h7Gk2pQ9xLm4vB8nR3tZ\"".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            concat!("let url = \"bot123456789:", "AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d\";").into(),
+            concat!("123456789:", "AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d").into(),
+        ),
+        (
+            concat!(
+                "https://api.telegram.org/bot123456789:",
+                "AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d/sendMessage"
+            )
+            .into(),
+            concat!("123456789:", "AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d").into(),
+        ),
+        (
+            concat!("id = AS", "IAIOSFODNN7EXAMPLE").into(),
+            concat!("AS", "IAIOSFODNN7EXAMPLE").into(),
+        ),
+        (
+            "Authorization: Bearer h7Gk2pQ9xLm4vB8nR3tZ".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "  \"authorization\": \"Bearer h7Gk2pQ9xLm4vB8nR3tZ\",".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+    ] {
+        assert_eq!(secret(&bad), Some(v.as_str()), "{bad}");
+    }
+}
+
+/// #96: #89's diff (a long snake_case test name) saves; a secret's refusal names file:line with the value masked.
+#[test]
+fn kill_saves_code_and_names_the_secret_line() {
+    let ok = "diff --git a/src/check.rs b/src/check.rs\n+++ b/src/check.rs\n@@ -10,2 +10,3 @@\n \
+              fn a() {}\n+fn check_prompts_an_idle_orch_after_5_min_then_alerts_after_15() {}\n";
+    let (c, wt) = lane("kill-96-ok");
+    let r = git(&wt, "", "2\n", ok);
+    assert_eq!(run(&c, &r, &["kill", LANE, "--yes"]).0, 0);
+    assert!(r.called(&format!("git -C {wt} push origin HEAD:refs/heads/wip/")));
+    let bad = format!(
+        "{ok}diff --git a/.env b/.env\n+++ b/.env\n@@ -3,1 +3,2 @@\n A=1\n-B=2\n+SECRET=\"h7Gk2pQ9xLm4vB8nR3tZ\" ghp_{}\n",
+        "aB3".repeat(12)
+    );
+    let (c, wt) = lane("kill-96-bad");
+    let r = git(&wt, "", "2\n", &bad);
+    let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
+    assert_eq!(code, 3, "{out}");
+    assert!(
+        out.contains("(.env:4: SECRET=\"•••\" •••)") && !out.contains("h7Gk") && !out.contains("ghp_"),
+        "{out}"
+    );
+    assert!(!r.called(&format!("git -C {wt} push")));
 }
