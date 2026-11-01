@@ -50,8 +50,7 @@ pub fn doctor(ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, json: bool) -> Res
 
 fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, rows: &mut Vec<String>) {
     rows.push(format!("✓ config — {}", ctx.config.display()));
-    let worktrees = ctx.worktrees.display();
-    let line = format!("worktrees — {worktrees} → mkdir -p {worktrees}");
+    let line = format!("worktrees — {0} → mkdir -p {0}", ctx.worktrees.display());
     row(rows, ctx.worktrees.is_dir(), '✗', &line);
     for (name, fleet) in &cfg.fleet {
         let repo = &fleet.repo;
@@ -125,13 +124,11 @@ fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, rows: &mut Vec<String>) {
     row(rows, paired > 0, '!', &line);
     let key = ctx.state.with_file_name("webpush/vapid.key");
     let perm = mode(&key);
-    let fix = [format!("chmod 600 {}", key.display()), "herdsman push test".into()];
-    let line = format!("vapid.key — {perm} → {}", fix[usize::from(perm == "missing")]);
+    let line = format!("vapid.key — {perm} → herdsman push test && chmod 600 {}", key.display());
     row(rows, perm == "mode 600", '✗', &line);
     let subs = crate::webpush::load(&ctx.state).len();
     let notifier = cfg.webpush_sub().is_some();
-    let line =
-        format!("push — {subs} subscriptions, webpush notifier {notifier} → turn alerts on; add a webpush [[notify]]");
+    let line = format!("push — {subs} subscriptions, notifier {notifier} → turn alerts on; add a webpush [[notify]]");
     row(rows, subs > 0 && notifier, '!', &line);
     // `check` and `drive` stamp `<state>/<what>.at` each run: the cron's proof.
     let driven = cfg.fleet.values().any(crate::config::Fleet::driven);
@@ -140,8 +137,7 @@ fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, rows: &mut Vec<String>) {
         let at = stamp.ok().and_then(|text| text.trim().parse::<u64>().ok());
         let age = at.map_or("never".into(), |at| crate::events::age(ctx.now - at));
         let exe = &ctx.exe;
-        let line =
-            format!("watchdog {what} — last ran {age} → (crontab -l; echo '*/5 * * * * {exe} {what}') | crontab -");
+        let line = format!("watchdog {what} — ran {age} → (crontab -l; echo '*/5 * * * * {exe} {what}') | crontab -");
         row(rows, at.is_some_and(|at| ctx.now < at + 900), '✗', &line);
     }
 }

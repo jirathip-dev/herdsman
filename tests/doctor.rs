@@ -271,7 +271,7 @@ fn each_check_fails_with_its_fix_and_exit_one() {
                 r
             },
             "watchdog check",
-            "last ran never",
+            "ran never",
         ),
         (
             |c, _, r| {
