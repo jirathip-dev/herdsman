@@ -28,6 +28,7 @@ fn state_dir(ctx: &Ctx) -> &Path {
 pub fn drive(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, only: Option<&str>) -> Result<()> {
     only.map(|f| cfg.fleet(f)).transpose()?;
     std::fs::create_dir_all(state_dir(ctx))?;
+    let _ = std::fs::write(ctx.state.with_file_name("drive.at"), ctx.now.to_string());
     let lock = state_dir(ctx).join("drive.lock");
     let age = |p: &Path| {
         p.metadata()
