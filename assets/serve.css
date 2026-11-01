@@ -135,7 +135,7 @@ button[name=choice],button.pick{display:flex;width:100%;height:auto;min-height:v
   justify-content:flex-start;align-items:flex-start;text-align:left;white-space:normal;overflow-wrap:anywhere;line-height:1.35}
 button[name=choice]::after,button.pick::after{inset:calc(-1 * var(--s1)) calc(-1 * var(--s2));align-items:flex-start;padding-top:calc(var(--s1) + (var(--ctl) - 1.35em) / 2)}
 button[name=choice]>span,button.pick>span{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
-.ask small{font-size:var(--fs-meta)}
+.ask small,button[name=choice] small{font-size:var(--fs-meta)}
 /* #43: sheet actions, kill/clean confirm, `/` menu, per-turn transcript, tool calls collapsed; the page locked under the sheet. */
 .lock,.lock body{overflow:hidden;overscroll-behavior:none}
 .lock body{position:fixed;left:0;right:0}

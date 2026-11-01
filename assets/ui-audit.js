@@ -20,13 +20,15 @@
   const VIEWS = {
     queue: () => tab('queue'),
     'queue-open': () => { tab('queue'); const d = $('#queue details.q'); d.open = true; d.scrollIntoView(); },
-    // #139: the demo's acme-web #46 row, its ask decided by default, re-answered through [change] (3 long choices).
+    // #139: the demo's acme-web #46 row, its ask decided by default, re-answered through [change] (3 long choices),
+    // opened and moved to the top (a scrolled view shoots blank).
     'queue-change': () => {
       tab('queue');
       const d = [...$$('#queue details.q')].find(d => d.querySelector('[name=choice]'));
       if (!d) return early.push('no queue row with a [change] form in the demo');
       d.open = true;
-      d.scrollIntoView();
+      $('#queue').prepend(d);
+      if (!DBG.get('check')) $('#needs').hidden = true; // the shot shows the row; the check keeps the needs cards
     },
     // #92: the demo's `driver = "herdsman"` fleet (docs): its heading and `driver: herdsman · last pass …` line, moved
     // to the top (a scrolled view shoots blank).
