@@ -52,17 +52,18 @@ pub fn drive(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, only:
     }
     let mine = |(n, f): &(&String, &crate::config::Fleet)| f.driven() && only.is_none_or(|o| o == n.as_str());
     // A paused fleet gets no pass (and no `last pass`); one fleet's error doesn't skip the others.
-    let mut res = Ok(());
+    let (mut res, mut start) = (Ok(()), true);
     for (name, _) in cfg.fleet.iter().filter(mine).filter(|(_, f)| !f.paused) {
-        res = res.and(pass(ctx, cfg, r, out, name));
+        res = res.and(pass(ctx, cfg, r, out, name, start).map(|more| start = more));
         let _ = std::fs::write(state_dir(ctx).join(format!("drive-{name}.last")), ctx.now.to_string());
     }
     let _ = std::fs::remove_file(&lock);
     res
 }
 
-/// One fleet: each item's due step, then start the next queued issue, then clean merged lanes.
-fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &str) -> Result<()> {
+/// One fleet: each item's due step, then start every startable queued issue in order, then clean merged lanes.
+/// Each spawn samples the host afresh; a refused item is skipped, `CAP` ends starts, `HOST_BUSY` all fleets' (`false`).
+fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &str, start: bool) -> Result<bool> {
     let events = read(&ctx.state)?;
     let agents = host::agents(r)?;
     let f = cfg.fleet(fleet)?;
@@ -95,16 +96,14 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
             act(ctx, cfg, r, out, &events, (fleet, Some(s.issue), "ci-red"), &args)?;
         }
     }
-    if let (0, n) = queue::next(&events, fleet) {
-        act(
-            ctx,
-            cfg,
-            r,
-            out,
-            &events,
-            (fleet, n.parse().ok(), "start"),
-            &["spawn", fleet, &n, "impl"],
-        )?;
+    let mut go = start;
+    for n in queue::startable(&events, fleet).into_iter().take_while(|_| start) {
+        let at = (fleet, n.parse().ok(), "start");
+        let code = act(ctx, cfg, r, out, &events, at, &["spawn", fleet, &n, "impl"])?;
+        go &= code != Some("HOST_BUSY");
+        if matches!(code, Some("HOST_BUSY" | "CAP")) {
+            break;
+        }
     }
     let st = fold(&events);
     let merged = |e: &&Event| {
@@ -128,7 +127,7 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
             &["clean", fleet, "--yes"],
         )?;
     }
-    Ok(())
+    Ok(go)
 }
 
 /// The finding for red CI: the first failing check, then the tail of its run's failed-step log.
@@ -165,13 +164,15 @@ fn ci_findings(r: &dyn Runner, f: &crate::config::Fleet, pr: &serde_json::Value,
 
 /// (fleet, issue, step) of one action.
 type At<'a> = (&'a str, Option<u64>, &'a str);
+/// A refused or failed action's code (`REFUSED <code>`, `EXIT`, `ERROR`); `None` when it ran.
+type Code = Option<&'static str>;
 
 /// Run one CLI command in process (its own gates and refusals apply); print one line, log `driven`.
-/// A refusal or error is logged once per item, step and outcome per hour, and retried next pass.
-fn act(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, ev: &[Event], at: At, cmd: &[&str]) -> Result<()> {
+/// A refusal or error is logged once per item, step and outcome per hour, and retried next pass; returns its code.
+fn act(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, ev: &[Event], at: At, c: &[&str]) -> Result<Code> {
     let (fleet, issue, step) = at;
     let mut buf = vec![];
-    let res = crate::cli::run(cmd, ctx, r, &mut buf);
+    let res = crate::cli::run(c, ctx, r, &mut buf);
     let text = String::from_utf8_lossy(&buf);
     let (result, code) = match res {
         Ok(0) => (text.lines().next().unwrap_or("ok").to_string(), None),
@@ -186,16 +187,16 @@ fn act(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, ev: &[Event
     };
     // `clean` with nothing removable (a dirty merged lane) is not an action.
     if step == "clean" && code.is_none() && !text.contains("removed ") {
-        return Ok(());
+        return Ok(None);
     }
     let recent = |e: &Event| e.kind == "driven" && e.fleet == fleet && e.issue == issue && ctx.now < e.ts + 3600;
     let same = |e: &Event| e.str("step") == Some(step) && e.str("code") == code;
     // A repeated refusal is silent too (no cron mail every pass).
     if code.is_some() && ev.iter().any(|e| recent(e) && same(e)) {
-        return Ok(());
+        return Ok(code);
     }
     let who = issue.map_or(fleet.to_string(), |n| format!("{fleet} #{n}"));
     writeln!(out, "{who} {step}: {result}")?;
-    let d = json!({"step": step, "cmd": format!("herdsman {}", cmd.join(" ")), "result": result, "code": code});
-    emit(&ctx.state, cfg, Event::new(ctx.now, fleet, issue, "driven", d))
+    let d = json!({"step": step, "cmd": format!("herdsman {}", c.join(" ")), "result": result, "code": code});
+    emit(&ctx.state, cfg, Event::new(ctx.now, fleet, issue, "driven", d)).map(|()| code)
 }

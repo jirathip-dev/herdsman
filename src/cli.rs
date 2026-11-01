@@ -431,7 +431,12 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                         .iter()
                         .flatten()
                         .find(|(x, _)| x.fleet == s.fleet && x.issue == s.issue)
-                        .map_or("-", |w| w.1.what.as_str());
+                        .map(|w| w.1.what.clone())
+                        .or_else(|| {
+                            let skip = queue::skipped(&events, &all, &s.fleet, s.issue, ctx.now);
+                            skip.map(|(c, why)| format!("skipped this pass: {c} ({why})"))
+                        })
+                        .unwrap_or_else(|| "-".into());
                     writeln!(out, "{:<5} {w}", status_line(s, ctx.now))?;
                 }
                 write!(out, "{}", serial.concat())?;
