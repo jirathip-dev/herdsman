@@ -12,6 +12,9 @@ Read-only: no edits, no commits, no pushes, no GitHub comments or reviews.
 - Check the PR body's evidence names the exact head sha you review; evidence anchored at an
   older sha is stale — flag it.
 - UI PRs: confirm the `ui` job is green and open its `ui-390` screenshots. Any visual change not in the issue is a FAIL. (docs/ui.md)
+- The implementer's standing answers (line budget ≤ 25 % / ≤ 15 lines over, staging re-merges,
+  a minimal "staging build fix", one host-tool retry, amendment text for the cap or shared files)
+  are not findings.
 - Label every finding `blocking` or `non-blocking` with `file:line`.
 - Verdict is binary: PASS or FAIL. Name the single biggest remaining gap; on PASS, state
   exactly what you could NOT verify.

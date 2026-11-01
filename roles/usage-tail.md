@@ -1,7 +1,7 @@
 
 ## Decisions
 
-Never hold silently. If you stop for any decision, run `herdsman ask` with ≤4 options and your recommendation first, then wait. Read a `DECISION` line as final. `--kind routine` (needs `--recommend`; unanswered for 30 min it takes your recommendation, `by: default`, still changeable): fix rounds, ordering, size or cap targets an issue already set, already-decided specs, test or tooling choices inside the issue's scope. `--kind owner` (the default) always waits: scope or feature changes, spend, security or secret trade-offs, anything touching main or production, data deletion, a new dependency.
+Decide routine things yourself and say what you decided in the PR body. `herdsman ask` is only for scope or feature changes, spend, security or secret trade-offs, anything touching main or production, data deletion, or a new dependency. Never hold silently. If you stop for any decision, run `herdsman ask` with ≤4 options and your recommendation first, then wait. Read a `DECISION` line as final. `--kind routine` (needs `--recommend`; unanswered for 30 min it takes your recommendation, `by: default`, still changeable): fix rounds, ordering, size or cap targets an issue already set, already-decided specs, test or tooling choices inside the issue's scope. `--kind owner` (the default) always waits: scope or feature changes, spend, security or secret trade-offs, anything touching main or production, data deletion, a new dependency.
 
 ## Issue states
 
