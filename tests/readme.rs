@@ -38,7 +38,10 @@ fn readme_is_short() {
 fn table_commands_exist() {
     let help = Command::new(BIN).arg("--help").output().unwrap();
     let help = String::from_utf8(help.stdout).unwrap();
-    let known: Vec<&str> = help.lines().filter_map(|l| l.strip_prefix("  ")?.split_whitespace().next()).collect();
+    let known: Vec<&str> = help
+        .lines()
+        .filter_map(|l| l.strip_prefix("  ")?.split_whitespace().next())
+        .collect();
     let mut n = 0;
     for row in readme().lines().filter(|l| l.starts_with("| `")) {
         for cell in row[2..].split(" | ").next().unwrap().split(" / ") {
@@ -73,9 +76,20 @@ fn docs_leak_no_ids_tokens_or_personal_paths() {
             assert!(!text.contains(bad), "{}: contains {bad}", f.display());
         }
         // Epoch seconds in an example event are fine; any other long number is suspect.
-        let text: String = text.split("\"ts\":").map(|p| p.trim_start_matches(|c: char| c.is_ascii_digit())).collect();
-        let longest = text.split(|c: char| !c.is_ascii_digit()).map(str::len).max().unwrap_or(0);
-        assert!(longest < 9, "{}: a {longest}-digit number looks like a chat ID", f.display());
+        let text: String = text
+            .split("\"ts\":")
+            .map(|p| p.trim_start_matches(|c: char| c.is_ascii_digit()))
+            .collect();
+        let longest = text
+            .split(|c: char| !c.is_ascii_digit())
+            .map(str::len)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            longest < 9,
+            "{}: a {longest}-digit number looks like a chat ID",
+            f.display()
+        );
     }
 }
 
@@ -89,7 +103,14 @@ fn quick_start_runs_as_written() {
     let cmd = |prog: &str| {
         let mut c = Command::new(prog);
         c.env("HOME", &home).env("HERDSMAN_HOME", &home).env("PATH", &path);
-        for k in ["FLEET_CONFIG", "FLEET_STATE", "FLEET_WORKTREES", "FLEET_HERMES_PROFILES", "HERDSMAN_LANE", "FLEET_LANE"] {
+        for k in [
+            "FLEET_CONFIG",
+            "FLEET_STATE",
+            "FLEET_WORKTREES",
+            "FLEET_HERMES_PROFILES",
+            "HERDSMAN_LANE",
+            "FLEET_LANE",
+        ] {
             c.env_remove(k);
         }
         c
@@ -101,16 +122,31 @@ fn quick_start_runs_as_written() {
         .map(|l| format!("{l}\n"))
         .collect();
     let out = cmd("sh").args(["-e", "-c", &script]).output().unwrap();
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(out.status.success(), "quick start failed:\n{script}\n{all}");
     assert!(all.contains("issue-12"), "spawn --dry-run printed no plan:\n{all}");
     assert!(all.contains("no tracked issues"), "{all}");
 
     let serve = block.lines().find(|l| l.starts_with("herdsman serve")).unwrap();
-    let mut args: Vec<String> = serve.split('#').next().unwrap().split_whitespace().skip(1).map(String::from).collect();
+    let mut args: Vec<String> = serve
+        .split('#')
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .skip(1)
+        .map(String::from)
+        .collect();
     // Same command on a free port, so a herdsman already serving 7777 on this host can't answer for it.
     let i = args.iter().position(|a| a == "--addr").unwrap() + 1;
-    let addr = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string();
+    let addr = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .to_string();
     args[i] = addr.clone();
     let mut child = cmd(BIN).args(&args).spawn().unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -136,7 +172,10 @@ fn setup() -> String {
 /// The bodies of every fenced block of `lang` in `text`.
 fn blocks<'a>(text: &'a str, lang: &str) -> Vec<&'a str> {
     let fence = format!("```{lang}\n");
-    text.split(fence.as_str()).skip(1).map(|b| b.split("```").next().unwrap()).collect()
+    text.split(fence.as_str())
+        .skip(1)
+        .map(|b| b.split("```").next().unwrap())
+        .collect()
 }
 
 #[test]
@@ -148,7 +187,10 @@ fn readme_links_setup() {
 fn setup_commands_exist() {
     let help = Command::new(BIN).arg("--help").output().unwrap();
     let help = String::from_utf8(help.stdout).unwrap();
-    let known: Vec<&str> = help.lines().filter_map(|l| l.strip_prefix("  ")?.split_whitespace().next()).collect();
+    let known: Vec<&str> = help
+        .lines()
+        .filter_map(|l| l.strip_prefix("  ")?.split_whitespace().next())
+        .collect();
     let text = setup();
     let mut n = 0;
     for b in blocks(&text, "sh").into_iter().chain(blocks(&text, "ini")) {
@@ -157,7 +199,10 @@ fn setup_commands_exist() {
             if cmd.starts_with('-') || cmd.starts_with('#') {
                 continue; // `herdsman --version`, a comment
             }
-            assert!(known.contains(&cmd), "setup.md runs `herdsman {cmd}`, not in herdsman --help");
+            assert!(
+                known.contains(&cmd),
+                "setup.md runs `herdsman {cmd}`, not in herdsman --help"
+            );
             n += 1;
         }
     }
@@ -183,7 +228,11 @@ fn docs_name_no_real_tailnet_host() {
         let text = std::fs::read_to_string(&f).unwrap();
         for (i, _) in text.match_indices(".ts.net") {
             let before = text[..i].chars().last().unwrap();
-            assert!(before == '>' || before == '*', "{}: a real ts.net hostname near byte {i}", f.display());
+            assert!(
+                before == '>' || before == '*',
+                "{}: a real ts.net hostname near byte {i}",
+                f.display()
+            );
         }
     }
 }

@@ -12,7 +12,11 @@ pub const PR_FIELDS: &str = "number,title,state,baseRefName,headRefOid,mergeable
 pub const PR_TTL: u64 = 60;
 
 fn cache_path(ctx: &Ctx, kind: &str, fleet: &str, issue: u64) -> PathBuf {
-    ctx.state.parent().unwrap_or(&ctx.state).join("cache").join(format!("{kind}-{fleet}-{issue}.json"))
+    ctx.state
+        .parent()
+        .unwrap_or(&ctx.state)
+        .join("cache")
+        .join(format!("{kind}-{fleet}-{issue}.json"))
 }
 
 /// A `{"ts": …}` cache entry younger than `PR_TTL` at `now`.
@@ -49,7 +53,11 @@ pub fn spec(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, issue: u64, refre
             return Ok(c);
         }
     }
-    let v = json(r, "gh", &["issue", "view", &n, "-R", &f.repo, "--json", "title,body,updatedAt"])?;
+    let v = json(
+        r,
+        "gh",
+        &["issue", "view", &n, "-R", &f.repo, "--json", "title,body,updatedAt"],
+    )?;
     store(&p, &v)?;
     Ok(v)
 }
@@ -61,7 +69,11 @@ pub fn pr(ctx: &Ctx, r: &dyn Runner, f: &Fleet, (fleet, issue): (&str, u64), bra
         return Ok(c["pr"].clone());
     }
     let o = r.run("gh", &argv(&["pr", "view", branch, "-R", &f.repo, "--json", PR_FIELDS]))?;
-    let pr = if o.code == 0 { serde_json::from_str(&o.stdout).unwrap_or(Value::Null) } else { Value::Null };
+    let pr = if o.code == 0 {
+        serde_json::from_str(&o.stdout).unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
     store(&p, &json!({"ts": now, "branch": branch, "pr": pr}))?;
     Ok(pr)
 }
@@ -75,27 +87,55 @@ pub fn cached_pr(ctx: &Ctx, fleet: &str, issue: u64) -> Value {
 pub fn closed(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, now: u64) -> Result<Vec<u64>> {
     let p = cache_path(ctx, "closed", fleet, 0);
     if let Some(c) = load(&p).filter(|c| fresh(c, now)) {
-        return Ok(c["closed"].as_array().into_iter().flatten().filter_map(Value::as_u64).collect());
+        return Ok(c["closed"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_u64)
+            .collect());
     }
-    let v = json(r, "gh", &["issue", "list", "-R", &f.repo, "--state", "closed", "--limit", "1000", "--json", "number"])?;
-    let closed: Vec<u64> = v.as_array().into_iter().flatten().filter_map(|i| i["number"].as_u64()).collect();
+    let v = json(
+        r,
+        "gh",
+        &[
+            "issue", "list", "-R", &f.repo, "--state", "closed", "--limit", "1000", "--json", "number",
+        ],
+    )?;
+    let closed: Vec<u64> = v
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|i| i["number"].as_u64())
+        .collect();
     store(&p, &json!({"ts": now, "closed": closed}))?;
     Ok(closed)
 }
 
 /// Files PR `num` changes at `head` (`gh pr diff --name-only`), cached per head sha.
-pub fn diff_names(ctx: &Ctx, r: &dyn Runner, f: &Fleet, (fleet, issue): (&str, u64), num: &str, head: &str) -> Result<Vec<String>> {
+pub fn diff_names(
+    ctx: &Ctx,
+    r: &dyn Runner,
+    f: &Fleet,
+    (fleet, issue): (&str, u64),
+    num: &str,
+    head: &str,
+) -> Result<Vec<String>> {
     let p = cache_path(ctx, "diff", fleet, issue);
-    let files = match load::<Value>(&p).filter(|c| c["head"] == head) {
-        Some(c) => c["files"].clone(),
-        None => {
-            let out = crate::runner::ok(r, "gh", &["pr", "diff", num, "-R", &f.repo, "--name-only"])?;
-            let v = json!(out.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>());
-            store(&p, &json!({"head": head, "files": v}))?;
-            v
-        }
+    let files = if let Some(c) = load::<Value>(&p).filter(|c| c["head"] == head) {
+        c["files"].clone()
+    } else {
+        let out = crate::runner::ok(r, "gh", &["pr", "diff", num, "-R", &f.repo, "--name-only"])?;
+        let v = json!(out.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>());
+        store(&p, &json!({"head": head, "files": v}))?;
+        v
     };
-    Ok(files.as_array().into_iter().flatten().filter_map(Value::as_str).map(String::from).collect())
+    Ok(files
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(String::from)
+        .collect())
 }
 
 /// Drop the cached PR read (after fleet changed the PR itself).
@@ -130,9 +170,13 @@ pub fn required(rollup: &Value, required: &[String]) -> Value {
     let all = rollup.as_array().map(Vec::as_slice).unwrap_or_default();
     let latest = |n: &String| {
         let runs = all.iter().filter(|c| check_name(c) == n);
-        runs.max_by_key(|c| c["startedAt"].as_str().unwrap_or_default()).cloned()
+        runs.max_by_key(|c| c["startedAt"].as_str().unwrap_or_default())
+            .cloned()
     };
-    required.iter().map(|n| latest(n).unwrap_or_else(|| json!({"name": n, "status": "MISSING"}))).collect()
+    required
+        .iter()
+        .map(|n| latest(n).unwrap_or_else(|| json!({"name": n, "status": "MISSING"})))
+        .collect()
 }
 
 /// The first check that is not green, as "check `name` is state".
@@ -192,7 +236,11 @@ fn decided(pr: &Value, until: Until, req: &[String]) -> Option<i32> {
         Until::CiGreen | Until::CiDone if ci == "green" => Some(0),
         Until::CiGreen if ci == "failed" => Some(1),
         Until::CiDone if ci == "failed" => {
-            let pending = checks.as_array().into_iter().flatten().any(|c| check_state(c) == "pending");
+            let pending = checks
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|c| check_state(c) == "pending");
             (!pending).then_some(1)
         }
         _ => None,
@@ -201,7 +249,16 @@ fn decided(pr: &Value, until: Until, req: &[String]) -> Option<i32> {
 
 /// `herdsman wait`: poll the cached read, 30 s doubling to 5 min; 0 reached, 1 failed/closed, 124 timed out.
 #[allow(clippy::too_many_arguments)]
-pub fn wait(ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, f: &Fleet, lane: (&str, u64), branch: &str, until: Until, timeout: u64) -> Result<i32> {
+pub fn wait(
+    ctx: &Ctx,
+    r: &dyn Runner,
+    out: &mut dyn Write,
+    f: &Fleet,
+    lane: (&str, u64),
+    branch: &str,
+    until: Until,
+    timeout: u64,
+) -> Result<i32> {
     let (mut t, mut delay) = (0, 30);
     loop {
         let pr = pr(ctx, r, f, lane, branch, ctx.now + t)?;

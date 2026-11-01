@@ -42,7 +42,7 @@ queued → impl → review(n) → fix(n) → ready → merged; plus blocked, nee
 
 The issue is the spec: read it with `herdsman brief`; PR/CI with `herdsman pr` / `herdsman wait` (cached), never
 `gh issue view` / `gh pr checks` loops. Never comment on issues or PRs; `herdsman merge` writes the one closing comment.
-UI PRs: confirm the `ui` job is green and open its `ui-390` screenshots. Any visual change not in the issue is a FAIL.
+UI PRs: confirm the `ui` job is green and open its `ui-390` screenshots. Any visual change not in the issue is a FAIL. Code: write normal code, `cargo fmt` before committing; the formatter decides line breaks, never pack lines to fit the cap.
 
 ## Tool guard, accounts, MCP
 

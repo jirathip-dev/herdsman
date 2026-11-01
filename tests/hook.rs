@@ -29,7 +29,12 @@ fn hook_env(vars: &[(&str, Option<&str>)], role: &str, input: Value) -> String {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(input.to_string().as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.to_string().as_bytes())
+        .unwrap();
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
     String::from_utf8(out.stdout).unwrap()
@@ -67,7 +72,10 @@ fn call(role: &str, tool: &str, ti: Value) -> Option<String> {
     if outs.iter().all(String::is_empty) {
         return None;
     }
-    let v: Vec<Value> = outs.iter().map(|o| serde_json::from_str(o).unwrap_or_default()).collect();
+    let v: Vec<Value> = outs
+        .iter()
+        .map(|o| serde_json::from_str(o).unwrap_or_default())
+        .collect();
     let claude = &v[0]["hookSpecificOutput"];
     assert_eq!(claude["permissionDecision"], "deny", "claude: {outs:?}");
     for h in &v[1..] {
@@ -91,13 +99,29 @@ fn bash(cmd: &str) -> Option<String> {
 fn hook_is_inert_unless_fleet_lane_is_set() {
     for cmd in ["gh pr merge 5", "git push origin HEAD:staging"] {
         for input in shapes("Bash", json!({"command": cmd})) {
-            assert_eq!(hook_in(None, "impl", input.clone()), "", "{cmd} allowed without HERDSMAN_LANE");
-            assert_eq!(hook_in(Some(""), "impl", input.clone()), "", "{cmd} allowed with empty HERDSMAN_LANE");
-            assert_ne!(hook_in(Some("fleet:24:impl"), "impl", input), "", "{cmd} blocked in a fleet lane");
+            assert_eq!(
+                hook_in(None, "impl", input.clone()),
+                "",
+                "{cmd} allowed without HERDSMAN_LANE"
+            );
+            assert_eq!(
+                hook_in(Some(""), "impl", input.clone()),
+                "",
+                "{cmd} allowed with empty HERDSMAN_LANE"
+            );
+            assert_ne!(
+                hook_in(Some("fleet:24:impl"), "impl", input),
+                "",
+                "{cmd} blocked in a fleet lane"
+            );
         }
     }
     for input in shapes("Bash", json!({"command": "git status"})) {
-        assert_eq!(hook_in(Some("fleet:24:impl"), "impl", input), "", "git status allowed in a fleet lane");
+        assert_eq!(
+            hook_in(Some("fleet:24:impl"), "impl", input),
+            "",
+            "git status allowed in a fleet lane"
+        );
     }
 }
 
@@ -107,9 +131,21 @@ fn hook_is_inert_unless_fleet_lane_is_set() {
 fn legacy_fleet_lane_arms_the_hook_and_herdsman_lane_wins() {
     for input in shapes("Bash", json!({"command": "gh pr merge 5"})) {
         let arm = |vars: &[(&str, Option<&str>)]| hook_env(vars, "impl", input.clone());
-        assert_ne!(arm(&[("FLEET_LANE", Some("fleet:24:impl"))]), "", "FLEET_LANE alone arms");
-        assert_ne!(arm(&[("HERDSMAN_LANE", Some("a:1:impl")), ("FLEET_LANE", Some("b:2:rev"))]), "", "both set arms");
-        assert_eq!(arm(&[("HERDSMAN_LANE", Some("")), ("FLEET_LANE", Some("fleet:24:impl"))]), "", "empty HERDSMAN_LANE wins");
+        assert_ne!(
+            arm(&[("FLEET_LANE", Some("fleet:24:impl"))]),
+            "",
+            "FLEET_LANE alone arms"
+        );
+        assert_ne!(
+            arm(&[("HERDSMAN_LANE", Some("a:1:impl")), ("FLEET_LANE", Some("b:2:rev"))]),
+            "",
+            "both set arms"
+        );
+        assert_eq!(
+            arm(&[("HERDSMAN_LANE", Some("")), ("FLEET_LANE", Some("fleet:24:impl"))]),
+            "",
+            "empty HERDSMAN_LANE wins"
+        );
         assert_eq!(arm(&[("FLEET_LANE", Some(""))]), "", "empty FLEET_LANE is inert");
     }
 }
@@ -117,7 +153,10 @@ fn legacy_fleet_lane_arms_the_hook_and_herdsman_lane_wins() {
 #[test]
 fn gh_pr_merge_is_denied() {
     let out = bash("gh pr merge 12").expect("denied");
-    assert!(out.contains("herdsman merge"), "deny message points to herdsman merge: {out}");
+    assert!(
+        out.contains("herdsman merge"),
+        "deny message points to herdsman merge: {out}"
+    );
     assert!(bash("cd /x && gh pr merge 3 --squash --admin").is_some());
     assert!(bash("gh api -X PUT repos/o/r/pulls/3/merge").is_some());
 }
@@ -135,7 +174,12 @@ fn github_comments_are_denied() {
         let out = bash(cmd).unwrap_or_else(|| panic!("{cmd} allowed"));
         assert!(out.contains("never comment on GitHub"), "{cmd}: {out}");
     }
-    for cmd in ["gh issue view 5", "gh pr view 5 --json state", "gh issue view 5 --comments", "gh api repos/o/r/issues/5/comments"] {
+    for cmd in [
+        "gh issue view 5",
+        "gh pr view 5 --json state",
+        "gh issue view 5 --comments",
+        "gh api repos/o/r/issues/5/comments",
+    ] {
         assert_eq!(bash(cmd), None, "read-only {cmd} is allowed");
     }
 }
@@ -143,7 +187,9 @@ fn github_comments_are_denied() {
 #[test]
 fn push_to_staging_is_denied() {
     for role in ["impl", "orch", "rev"] {
-        assert!(bash_as(role, "git push origin staging").unwrap().contains("herdsman merge"));
+        assert!(bash_as(role, "git push origin staging")
+            .unwrap()
+            .contains("herdsman merge"));
         assert!(bash_as(role, "git push origin HEAD:staging").is_some());
     }
     assert!(bash("git push origin HEAD:main").is_some());
@@ -156,9 +202,28 @@ fn push_to_staging_is_denied() {
 fn hermes_terminal_workdir_resolves_bare_push() {
     // A bare `git push` pushes HEAD of the terminal's workdir.
     let d = tmpdir("hook-wd");
-    let git = |a: &[&str]| assert!(Command::new("git").arg("-C").arg(&d).args(a).output().unwrap().status.success());
+    let git = |a: &[&str]| {
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&d)
+            .args(a)
+            .output()
+            .unwrap()
+            .status
+            .success())
+    };
     git(&["init", "-q", "-b", "staging"]);
-    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "x",
+    ]);
     let input = json!({"hook_event_name": "pre_tool_call", "tool_name": "terminal", "cwd": "/",
         "tool_input": {"command": "git push", "workdir": d}});
     let v: Value = serde_json::from_str(&hook_as("impl", input)).unwrap();
@@ -184,25 +249,46 @@ fn push_to_feature_branch_is_allowed() {
 
 #[test]
 fn reviewers_are_read_only() {
-    for cmd in ["git commit -am x", "git push origin rev-12-r1", "git -C /x merge main", "git rebase origin/staging", "git reset --hard"] {
+    for cmd in [
+        "git commit -am x",
+        "git push origin rev-12-r1",
+        "git -C /x merge main",
+        "git rebase origin/staging",
+        "git reset --hard",
+    ] {
         let out = bash_as("rev", cmd).unwrap_or_else(|| panic!("rev {cmd} allowed"));
         assert!(out.contains("read-only"), "{cmd}: {out}");
     }
-    for cmd in ["git commit -am x", "git push origin issue-12", "git rebase origin/staging"] {
+    for cmd in [
+        "git commit -am x",
+        "git push origin issue-12",
+        "git rebase origin/staging",
+    ] {
         assert_eq!(bash_as("impl", cmd), None, "impl may run {cmd}");
     }
-    for cmd in ["git status", "git diff origin/staging...HEAD", "cargo test", "gh pr view 5"] {
+    for cmd in [
+        "git status",
+        "git diff origin/staging...HEAD",
+        "cargo test",
+        "gh pr view 5",
+    ] {
         assert_eq!(bash_as("rev", cmd), None, "rev may run {cmd}");
     }
     let src = json!({"file_path": "/wt/src/hook.rs"});
     assert!(call("rev", "Edit", src.clone()).unwrap().contains("read-only"));
     assert!(call("rev", "Write", src.clone()).is_some());
     assert_eq!(call("impl", "Edit", src), None);
-    assert_eq!(call("rev", "Write", json!({"file_path": "/wt/rev-12-r1/verdict.md"})), None);
+    assert_eq!(
+        call("rev", "Write", json!({"file_path": "/wt/rev-12-r1/verdict.md"})),
+        None
+    );
     assert_eq!(call("rev", "Write", json!({"file_path": "verdict.md"})), None);
     // A V4A patch carries no `path`.
     let v4a = json!({"tool_name": "patch", "args": {"mode": "patch", "patch": "*** Update File: src/a.rs\n"}});
-    assert_eq!(serde_json::from_str::<Value>(&hook_as("rev", v4a)).unwrap()["action"], "block");
+    assert_eq!(
+        serde_json::from_str::<Value>(&hook_as("rev", v4a)).unwrap()["action"],
+        "block"
+    );
 }
 
 #[test]
@@ -220,7 +306,12 @@ fn protected_config_edits_are_denied() {
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
-        child.stdin.take().unwrap().write_all(input.to_string().as_bytes()).unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.to_string().as_bytes())
+            .unwrap();
         String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap()
     };
     let deny = |tool: &str, ti: Value| {
@@ -229,8 +320,14 @@ fn protected_config_edits_are_denied() {
         assert!(outs[1..].iter().all(|o| o.contains("\"block\"")), "{outs:?}");
     };
     deny("Edit", json!({"file_path": cfg}));
-    deny("Bash", json!({"command": format!("sed -i '' s/hermes/claude/ {}", cfg.display())}));
-    deny("Write", json!({"file_path": "~/.hermes/profiles/fleet-rev/config.yaml"}));
+    deny(
+        "Bash",
+        json!({"command": format!("sed -i '' s/hermes/claude/ {}", cfg.display())}),
+    );
+    deny(
+        "Write",
+        json!({"file_path": "~/.hermes/profiles/fleet-rev/config.yaml"}),
+    );
     for i in shapes("Bash", json!({"command": format!("cat {}", cfg.display())})) {
         assert_eq!(run(i), "");
     }
@@ -238,13 +335,25 @@ fn protected_config_edits_are_denied() {
 
 #[test]
 fn design_spawn_is_owner_only() {
-    for cmd in ["fleet spawn x 1 design", "herdsman spawn x 1 design", "~/.local/bin/herdsman spawn x 1 design --dry-run"] {
+    for cmd in [
+        "fleet spawn x 1 design",
+        "herdsman spawn x 1 design",
+        "~/.local/bin/herdsman spawn x 1 design --dry-run",
+    ] {
         let input = json!({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": cmd}});
-        for (var, role) in [("FLEET_LANE", "orch"), ("HERDSMAN_LANE", "orch"), ("HERDSMAN_LANE", "impl")] {
+        for (var, role) in [
+            ("FLEET_LANE", "orch"),
+            ("HERDSMAN_LANE", "orch"),
+            ("HERDSMAN_LANE", "impl"),
+        ] {
             let out = hook_env(&[(var, Some("x:-:orch"))], role, input.clone());
             assert!(out.contains("owner-only"), "{var} {role} {cmd}: {out}");
         }
-        assert_eq!(hook_env(&[], "orch", input.clone()), "", "the owner (no lane) may: {cmd}");
+        assert_eq!(
+            hook_env(&[], "orch", input.clone()),
+            "",
+            "the owner (no lane) may: {cmd}"
+        );
     }
     assert_eq!(bash_as("orch", "herdsman spawn x 1 impl"), None);
     assert_eq!(bash_as("orch", "herdsman board x # design"), None);

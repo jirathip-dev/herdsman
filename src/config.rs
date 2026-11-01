@@ -71,7 +71,13 @@ pub struct Accounts {
 
 impl Default for Accounts {
     fn default() -> Self {
-        Accounts { accounts_env: None, cap_pattern: None, cap_reset_minutes: 300, usage: BTreeMap::new(), names: BTreeMap::new() }
+        Accounts {
+            accounts_env: None,
+            cap_pattern: None,
+            cap_reset_minutes: 300,
+            usage: BTreeMap::new(),
+            names: BTreeMap::new(),
+        }
     }
 }
 
@@ -80,10 +86,10 @@ pub struct Fleet {
     pub repo: String,
     pub local: String,
     pub integration: String,
-    /// Globs only `serial_max` lanes at a time may touch: `--serial` issues (SERIAL_BUSY, SERIAL_UNMARKED).
+    /// Globs only `serial_max` lanes at a time may touch: `--serial` issues (`SERIAL_BUSY`, `SERIAL_UNMARKED`).
     #[serde(default)]
     pub serial_paths: Vec<String>,
-    /// How many `--serial` issues may be in flight at once (SERIAL_BUSY); unset = 1.
+    /// How many `--serial` issues may be in flight at once (`SERIAL_BUSY`); unset = 1.
     pub serial_max: Option<usize>,
     /// The only checks merge, `check` and `wait` look at (latest run of each); empty = all.
     #[serde(default)]
@@ -142,7 +148,7 @@ impl Role {
 pub struct Limits {
     pub review_rounds: u32,
     pub stall_minutes: u64,
-    /// Host-load gate for `herdsman spawn` (HOST_BUSY).
+    /// Host-load gate for `herdsman spawn` (`HOST_BUSY`).
     pub load_per_cpu: f64,
     /// Pages swapped out per 2 s sample.
     pub swapout_rate: f64,
@@ -152,7 +158,13 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        Limits { review_rounds: 3, stall_minutes: 30, load_per_cpu: 2.5, swapout_rate: 2000.0, effort: None }
+        Limits {
+            review_rounds: 3,
+            stall_minutes: 30,
+            load_per_cpu: 2.5,
+            swapout_rate: 2000.0,
+            effort: None,
+        }
     }
 }
 
@@ -174,7 +186,16 @@ pub struct Notify {
 }
 
 /// A webpush notifier's events when `on` is unset: the Telegram set plus the asks (#40) and a stuck orch (#46).
-pub const WEBPUSH_ON: [&str; 8] = ["blocked", "stall", "lane-dead", "ready-unmerged", "merged", "needs-decision", "orch-stuck", "ask-waiting"];
+pub const WEBPUSH_ON: [&str; 8] = [
+    "blocked",
+    "stall",
+    "lane-dead",
+    "ready-unmerged",
+    "merged",
+    "needs-decision",
+    "orch-stuck",
+    "ask-waiting",
+];
 
 impl Notify {
     pub fn webpush(&self) -> bool {
@@ -194,8 +215,14 @@ impl Config {
     pub fn parse(text: &str) -> Result<Config> {
         let c: Config = toml::from_str(text)?;
         let raw: toml::Table = toml::from_str(text)?;
-        if let Some((k, _)) = strings("", &toml::Value::Table(raw.clone())).into_iter().find(|(_, v)| secret_like(v)) {
-            return crate::gate::refused("SECRET_IN_CONFIG", format!("{k} looks like a secret; keep keys in an env file (docs/providers.md)"));
+        if let Some((k, _)) = strings("", &toml::Value::Table(raw.clone()))
+            .into_iter()
+            .find(|(_, v)| secret_like(v))
+        {
+            return crate::gate::refused(
+                "SECRET_IN_CONFIG",
+                format!("{k} looks like a secret; keep keys in an env file (docs/providers.md)"),
+            );
         }
         if raw.get("limits").and_then(|l| l.get("max_agents")).is_some() {
             eprintln!("herdsman: [limits].max_agents is no longer used; ignoring it");
@@ -204,7 +231,11 @@ impl Config {
         if let Some(e) = c.limits.effort.as_deref().filter(|e| !levels.contains(e)) {
             bail!("limits.effort: \"{e}\" must be one of {levels:?}");
         }
-        if c.notify.iter().chain(c.fleet.values().flat_map(|f| &f.notify)).any(|n| n.webpush() && n.sub.as_deref().is_none_or(str::is_empty)) {
+        if c.notify
+            .iter()
+            .chain(c.fleet.values().flat_map(|f| &f.notify))
+            .any(|n| n.webpush() && n.sub.as_deref().is_none_or(str::is_empty))
+        {
             bail!("notify: a type = \"webpush\" notifier needs sub = \"mailto:you@example.com\"");
         }
         for (name, f) in &c.fleet {
@@ -216,7 +247,10 @@ impl Config {
                     bail!("fleet.{name}.role.{role}: role must be one of {ROLES:?}");
                 }
                 if !crate::harness::NAMES.contains(&r.harness.as_str()) {
-                    bail!("fleet.{name}.role.{role}: harness must be one of {:?}", crate::harness::NAMES);
+                    bail!(
+                        "fleet.{name}.role.{role}: harness must be one of {:?}",
+                        crate::harness::NAMES
+                    );
                 }
                 if let Some(a) = r.account_list().iter().find(|a| !c.accounts.names.contains_key(*a)) {
                     bail!("fleet.{name}.role.{role}: account '{a}' is not in [accounts]");
@@ -227,7 +261,10 @@ impl Config {
                         bail!("fleet.{name}.role.{role}: effort \"{e}\" must be one of {levels:?}");
                     }
                     if !ok.contains(&e.as_str()) {
-                        bail!("fleet.{name}.role.{role}: harness {} does not support effort \"{e}\" (supported: {ok:?})", r.harness);
+                        bail!(
+                            "fleet.{name}.role.{role}: harness {} does not support effort \"{e}\" (supported: {ok:?})",
+                            r.harness
+                        );
                     }
                 }
             }
@@ -260,7 +297,9 @@ impl Fleet {
         self.driver.as_deref() == Some("herdsman")
     }
     pub fn role(&self, role: &str) -> Result<&Role> {
-        self.role.get(role).ok_or_else(|| anyhow!("role '{role}' not configured"))
+        self.role
+            .get(role)
+            .ok_or_else(|| anyhow!("role '{role}' not configured"))
     }
     pub fn local_path(&self) -> PathBuf {
         expand(&self.local)
@@ -277,12 +316,19 @@ impl Fleet {
 /// A value shaped like a secret: a known token prefix, a JWT, or a 32+ char letter-and-digit run between `.`/`/`/`-`/`_`
 /// (so `UPPER_SNAKE` env-var names, paths and model ids pass).
 pub fn secret_like(v: &str) -> bool {
-    let words = v.split(|c: char| !(c.is_ascii_alphanumeric() || "-_+/=.~".contains(c))).filter(|w| !w.is_empty());
+    let words = v
+        .split(|c: char| !(c.is_ascii_alphanumeric() || "-_+/=.~".contains(c)))
+        .filter(|w| !w.is_empty());
     let b64 = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || "-_=".contains(c));
-    let long = |p: &str| p.len() >= 32 && p.chars().any(|c| c.is_ascii_digit()) && p.chars().any(|c| c.is_ascii_alphabetic());
+    let long =
+        |p: &str| p.len() >= 32 && p.chars().any(|c| c.is_ascii_digit()) && p.chars().any(|c| c.is_ascii_alphabetic());
     words.into_iter().any(|w| {
-        let snake = w.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-        crate::lanes::PREFIXES.iter().any(|p| w.starts_with(p) && w.len() >= p.len() + 10)
+        let snake = w
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+        crate::lanes::PREFIXES
+            .iter()
+            .any(|p| w.starts_with(p) && w.len() >= p.len() + 10)
             || (w.starts_with("eyJ") && w.split('.').count() == 3 && w.split('.').all(b64))
             || (!snake && w.split(['.', '/', '-', '_']).any(long))
     })
@@ -293,8 +339,15 @@ fn strings(key: &str, v: &toml::Value) -> Vec<(String, String)> {
     let sub = |k: String, v| strings(&k, v);
     match v {
         toml::Value::String(s) => vec![(key.into(), s.clone())],
-        toml::Value::Table(t) => t.iter().flat_map(|(k, v)| sub(format!("{key}{}{k}", if key.is_empty() { "" } else { "." }), v)).collect(),
-        toml::Value::Array(a) => a.iter().enumerate().flat_map(|(i, v)| sub(format!("{key}[{i}]"), v)).collect(),
+        toml::Value::Table(t) => t
+            .iter()
+            .flat_map(|(k, v)| sub(format!("{key}{}{k}", if key.is_empty() { "" } else { "." }), v))
+            .collect(),
+        toml::Value::Array(a) => a
+            .iter()
+            .enumerate()
+            .flat_map(|(i, v)| sub(format!("{key}[{i}]"), v))
+            .collect(),
         _ => vec![],
     }
 }
@@ -304,7 +357,9 @@ pub fn glob(g: &[u8], s: &[u8]) -> bool {
     match g {
         [] => s.is_empty(),
         [b'*', b'*', rest @ ..] => (0..=s.len()).any(|i| glob(rest, &s[i..])),
-        [b'*', rest @ ..] => (0..=s.len()).take_while(|&i| i == 0 || s[i - 1] != b'/').any(|i| glob(rest, &s[i..])),
+        [b'*', rest @ ..] => (0..=s.len())
+            .take_while(|&i| i == 0 || s[i - 1] != b'/')
+            .any(|i| glob(rest, &s[i..])),
         [b'?', rest @ ..] => s.first().is_some_and(|&c| c != b'/') && glob(rest, &s[1..]),
         [c, rest @ ..] => s.first() == Some(c) && glob(rest, &s[1..]),
     }
@@ -323,44 +378,55 @@ pub fn home() -> PathBuf {
 
 /// Set `key = "val"` in `[fleet.<fleet>.role.<role>]`, touching only the value bytes (or adding one line).
 pub fn set_value(text: &str, fleet: &str, role: &str, key: &str, val: &str) -> Result<String> {
-    set_in(text, &format!("[fleet.{fleet}.role.{role}]"), key, &format!("\"{val}\""))
+    set_in(
+        text,
+        &format!("[fleet.{fleet}.role.{role}]"),
+        key,
+        &format!("\"{val}\""),
+    )
 }
 
 /// Set `key = <lit>` (a TOML literal) in the table `header`, as `set_value` does.
 pub fn set_in(text: &str, header: &str, key: &str, lit: &str) -> Result<String> {
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
-    let start = lines.iter().position(|l| l.split_whitespace().collect::<String>() == header);
+    let start = lines
+        .iter()
+        .position(|l| l.split_whitespace().collect::<String>() == header);
     let start = start.ok_or_else(|| anyhow!("no {header} table in fleet.toml; add it first"))?;
-    let end = lines[start + 1..].iter().position(|l| l.trim_start().starts_with('[')).map_or(lines.len(), |i| start + 1 + i);
-    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    let end = lines[start + 1..]
+        .iter()
+        .position(|l| l.trim_start().starts_with('['))
+        .map_or(lines.len(), |i| start + 1 + i);
+    let mut out: Vec<String> = lines.iter().map(std::string::ToString::to_string).collect();
     let hit = (start + 1..end).find(|&i| {
         let t = lines[i].trim_start();
         t.strip_prefix(key).is_some_and(|r| r.trim_start().starts_with('='))
     });
-    match hit {
-        Some(i) => {
-            let l = lines[i];
-            let eq = l.find('=').unwrap() + 1;
-            let v = eq + l[eq..].len() - l[eq..].trim_start().len();
-            let end = if l[v..].starts_with('"') {
-                l[v + 1..].find('"').map(|c| v + c + 2)
-            } else if lit.starts_with('"') {
-                None
-            } else {
-                Some(v + l[v..].find(|c: char| c.is_whitespace() || c == '#').unwrap_or(l.len() - v))
-            };
-            let Some(end) = end else {
-                bail!("{header} {key}: value must be a \"string\"");
-            };
-            out[i] = format!("{}{lit}{}", &l[..v], &l[end..]);
+    if let Some(i) = hit {
+        let l = lines[i];
+        let eq = l.find('=').unwrap() + 1;
+        let v = eq + l[eq..].len() - l[eq..].trim_start().len();
+        let end = if l[v..].starts_with('"') {
+            l[v + 1..].find('"').map(|c| v + c + 2)
+        } else if lit.starts_with('"') {
+            None
+        } else {
+            Some(
+                v + l[v..]
+                    .find(|c: char| c.is_whitespace() || c == '#')
+                    .unwrap_or(l.len() - v),
+            )
+        };
+        let Some(end) = end else {
+            bail!("{header} {key}: value must be a \"string\"");
+        };
+        out[i] = format!("{}{lit}{}", &l[..v], &l[end..]);
+    } else {
+        let last = (start..end).rev().find(|&i| !lines[i].trim().is_empty()).unwrap();
+        if !out[last].ends_with('\n') {
+            out[last].push('\n');
         }
-        None => {
-            let last = (start..end).rev().find(|&i| !lines[i].trim().is_empty()).unwrap();
-            if !out[last].ends_with('\n') {
-                out[last].push('\n');
-            }
-            out.insert(last + 1, format!("{key} = {lit}\n"));
-        }
+        out.insert(last + 1, format!("{key} = {lit}\n"));
     }
     Ok(out.concat())
 }

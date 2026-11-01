@@ -28,7 +28,13 @@ impl Event {
             Value::Object(m) => m,
             _ => Map::new(),
         };
-        Event { ts, fleet: fleet.into(), issue, kind: kind.into(), data }
+        Event {
+            ts,
+            fleet: fleet.into(),
+            issue,
+            kind: kind.into(),
+            data,
+        }
     }
     pub fn str(&self, k: &str) -> Option<&str> {
         self.data.get(k).and_then(Value::as_str)
@@ -76,17 +82,26 @@ pub fn read(path: &Path) -> Result<Vec<Event>> {
         match serde_json::from_str(l) {
             Ok(ev) => out.push(ev),
             Err(_) if l.trim().is_empty() || i + 1 == lines.len() => {}
-            Err(e) => eprintln!("herdsman: {}: line {}: skipping corrupt record: {e}", path.display(), i + 1),
+            Err(e) => eprintln!(
+                "herdsman: {}: line {}: skipping corrupt record: {e}",
+                path.display(),
+                i + 1
+            ),
         }
     }
     Ok(out)
 }
 
 /// Append, then run notifiers. Notifier failures never fail the caller.
+#[allow(clippy::needless_pass_by_value)] // public API: callers and tests hand the event over
 pub fn emit(state: &Path, cfg: &Config, ev: Event) -> Result<()> {
     append(state, &ev)?;
     for n in cfg.notifiers(&ev.fleet).into_iter().filter(|n| n.wants(&ev.kind)) {
-        let payload = if n.format.as_deref() == Some("json") { serde_json::to_string(&ev)? } else { plain(&ev) + "\n" };
+        let payload = if n.format.as_deref() == Some("json") {
+            serde_json::to_string(&ev)?
+        } else {
+            plain(&ev) + "\n"
+        };
         let res = if n.webpush() {
             crate::webpush::send(state, n.sub.as_deref().unwrap_or_default(), &ev, None).map(drop)
         } else {
@@ -114,12 +129,36 @@ pub fn plain(ev: &Event) -> String {
         "blocked" => format!("{who} blocked {}: {}", s("code"), s("reason")),
         "needs-decision" => {
             let rec = ev.data["recommend"].as_u64();
-            let opts: String = ev.data["options"].as_array().into_iter().flatten().zip(1..).map(|(o, n)| format!("\n  {n}) {}{}", o.as_str().unwrap_or("?"), if rec == Some(n) { " (recommended)" } else { "" })).collect();
-            format!("{who} needs you ({} asks {}): {}{opts}\n  herdsman answer {} {} <n|\"text\">", s("agent"), s("id"), s("question"), ev.fleet, s("id"))
+            let opts: String = ev.data["options"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .zip(1..)
+                .map(|(o, n)| {
+                    format!(
+                        "\n  {n}) {}{}",
+                        o.as_str().unwrap_or("?"),
+                        if rec == Some(n) { " (recommended)" } else { "" }
+                    )
+                })
+                .collect();
+            format!(
+                "{who} needs you ({} asks {}): {}{opts}\n  herdsman answer {} {} <n|\"text\">",
+                s("agent"),
+                s("id"),
+                s("question"),
+                ev.fleet,
+                s("id")
+            )
         }
         "decision" => format!("{who} decision {} by {}: {}", s("id"), s("by"), s("choice")),
         "queue" => {
-            let n: Vec<String> = ev.data["issues"].as_array().into_iter().flatten().map(|n| format!("#{n}")).collect();
+            let n: Vec<String> = ev.data["issues"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|n| format!("#{n}"))
+                .collect();
             format!("{who} queue {} {}", s("op"), n.join(" "))
         }
         k => match ev.str("reason") {
@@ -136,7 +175,12 @@ fn run_notifier(cmd: &str, payload: &str) -> Result<()> {
     for (k, _) in std::env::vars_os().filter(|(k, _)| hermes(k)) {
         c.env_remove(k);
     }
-    let mut child = c.args(["-c", cmd]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
+    let mut child = c
+        .args(["-c", cmd])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
     // A sink that exits without reading stdin must not fail the write.
     let _ = child.stdin.take().unwrap().write_all(payload.as_bytes());
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -176,27 +220,51 @@ pub type States = BTreeMap<(String, u64), IssueState>;
 
 /// The newest `spawn` of `agent`.
 pub fn last_spawn<'a>(events: &'a [Event], agent: &str) -> Option<&'a Event> {
-    events.iter().rev().find(|e| e.kind == "spawn" && e.str("agent") == Some(agent))
+    events
+        .iter()
+        .rev()
+        .find(|e| e.kind == "spawn" && e.str("agent") == Some(agent))
 }
 
 /// Events `herdsman check` and notifiers write about an issue; they are not activity.
 pub const PASSIVE: [&str; 11] = [
-    "stall", "lane-dead", "ready-unmerged", "notify-failed", "push-sent",
-    "account-capped", "orch-holding", "ask-waiting", "orch-nudged", "orch-stuck", "driven",
+    "stall",
+    "lane-dead",
+    "ready-unmerged",
+    "notify-failed",
+    "push-sent",
+    "account-capped",
+    "orch-holding",
+    "ask-waiting",
+    "orch-nudged",
+    "orch-stuck",
+    "driven",
 ];
 
 /// Why ask `a` closed: answered, its issue merged, or its lane killed, cleaned or respawned; `None` while open.
 pub fn closed(events: &[Event], a: &Event) -> Option<&'static str> {
-    let later = || events.iter().skip_while(|e| !std::ptr::eq(*e, a)).filter(|e| e.fleet == a.fleet);
+    let later = || {
+        events
+            .iter()
+            .skip_while(|e| !std::ptr::eq(*e, a))
+            .filter(|e| e.fleet == a.fleet)
+    };
     let on = |k: &str| a.issue.is_some() && later().any(|e| e.kind == k && e.issue == a.issue);
     let gone = later().any(|e| matches!(e.kind.as_str(), "spawn" | "lane-killed") && e.str("agent") == a.str("agent"));
-    let answered = later().any(|e| e.kind == "decision" && e.str("id") == a.str("id")).then_some("answered");
-    answered.or(on("merged").then_some("closed: merged")).or((gone || on("clean")).then_some("closed: lane gone"))
+    let answered = later()
+        .any(|e| e.kind == "decision" && e.str("id") == a.str("id"))
+        .then_some("answered");
+    answered
+        .or(on("merged").then_some("closed: merged"))
+        .or((gone || on("clean")).then_some("closed: lane gone"))
 }
 
 /// `needs-decision` events not yet closed, oldest first.
 pub fn open_asks(events: &[Event]) -> Vec<&Event> {
-    events.iter().filter(|a| a.kind == "needs-decision" && closed(events, a).is_none()).collect()
+    events
+        .iter()
+        .filter(|a| a.kind == "needs-decision" && closed(events, a).is_none())
+        .collect()
 }
 
 /// Current per-issue state (the states in `roles/usage-tail.md`).
@@ -204,7 +272,12 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
     let mut m: BTreeMap<(String, u64), IssueState> = BTreeMap::new();
     for e in events {
         let Some(n) = e.issue else { continue };
-        let new = || IssueState { fleet: e.fleet.clone(), issue: n, state: "queued".into(), ..Default::default() };
+        let new = || IssueState {
+            fleet: e.fleet.clone(),
+            issue: n,
+            state: "queued".into(),
+            ..Default::default()
+        };
         let s = m.entry((e.fleet.clone(), n)).or_insert_with(new);
         // A merged issue never leaves `merged`, whatever is logged after it.
         if PASSIVE.contains(&e.kind.as_str()) || s.state == "merged" {
@@ -218,7 +291,7 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
             continue;
         }
         s.last_ts = e.ts;
-        s.last_event = e.kind.clone();
+        s.last_event.clone_from(&e.kind);
         match e.kind.as_str() {
             "spawn" => {
                 s.lane = e.str("agent").map(String::from);
@@ -230,7 +303,11 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
                     s.state = format!("review({})", s.rounds + 1);
                 } else {
                     s.branch = e.str("branch").map(String::from).or(s.branch.take());
-                    s.state = if s.rounds == 0 { "impl".into() } else { format!("fix({})", s.rounds) };
+                    s.state = if s.rounds == 0 {
+                        "impl".into()
+                    } else {
+                        format!("fix({})", s.rounds)
+                    };
                 }
             }
             "verdict" => {
@@ -241,16 +318,26 @@ pub fn fold(events: &[Event]) -> BTreeMap<(String, u64), IssueState> {
                 }
                 let v = e.str("verdict").unwrap_or_default().to_string();
                 s.verdicts.push((sha.into(), v.clone()));
-                s.state = if v == "PASS" { "ready".into() } else { format!("fix({})", s.rounds) };
+                s.state = if v == "PASS" {
+                    "ready".into()
+                } else {
+                    format!("fix({})", s.rounds)
+                };
             }
-            "merged" | "blocked" | "needs-human" => s.state = e.kind.clone(),
+            "merged" | "blocked" | "needs-human" => s.state.clone_from(&e.kind),
             // Back to the state before the killed lane: queued / fix(n) for an impl, impl / fix(n) for a review.
             "lane-killed" if e.str("role").and_then(|r| s.lanes.get(r)).map(String::as_str) == e.str("agent") => {
                 let role = e.str("role").unwrap_or_default();
                 s.lanes.remove(role);
                 s.lane = None;
                 if role == "impl" && s.state == "impl" || role == "rev" && s.state.starts_with("review") {
-                    s.state = if s.rounds > 0 { format!("fix({})", s.rounds) } else if role == "rev" { "impl".into() } else { "queued".into() };
+                    s.state = if s.rounds > 0 {
+                        format!("fix({})", s.rounds)
+                    } else if role == "rev" {
+                        "impl".into()
+                    } else {
+                        "queued".into()
+                    };
                 }
             }
             _ => {}
@@ -290,12 +377,18 @@ pub fn age(secs: u64) -> String {
     match secs {
         s if s < 120 => format!("{s}s"),
         s if s < 7200 => format!("{}m", s / 60),
-        s if s < 172800 => format!("{}h", s / 3600),
+        s if s < 172_800 => format!("{}h", s / 3600),
         s => format!("{}d", s / 86400),
     }
 }
 
 pub fn status_line(s: &IssueState, now: u64) -> String {
     let lane = s.lane.as_deref().unwrap_or("-");
-    format!("{:<12} #{:<5} {:<12} {lane:<24} {}", s.fleet, s.issue, s.state, age(now.saturating_sub(s.last_ts)))
+    format!(
+        "{:<12} #{:<5} {:<12} {lane:<24} {}",
+        s.fleet,
+        s.issue,
+        s.state,
+        age(now.saturating_sub(s.last_ts))
+    )
 }

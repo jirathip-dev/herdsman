@@ -13,7 +13,11 @@ const STALE_LOCK_SECS: u64 = 1800;
 
 /// `<state dir>/drive-<fleet>.last`: the time of the fleet's last pass (the board's `last pass`).
 pub fn last_pass(ctx: &Ctx, fleet: &str) -> Option<u64> {
-    std::fs::read_to_string(state_dir(ctx).join(format!("drive-{fleet}.last"))).ok()?.trim().parse().ok()
+    std::fs::read_to_string(state_dir(ctx).join(format!("drive-{fleet}.last")))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 fn state_dir(ctx: &Ctx) -> &Path {
@@ -25,12 +29,26 @@ pub fn drive(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, only:
     only.map(|f| cfg.fleet(f)).transpose()?;
     std::fs::create_dir_all(state_dir(ctx))?;
     let lock = state_dir(ctx).join("drive.lock");
-    let age = |p: &Path| p.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+    let age = |p: &Path| {
+        p.metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+    };
     if age(&lock).is_some_and(|a| a.as_secs() > STALE_LOCK_SECS) {
         let _ = std::fs::remove_file(&lock);
     }
-    if std::fs::OpenOptions::new().write(true).create_new(true).open(&lock).is_err() {
-        return Ok(writeln!(out, "drive: another pass holds {}; nothing done", lock.display())?);
+    if std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock)
+        .is_err()
+    {
+        return Ok(writeln!(
+            out,
+            "drive: another pass holds {}; nothing done",
+            lock.display()
+        )?);
     }
     let mine = |(n, f): &(&String, &crate::config::Fleet)| f.driven() && only.is_none_or(|o| o == n.as_str());
     // A paused fleet gets no pass (and no `last pass`); one fleet's error doesn't skip the others.
@@ -49,7 +67,10 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
     let agents = host::agents(r)?;
     let f = cfg.fleet(fleet)?;
     let waits = waiting::scan(ctx, cfg, r, &events, &agents, true);
-    for (s, w) in waits.iter().filter(|(s, w)| s.fleet == fleet && s.lane.as_ref() == Some(&w.lane)) {
+    for (s, w) in waits
+        .iter()
+        .filter(|(s, w)| s.fleet == fleet && s.lane.as_ref() == Some(&w.lane))
+    {
         let pr = gh::cached_pr(ctx, fleet, s.issue);
         let red = gh::ci(&gh::required(&pr["statusCheckRollup"], &f.required_checks)) == "failed";
         let n = s.issue.to_string();
@@ -75,13 +96,37 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
         }
     }
     if let (0, n) = queue::next(&events, fleet) {
-        act(ctx, cfg, r, out, &events, (fleet, n.parse().ok(), "start"), &["spawn", fleet, &n, "impl"])?;
+        act(
+            ctx,
+            cfg,
+            r,
+            out,
+            &events,
+            (fleet, n.parse().ok(), "start"),
+            &["spawn", fleet, &n, "impl"],
+        )?;
     }
     let st = fold(&events);
-    let merged = |e: &&Event| e.issue.is_some_and(|n| st.get(&(fleet.into(), n)).is_some_and(|s| s.state == "merged"));
+    let merged = |e: &&Event| {
+        e.issue
+            .is_some_and(|n| st.get(&(fleet.into(), n)).is_some_and(|s| s.state == "merged"))
+    };
     let left = |e: &&Event| e.str("worktree").is_some_and(|w| Path::new(w).exists());
-    if events.iter().filter(|e| e.kind == "spawn" && e.fleet == fleet).filter(merged).any(|e| left(&e)) {
-        act(ctx, cfg, r, out, &events, (fleet, None, "clean"), &["clean", fleet, "--yes"])?;
+    if events
+        .iter()
+        .filter(|e| e.kind == "spawn" && e.fleet == fleet)
+        .filter(merged)
+        .any(|e| left(&e))
+    {
+        act(
+            ctx,
+            cfg,
+            r,
+            out,
+            &events,
+            (fleet, None, "clean"),
+            &["clean", fleet, "--yes"],
+        )?;
     }
     Ok(())
 }
@@ -89,15 +134,33 @@ fn pass(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet: &st
 /// The finding for red CI: the first failing check, then the tail of its run's failed-step log.
 fn ci_findings(r: &dyn Runner, f: &crate::config::Fleet, pr: &serde_json::Value, head: &str) -> String {
     let checks = gh::required(&pr["statusCheckRollup"], &f.required_checks);
-    let failed = checks.as_array().into_iter().flatten().find(|c| gh::check_state(c) == "failed");
+    let failed = checks
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|c| gh::check_state(c) == "failed");
     let url = failed.and_then(|c| c["detailsUrl"].as_str()).unwrap_or_default();
-    let run = url.split("/runs/").nth(1).and_then(|t| t.split('/').next()).unwrap_or_default();
+    let run = url
+        .split("/runs/")
+        .nth(1)
+        .and_then(|t| t.split('/').next())
+        .unwrap_or_default();
     let log = (!run.is_empty()).then(|| ok(r, "gh", &["run", "view", run, "-R", &f.repo, "--log-failed"]).ok());
     let log = log.flatten().unwrap_or_default();
-    let tail: Vec<&str> = log.lines().rev().take(40).collect::<Vec<_>>().into_iter().rev().collect();
+    let tail: Vec<&str> = log
+        .lines()
+        .rev()
+        .take(40)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     let what = gh::not_green(&checks).unwrap_or_else(|| "a check failed".into());
     // The tail lands in events and the fix brief: mask secret-looking runs first.
-    format!("FAIL\n\nCI is red at {head}: {what}.\n\n```\n{}\n```\n", crate::lanes::mask(&tail.join("\n")))
+    format!(
+        "FAIL\n\nCI is red at {head}: {what}.\n\n```\n{}\n```\n",
+        crate::lanes::mask(&tail.join("\n"))
+    )
 }
 
 /// (fleet, issue, step) of one action.
@@ -112,7 +175,10 @@ fn act(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, ev: &[Event
     let text = String::from_utf8_lossy(&buf);
     let (result, code) = match res {
         Ok(0) => (text.lines().next().unwrap_or("ok").to_string(), None),
-        Ok(c) => (format!("exit {c}: {}", text.lines().next().unwrap_or_default()), Some("EXIT")),
+        Ok(c) => (
+            format!("exit {c}: {}", text.lines().next().unwrap_or_default()),
+            Some("EXIT"),
+        ),
         Err(e) => match e.downcast_ref::<crate::gate::Refusal>() {
             Some(rf) => (rf.to_string(), Some(rf.code)),
             None => (format!("error: {e:#}"), Some("ERROR")),

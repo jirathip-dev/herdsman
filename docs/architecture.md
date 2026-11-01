@@ -41,7 +41,25 @@ herdsman was called `fleet` (#27). Only `herdsman migrate` moves `~/.config/flee
 hint on stderr (`hook` stays silent). Lanes export `HERDSMAN_LANE`; `FLEET_LANE` still arms
 the hook for one release, and `HERDSMAN_LANE` wins when both are set.
 
-## Size cap
+## Code rules
 
-At most 6,360 lines of Rust under `src/` (tests live in `tests/`). CI enforces it. #60 aimed for 5,000; without joining
-lines or dropping features it ended at 6,080 (the herdr adapter, `src/herdr.rs`, included), so the cap was that count rounded up (6,100); #88 (`serial_max`) raised it to 6,120, #87 (alerts) to 6,170 and #92 (`herdsman drive`, +193 net) to 6,360.
+- **Format:** rustfmt with `max_width = 120` (`rustfmt.toml`); CI runs `cargo fmt --check`. The formatter decides
+  layout, not the lane: no golf, no joined or packed lines to fit the cap. Run `cargo fmt` before committing.
+- **Lints:** `#![warn(clippy::pedantic)]` at the crate roots, and CI's `-D warnings` makes it an error. Other
+  exceptions sit inline at the narrowest scope as `#[allow(clippy::<lint>)] // reason`. The crate-level allows, all
+  style noise for a CLI:
+  - `must_use_candidate`: return values here are read or deliberately dropped; `#[must_use]` everywhere is noise.
+  - `missing_errors_doc`: nearly every fn returns `anyhow::Result`, and the error is the message it prints.
+  - `missing_panics_doc`: the few `unwrap`s are on invariants, not inputs.
+  - `too_many_lines`: dispatch and page renderers are long matches; splitting them only moves lines.
+  - `format_push_string`: the HTML page is built with `+= &format!(..)`; one extra allocation per row is nothing.
+  - `format_collect`: `.map(|x| format!(..)).collect()` reads better than a `fold` with `write!`.
+  - `many_single_char_names`: short names in small math and parsing closures (dates, hex, crypto).
+- **Size cap:** at most 9,000 formatted lines of non-test Rust under `src/` (tests live in `tests/`), counted as
+  `find src -name '*.rs' | xargs cat | wc -l` after `cargo fmt`. CI enforces it. Raising the cap needs the owner's OK
+  in an issue.
+
+History: #60 aimed for 5,000 hand-packed lines; without joining lines or dropping features it ended at 6,080 (the
+herdr adapter, `src/herdr.rs`, included), so the cap was that count rounded up (6,100); #88 (`serial_max`) raised it to
+6,120, #87 (alerts) to 6,170 and #92 (`herdsman drive`, +193 net) to 6,360. #93 re-based it on formatted code: the
+same 6,356 packed lines are 8,859 under rustfmt at width 120, so the cap became 9,000 formatted lines.

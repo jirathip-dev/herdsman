@@ -24,7 +24,13 @@ fn setup(name: &str, global_too: bool) -> (std::path::PathBuf, Config) {
 }
 
 fn merged(d: &Path, cfg: &Config, fleet: &str) {
-    let ev = Event::new(1, fleet, Some(7), "merged", serde_json::json!({"into": "staging", "merge_sha": "abc", "pr": 9}));
+    let ev = Event::new(
+        1,
+        fleet,
+        Some(7),
+        "merged",
+        serde_json::json!({"into": "staging", "merge_sha": "abc", "pr": 9}),
+    );
     emit(&d.join("events.jsonl"), cfg, ev).unwrap();
 }
 
@@ -68,5 +74,8 @@ fn fleetless_event_goes_to_global_only() {
 fn empty_fleet_notify_cmd_is_rejected() {
     let text = format!("{CONFIG}\n[[fleet.sendmeter.notify]]\ncmd = \" \"\non = [\"merged\"]\n");
     let e = Config::parse(&text).unwrap_err();
-    assert!(format!("{e:#}").contains("fleet.sendmeter.notify: cmd must not be empty"), "{e:#}");
+    assert!(
+        format!("{e:#}").contains("fleet.sendmeter.notify: cmd must not be empty"),
+        "{e:#}"
+    );
 }

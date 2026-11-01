@@ -12,8 +12,14 @@ const PANES: &str = r#"{"result":{"panes":[{"pane_id":"w9:p1","agent":null}]}}"#
 /// CONFIG plus `extra` lines in `[fleet.sendmeter]` and a design role.
 fn config(extra: &str) -> String {
     CONFIG
-        .replace("integration = \"staging\"   # never main", &format!("integration = \"staging\"\n{extra}"))
-        .replace("[limits]", "[fleet.sendmeter.role.design]\nharness = \"hermes\"\nprofile = \"fleet-design\"\n\n[limits]")
+        .replace(
+            "integration = \"staging\"   # never main",
+            &format!("integration = \"staging\"\n{extra}"),
+        )
+        .replace(
+            "[limits]",
+            "[fleet.sendmeter.role.design]\nharness = \"hermes\"\nprofile = \"fleet-design\"\n\n[limits]",
+        )
 }
 
 const SERIAL: &str = "serial_paths = [\"supabase/migrations/**\"]";
@@ -64,7 +70,15 @@ fn refused(c: &herdsman::Ctx, n: u64, role: &str, code: &str) {
 fn second_serial_impl_waits_until_first_merges() {
     let d = tmpdir("serial-busy");
     let c = ctx(&d, &config(SERIAL));
-    assert_eq!(run(&c, &Fake::default(), &["queue", "sendmeter", "add", "1", "2", "--serial"]).0, 0);
+    assert_eq!(
+        run(
+            &c,
+            &Fake::default(),
+            &["queue", "sendmeter", "add", "1", "2", "--serial"]
+        )
+        .0,
+        0
+    );
     assert_eq!(run(&c, &Fake::default(), &["queue", "sendmeter", "add", "3"]).0, 0);
     let (exit, out) = spawn(&c, 1, "impl");
     assert_eq!(exit, 0, "{out}");
@@ -87,17 +101,33 @@ fn second_serial_impl_waits_until_first_merges() {
 fn serial_max_two_admits_a_second_serial_and_refuses_a_third() {
     let d = tmpdir("serial-max");
     let c = ctx(&d, &config(&format!("{SERIAL}\nserial_max = 2")));
-    assert_eq!(run(&c, &Fake::default(), &["queue", "sendmeter", "add", "1", "2", "3", "--serial"]).0, 0);
+    assert_eq!(
+        run(
+            &c,
+            &Fake::default(),
+            &["queue", "sendmeter", "add", "1", "2", "3", "--serial"]
+        )
+        .0,
+        0
+    );
     assert_eq!(spawn(&c, 1, "impl").0, 0);
     let (exit, out) = spawn(&c, 2, "impl");
     assert_eq!(exit, 0, "second serial admitted: {out}");
     let (_, board) = run(&c, &Fake::default(), &["board", "sendmeter"]);
-    assert!(board.starts_with("sendmeter: 3 queued, 2 active, serial 2/2\n"), "{board}");
+    assert!(
+        board.starts_with("sendmeter: 3 queued, 2 active, serial 2/2\n"),
+        "{board}"
+    );
     let (_, status) = run(&c, &Fake::default(), &["status", "sendmeter"]);
     assert!(status.contains("sendmeter: serial 2/2\n"), "{status}");
     let (exit, out) = spawn(&c, 3, "impl");
     assert_eq!(exit, 3, "{out}");
-    assert!(out.contains("REFUSED SERIAL_BUSY") && out.contains("#1 is unmerged (impl)") && out.contains("#2 is unmerged (impl)"), "names both: {out}");
+    assert!(
+        out.contains("REFUSED SERIAL_BUSY")
+            && out.contains("#1 is unmerged (impl)")
+            && out.contains("#2 is unmerged (impl)"),
+        "names both: {out}"
+    );
     // A merged one frees a slot.
     log(&c, 1, "merged", json!({}));
     let (exit, out) = spawn(&c, 3, "impl");
@@ -137,7 +167,10 @@ fn merge(serial: bool, files: &str) -> (i32, String, Fake) {
 fn unmarked_pr_touching_serial_path_is_refused() {
     let (exit, out, r) = merge(false, "src/a.ts\nsupabase/migrations/x.sql\n");
     assert_eq!(exit, 3, "{out}");
-    assert!(out.contains("REFUSED SERIAL_UNMARKED") && out.contains("supabase/migrations/x.sql"), "{out}");
+    assert!(
+        out.contains("REFUSED SERIAL_UNMARKED") && out.contains("supabase/migrations/x.sql"),
+        "{out}"
+    );
     assert!(!r.called("gh pr merge"));
 }
 
@@ -195,7 +228,15 @@ fn max_impl_refuses_the_third_impl() {
     assert_eq!(spawn(&c, 2, "impl").0, 0);
     refused(&c, 3, "impl", "CAP");
     // A fix round of an open issue is not a new lane.
-    assert_eq!(run(&c, &happy(NO_AGENTS), &["spawn", "sendmeter", "2", "impl", "--supersede"]).0, 0);
+    assert_eq!(
+        run(
+            &c,
+            &happy(NO_AGENTS),
+            &["spawn", "sendmeter", "2", "impl", "--supersede"]
+        )
+        .0,
+        0
+    );
     // max_rev = 1: #1 under review fills it; #2's reviewer waits.
     spawned(&c, 1, "rev");
     refused(&c, 2, "rev", "CAP");
@@ -210,17 +251,32 @@ fn design_lane_spawns_but_never_moves_the_issue() {
     let r = happy(NO_AGENTS);
     let (exit, out) = run(&c, &r, &["spawn", "sendmeter", "12", "design"]);
     assert_eq!(exit, 0, "{out}");
-    assert!(r.called("herdr agent start sendmeter-design-12"), "{:?}", r.calls.borrow());
-    assert!(r.called("herdr worktree create --cwd /tmp/does-not-matter/sendmeter --branch design-12 --base origin/staging"));
+    assert!(
+        r.called("herdr agent start sendmeter-design-12"),
+        "{:?}",
+        r.calls.borrow()
+    );
+    assert!(
+        r.called("herdr worktree create --cwd /tmp/does-not-matter/sendmeter --branch design-12 --base origin/staging")
+    );
     let brief = std::fs::read_to_string(c.worktrees.join("sendmeter/design-12/.brief.md")).unwrap();
-    assert!(brief.contains("# ROLE: DESIGNER") && brief.contains("owner's call"), "{brief}");
+    assert!(
+        brief.contains("# ROLE: DESIGNER") && brief.contains("owner's call"),
+        "{brief}"
+    );
     let st = &fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 12)];
-    assert_eq!((st.state.as_str(), st.branch.as_deref(), st.lane.as_deref()), ("queued", None, None));
+    assert_eq!(
+        (st.state.as_str(), st.branch.as_deref(), st.lane.as_deref()),
+        ("queued", None, None)
+    );
     // It shows in herdr like any lane: a live design agent is LANE_LIVE for a second design spawn.
     let live = agents(&[("sendmeter-design-12", "working", "/elsewhere", "w9:p1")]);
     let (exit, out) = run(&c, &happy(&live), &["spawn", "sendmeter", "12", "design"]);
     assert_eq!(exit, 3, "{out}");
-    assert!(out.contains("REFUSED LANE_LIVE") && out.contains("sendmeter-design-12"), "{out}");
+    assert!(
+        out.contains("REFUSED LANE_LIVE") && out.contains("sendmeter-design-12"),
+        "{out}"
+    );
     // The issue's impl lane is unaffected by the design lane.
     assert_eq!(spawn(&c, 12, "impl").0, 0);
 }

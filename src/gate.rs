@@ -39,7 +39,8 @@ pub fn issue_state(ctx: &Ctx, fleet: &str, issue: u64) -> Result<Option<IssueSta
 }
 
 pub fn branch_of(st: Option<&IssueState>, issue: u64) -> String {
-    st.and_then(|s| s.branch.clone()).unwrap_or_else(|| format!("issue-{issue}"))
+    st.and_then(|s| s.branch.clone())
+        .unwrap_or_else(|| format!("issue-{issue}"))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -69,12 +70,20 @@ pub fn verdict(
     let v = if pass { "PASS" } else { "FAIL" };
     let round = st.as_ref().map_or(1, |s| s.rounds + u32::from(!s.reviewed(&head)));
     let data = json!({"verdict": v, "sha": head, "branch": branch, "file": file, "body": body, "round": round});
-    emit(&ctx.state, cfg, Event::new(ctx.now, fleet, Some(issue), "verdict", data))?;
+    emit(
+        &ctx.state,
+        cfg,
+        Event::new(ctx.now, fleet, Some(issue), "verdict", data),
+    )?;
     let limit = cfg.limits.review_rounds;
     writeln!(out, "recorded {v} for {fleet}#{issue} @ {head} (round {round}/{limit})")?;
     if !pass && round >= limit {
         let d = json!({"reason": format!("FAIL in round {round}/{limit}"), "findings": body});
-        emit(&ctx.state, cfg, Event::new(ctx.now, fleet, Some(issue), "needs-human", d))?;
+        emit(
+            &ctx.state,
+            cfg,
+            Event::new(ctx.now, fleet, Some(issue), "needs-human", d),
+        )?;
         writeln!(out, "round limit reached → needs-human")?;
     }
     Ok(())
@@ -82,7 +91,10 @@ pub fn verdict(
 
 #[doc(hidden)]
 pub fn ci_green(rollup: &Value, required: &[String]) -> Result<(), String> {
-    rollup.as_array().filter(|a| !a.is_empty() || !required.is_empty()).ok_or("no checks reported")?;
+    rollup
+        .as_array()
+        .filter(|a| !a.is_empty() || !required.is_empty())
+        .ok_or("no checks reported")?;
     let prefix = if required.is_empty() { "" } else { "required " };
     gh::not_green(&gh::required(rollup, required)).map_or(Ok(()), |m| Err(format!("{prefix}{m}")))
 }
@@ -92,27 +104,43 @@ pub fn gate(f: &Fleet, pr: &Value, st: Option<&IssueState>, limit: u32) -> Resul
     let integration = f.integration.as_str();
     let base = pr["baseRefName"].as_str().unwrap_or_default();
     if is_main(integration) || is_main(base) {
-        return Err(refuse("MAIN_TARGET", format!("target `{integration}`/base `{base}`: main is promoted by a human only")));
+        return Err(refuse(
+            "MAIN_TARGET",
+            format!("target `{integration}`/base `{base}`: main is promoted by a human only"),
+        ));
     }
     if base != integration {
-        return Err(refuse("BASE_MISMATCH", format!("PR base `{base}` ≠ integration `{integration}`")));
+        return Err(refuse(
+            "BASE_MISMATCH",
+            format!("PR base `{base}` ≠ integration `{integration}`"),
+        ));
     }
     let head = pr["headRefOid"].as_str().unwrap_or_default().to_string();
     let verdicts = st.map(|s| s.verdicts.as_slice()).unwrap_or_default();
     if verdicts.is_empty() {
-        return Err(refuse("NO_VERDICT", "no review verdict recorded; run a reviewer and `herdsman verdict`"));
+        return Err(refuse(
+            "NO_VERDICT",
+            "no review verdict recorded; run a reviewer and `herdsman verdict`",
+        ));
     }
     let Some((_, v)) = verdicts.iter().rev().find(|(s, _)| s.eq_ignore_ascii_case(&head)) else {
-        return Err(refuse("STALE_VERDICT", format!("no verdict for head {head}; re-review the current head")));
+        return Err(refuse(
+            "STALE_VERDICT",
+            format!("no verdict for head {head}; re-review the current head"),
+        ));
     };
     if v != "PASS" {
         return Err(refuse("VERDICT_FAIL", format!("verdict for {head} is {v}")));
     }
     let rounds = st.map_or(0, |s| s.rounds);
     if rounds > limit {
-        return Err(refuse("ROUND_LIMIT", format!("{rounds} review rounds > limit {limit}; needs a human")));
+        return Err(refuse(
+            "ROUND_LIMIT",
+            format!("{rounds} review rounds > limit {limit}; needs a human"),
+        ));
     }
-    ci_green(&pr["statusCheckRollup"], &f.required_checks).map_err(|m| refuse("CI_NOT_GREEN", format!("{m} at {head}")))?;
+    ci_green(&pr["statusCheckRollup"], &f.required_checks)
+        .map_err(|m| refuse("CI_NOT_GREEN", format!("{m} at {head}")))?;
     Ok(head)
 }
 
@@ -147,7 +175,10 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
         Ok(head) if !f.serial_paths.is_empty() && !serial() => {
             let files = gh::diff_names(ctx, r, f, (fleet, issue), &num, &head)?;
             match files.iter().find(|p| f.serial_path(p)) {
-                Some(p) => Err(refuse("SERIAL_UNMARKED", format!("PR touches serial path {p}; queue #{issue} with `--serial` first"))),
+                Some(p) => Err(refuse(
+                    "SERIAL_UNMARKED",
+                    format!("PR touches serial path {p}; queue #{issue} with `--serial` first"),
+                )),
                 None => Ok(head),
             }
         }
@@ -156,30 +187,63 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
     let head = match res {
         Ok(h) => h,
         Err(rf) => {
-            let kind = if rf.code == "ROUND_LIMIT" { "needs-human" } else { "blocked" };
+            let kind = if rf.code == "ROUND_LIMIT" {
+                "needs-human"
+            } else {
+                "blocked"
+            };
             let d = json!({"code": rf.code, "reason": rf.msg});
             emit(&ctx.state, cfg, Event::new(ctx.now, fleet, Some(issue), kind, d))?;
             return Err(rf.into());
         }
     };
     gh::forget_pr(ctx, fleet, issue);
-    ok(r, "gh", &["pr", "merge", &num, "-R", &f.repo, "--merge", "--match-head-commit", &head])?;
+    ok(
+        r,
+        "gh",
+        &[
+            "pr",
+            "merge",
+            &num,
+            "-R",
+            &f.repo,
+            "--merge",
+            "--match-head-commit",
+            &head,
+        ],
+    )?;
     let mc = json(r, "gh", &["pr", "view", &num, "-R", &f.repo, "--json", "mergeCommit"])?;
     let merge_sha = mc["mergeCommit"]["oid"].as_str().unwrap_or("?").to_string();
     let d = json!({"pr": num, "merge_sha": merge_sha, "verdict_sha": head, "into": f.integration});
     emit(&ctx.state, cfg, Event::new(ctx.now, fleet, Some(issue), "merged", d))?;
     // The one GitHub comment fleet writes: ≤ 5 lines, merge sha + verdict sha.
-    let evidence = format!("Merged via `herdsman merge`: PR #{num} → `{}` @ `{merge_sha}`\nPinned PASS verdict sha: `{head}`", f.integration);
+    let evidence = format!(
+        "Merged via `herdsman merge`: PR #{num} → `{}` @ `{merge_sha}`\nPinned PASS verdict sha: `{head}`",
+        f.integration
+    );
     let n = issue.to_string();
     writeln!(out, "{evidence}")?;
     let comment = ["issue", "comment", &n, "-R", &f.repo, "--body", &evidence];
     if let Err(e) = ok(r, "gh", &comment).or_else(|_| ok(r, "gh", &comment)) {
         let reason = format!("PR #{num} merged @ {merge_sha}, but the evidence comment failed twice: {e:#}");
-        emit(&ctx.state, cfg, Event::new(ctx.now, fleet, Some(issue), "evidence-missing", json!({"reason": reason})))?;
+        emit(
+            &ctx.state,
+            cfg,
+            Event::new(
+                ctx.now,
+                fleet,
+                Some(issue),
+                "evidence-missing",
+                json!({"reason": reason}),
+            ),
+        )?;
         bail!("{reason}; issue #{issue} left open");
     }
     // Already closed by `Closes #N` is fine.
-    let _ = r.run("gh", &argv(&["issue", "close", &n, "-R", &f.repo, "--reason", "completed"]));
+    let _ = r.run(
+        "gh",
+        &argv(&["issue", "close", &n, "-R", &f.repo, "--reason", "completed"]),
+    );
     // The merge stands either way; a teardown problem is reported, not fatal.
     if let Err(e) = crate::check::teardown(ctx, cfg, r, out, fleet, issue) {
         writeln!(out, "teardown: {e:#}")?;
@@ -188,7 +252,12 @@ pub fn merge(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, fleet
         // Dogfood fleet: say how to pick up the merged code; never run it.
         let exe = std::path::Path::new(&ctx.exe);
         let root = exe.parent().and_then(|b| b.parent()).unwrap_or(exe);
-        writeln!(out, "cargo install --path {} --locked --root {} --force", f.local_path().display(), root.display())?;
+        writeln!(
+            out,
+            "cargo install --path {} --locked --root {} --force",
+            f.local_path().display(),
+            root.display()
+        )?;
     }
     Ok(())
 }

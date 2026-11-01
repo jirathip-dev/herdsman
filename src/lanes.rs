@@ -29,41 +29,79 @@ pub struct Lane {
 }
 
 /// Join `herdr agent list` rows with the log. `ws` maps workspace id -> label.
-pub fn join(cfg: &Config, r: &dyn Runner, worktrees: &Path, events: &[Event], st: &States, agents: &[Value],
-            ws: &BTreeMap<String, String>) -> Vec<Lane> {
+pub fn join(
+    cfg: &Config,
+    r: &dyn Runner,
+    worktrees: &Path,
+    events: &[Event],
+    st: &States,
+    agents: &[Value],
+    ws: &BTreeMap<String, String>,
+) -> Vec<Lane> {
     let spawns: Vec<&Event> = events.iter().rev().filter(|e| e.kind == "spawn").collect();
     let (mut out, mut seen) = (vec![], BTreeSet::new());
     for a in agents {
         let s = |k: &str| a[k].as_str().filter(|v| !v.is_empty());
         let (name, pane) = (s("name"), s("pane_id"));
         // Agents that report their own state (dsh-TUI) can lose the name: match the lane's pane.
-        let sp = spawns.iter().find(|e| name.is_some() && e.str("agent") == name)
-            .or_else(|| spawns.iter().find(|e| name.is_none() && pane.is_some() && e.str("pane") == pane));
-        let mut l = Lane { state: s("agent_status").unwrap_or("unknown").into(), pane: pane.map(String::from), ..Lane::default() };
-        match sp {
-            Some(e) => {
-                seen.insert(e.str("agent").unwrap_or_default().to_string());
-                l = Lane { name: e.str("agent").unwrap_or_default().into(), ..from_spawn(e, l) };
-            }
-            None => {
-                let inside = |d: &Path| ["cwd", "foreground_cwd"].iter().any(|k| s(k).is_some_and(|c| Path::new(c).starts_with(d)));
-                let fleet = cfg.fleet.iter().find(|(_, f)| inside(&f.local_path()) || inside(&worktrees.join(f.repo_name())));
-                l.fleet = fleet.map(|f| f.0.clone());
-                l.role = "other".into();
-                l.harness = s("agent").unwrap_or("shell").trim_end_matches("-tui").into();
-                let label = s("workspace_id").map(|w| ws.get(w).cloned().unwrap_or_else(|| w.into()));
-                l.name = name.map(String::from).or(label).unwrap_or_else(|| "?".into());
-            }
+        let sp = spawns
+            .iter()
+            .find(|e| name.is_some() && e.str("agent") == name)
+            .or_else(|| {
+                spawns
+                    .iter()
+                    .find(|e| name.is_none() && pane.is_some() && e.str("pane") == pane)
+            });
+        let mut l = Lane {
+            state: s("agent_status").unwrap_or("unknown").into(),
+            pane: pane.map(String::from),
+            ..Lane::default()
+        };
+        if let Some(e) = sp {
+            seen.insert(e.str("agent").unwrap_or_default().to_string());
+            l = Lane {
+                name: e.str("agent").unwrap_or_default().into(),
+                ..from_spawn(e, l)
+            };
+        } else {
+            let inside = |d: &Path| {
+                ["cwd", "foreground_cwd"]
+                    .iter()
+                    .any(|k| s(k).is_some_and(|c| Path::new(c).starts_with(d)))
+            };
+            let fleet = cfg
+                .fleet
+                .iter()
+                .find(|(_, f)| inside(&f.local_path()) || inside(&worktrees.join(f.repo_name())));
+            l.fleet = fleet.map(|f| f.0.clone());
+            l.role = "other".into();
+            l.harness = s("agent").unwrap_or("shell").trim_end_matches("-tui").into();
+            let label = s("workspace_id").map(|w| ws.get(w).cloned().unwrap_or_else(|| w.into()));
+            l.name = name.map(String::from).or(label).unwrap_or_else(|| "?".into());
         }
         out.push(l);
     }
     for s in st.values().filter(|s| cfg.fleet.contains_key(&s.fleet)) {
-        let Some((_, agent)) = s.active_lane().filter(|(_, a)| !seen.contains(*a)) else { continue };
+        let Some((_, agent)) = s.active_lane().filter(|(_, a)| !seen.contains(*a)) else {
+            continue;
+        };
         if let Some(e) = spawns.iter().find(|e| e.str("agent") == Some(agent)) {
-            let wt = e.str("worktree").filter(|wt| crate::spawn::dirty(r, Path::new(wt)).is_none());
+            let wt = e
+                .str("worktree")
+                .filter(|wt| crate::spawn::dirty(r, Path::new(wt)).is_none());
             let head = wt.map(|wt| ok(r, "git", &["-C", wt, "rev-parse", "--short=7", "HEAD"]).unwrap_or_default());
             let state = if head.is_some() { "parked" } else { "dead" }.into();
-            out.push(Lane { name: agent.into(), ..from_spawn(e, Lane { state, parked: head, ..Lane::default() }) });
+            out.push(Lane {
+                name: agent.into(),
+                ..from_spawn(
+                    e,
+                    Lane {
+                        state,
+                        parked: head,
+                        ..Lane::default()
+                    },
+                )
+            });
         }
     }
     out
@@ -90,10 +128,17 @@ pub const SECTIONS: [&str; 6] = ["blocked", "working", "idle", "done", "parked",
 pub type Groups<'a> = Vec<(&'static str, Vec<(String, Vec<&'a Lane>)>)>;
 
 /// Non-empty [`SECTIONS`], each split by fleet (alphabetical, Others last), newest `changed` first.
-pub fn group<'a>(all: &'a [Lane], changed: impl Fn(&Lane) -> u64) -> Groups<'a> {
+pub fn group(all: &[Lane], changed: impl Fn(&Lane) -> u64) -> Groups<'_> {
     let section = |l: &Lane| SECTIONS.iter().position(|s| *s == l.state).unwrap_or(2);
     let mut v: Vec<&Lane> = all.iter().collect();
-    v.sort_by_key(|l| (section(l), l.fleet.is_none(), l.fleet.clone(), std::cmp::Reverse(changed(l))));
+    v.sort_by_key(|l| {
+        (
+            section(l),
+            l.fleet.is_none(),
+            l.fleet.clone(),
+            std::cmp::Reverse(changed(l)),
+        )
+    });
     let mut out: Groups = vec![];
     for l in v {
         let (s, f) = (SECTIONS[section(l)], l.fleet.clone().unwrap_or_else(|| "Others".into()));
@@ -120,7 +165,11 @@ pub fn mask(s: &str) -> String {
         out += &rest[..i];
         let n = rest[i..].find(|c| !tok(c)).unwrap_or(rest.len() - i);
         let w = &rest[i..i + n];
-        let (word, after_eq) = if std::mem::take(&mut hide_next) { (HIDE.to_string(), false) } else { word(w) };
+        let (word, after_eq) = if std::mem::take(&mut hide_next) {
+            (HIDE.to_string(), false)
+        } else {
+            word(w)
+        };
         out += &word;
         // `TOKEN="value"`: the value is the next run.
         hide_next = after_eq && rest[i + n..].starts_with(['"', '\'']);
@@ -134,14 +183,20 @@ fn word(w: &str) -> (String, bool) {
     if let Some((k, v)) = w.split_once('=') {
         let up = k.to_ascii_uppercase();
         if ["KEY", "TOKEN", "SECRET", "PASSWORD"].iter().any(|s| up.contains(s)) {
-            return if v.is_empty() { (w.into(), true) } else { (format!("{k}={HIDE}"), false) };
+            return if v.is_empty() {
+                (w.into(), true)
+            } else {
+                (format!("{k}={HIDE}"), false)
+            };
         }
     }
     if let Some(p) = PREFIXES.iter().find(|p| w.starts_with(**p) && w.len() >= p.len() + 10) {
         return (format!("{p}{HIDE}"), false);
     }
     let jwt = w.starts_with("eyJ") && w.matches('.').count() >= 2;
-    let long = |seg: &str| seg.len() >= 32 && seg.chars().any(|c| c.is_ascii_digit()) && seg.chars().any(|c| c.is_ascii_alphabetic());
+    let long = |seg: &str| {
+        seg.len() >= 32 && seg.chars().any(|c| c.is_ascii_digit()) && seg.chars().any(|c| c.is_ascii_alphabetic())
+    };
     if jwt || w.split(['.', '/', '-']).any(long) {
         return (HIDE.into(), false);
     }
@@ -162,25 +217,46 @@ pub fn activity(harness: &str, screen: &str) -> String {
         _ => lines.iter().rev().find(|l| !chrome(l)),
     };
     let m = mask(line.copied().unwrap_or_default());
-    if m.chars().count() > 60 { m.chars().take(59).collect::<String>() + "…" } else { m }
+    if m.chars().count() > 60 {
+        m.chars().take(59).collect::<String>() + "…"
+    } else {
+        m
+    }
 }
 
 /// The pane's last `n` non-empty lines, masked.
 pub fn tail(screen: &str, n: usize) -> Vec<String> {
     let lines: Vec<&str> = screen.lines().filter(|l| !l.trim().is_empty()).collect();
-    lines[lines.len().saturating_sub(n)..].iter().map(|l| mask(l.trim_end())).collect()
+    lines[lines.len().saturating_sub(n)..]
+        .iter()
+        .map(|l| mask(l.trim_end()))
+        .collect()
 }
 
 /// A blocked pane's pending prompt: the question and a Claude menu's options (a `❯`-marked run
 /// numbered 1, 2, …; wrapped lines skipped), or no options for a free-text question. None: no prompt seen.
 pub fn pending(screen: &str) -> Option<(String, Vec<String>)> {
-    let lines: Vec<&str> = screen.lines().map(|l| l.trim_matches(|c: char| c.is_whitespace() || c == '│')).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = screen
+        .lines()
+        .map(|l| l.trim_matches(|c: char| c.is_whitespace() || c == '│'))
+        .filter(|l| !l.is_empty())
+        .collect();
     let opt = |l: &str| {
         let (n, t) = l.trim_start_matches(['❯', '›']).trim_start().split_once(". ")?;
         Some((n.parse::<usize>().ok()?, t.trim().to_string()))
     };
-    let question = |ls: &[&str]| ls.iter().rev().take(6).find(|l| l.contains('?')).map(|q| q.to_string());
-    let (mut opts, mut i, mut gap) = (vec![], lines.iter().rposition(|l| opt(l).is_some()).map_or(0, |i| i + 1), 0);
+    let question = |ls: &[&str]| {
+        ls.iter()
+            .rev()
+            .take(6)
+            .find(|l| l.contains('?'))
+            .map(std::string::ToString::to_string)
+    };
+    let (mut opts, mut i, mut gap) = (
+        vec![],
+        lines.iter().rposition(|l| opt(l).is_some()).map_or(0, |i| i + 1),
+        0,
+    );
     while i > 0 && gap <= 2 && opts.last().is_none_or(|o: &(usize, String)| o.0 > 1) {
         i -= 1;
         match opt(lines[i]) {
@@ -189,10 +265,16 @@ pub fn pending(screen: &str) -> Option<(String, Vec<String>)> {
         }
     }
     opts.reverse();
-    let menu = opts.len() >= 2 && opts.iter().zip(1..).all(|(o, n)| o.0 == n) && lines[i..].iter().any(|l| l.starts_with('❯') && opt(l).is_some());
-    match menu {
-        true => Some((question(&lines[..i]).or(lines[..i].last().map(|l| l.to_string()))?, opts.into_iter().map(|o| o.1).collect())),
-        false => Some((question(&lines)?, vec![])),
+    let menu = opts.len() >= 2
+        && opts.iter().zip(1..).all(|(o, n)| o.0 == n)
+        && lines[i..].iter().any(|l| l.starts_with('❯') && opt(l).is_some());
+    if menu {
+        Some((
+            question(&lines[..i]).or(lines[..i].last().map(std::string::ToString::to_string))?,
+            opts.into_iter().map(|o| o.1).collect(),
+        ))
+    } else {
+        Some((question(&lines)?, vec![]))
     }
 }
 
@@ -210,7 +292,10 @@ pub fn turns(lines: &[String]) -> Vec<Value> {
             }
         }
         let items = out.last_mut().and_then(|t| t["items"].as_array_mut()).expect("a turn");
-        let head = t.strip_prefix("⏺ ").and_then(|r| r.split_once('(')).is_some_and(|(n, _)| !n.is_empty() && n.chars().all(char::is_alphanumeric));
+        let head = t
+            .strip_prefix("⏺ ")
+            .and_then(|r| r.split_once('('))
+            .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(char::is_alphanumeric));
         let tool = items.last().is_some_and(|i| i.get("tool").is_some());
         let (k, v) = match items.last_mut() {
             Some(i) if tool && !head && (l.starts_with(' ') || t.starts_with(['⎿', '┊'])) => ("body", i),

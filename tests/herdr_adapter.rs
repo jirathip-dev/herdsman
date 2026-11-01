@@ -19,13 +19,24 @@ fn only_herdr_rs_runs_herdr() {
     rust_files(&src, &mut files);
     assert!(files.iter().any(|f| f.ends_with("herdr.rs")), "src/herdr.rs exists");
     // The program name, or the head of a herdr argv (`"pane", "read"`, `"agent", "prompt"`, …).
-    let heads = ["\"herdr\"", "[\"pane\", \"", "[\"agent\", \"", "[\"workspace\", \"", "[\"worktree\", \""];
+    let heads = [
+        "\"herdr\"",
+        "[\"pane\", \"",
+        "[\"agent\", \"",
+        "[\"workspace\", \"",
+        "[\"worktree\", \"",
+    ];
     let bad: Vec<String> = files
         .iter()
         .filter(|f| !f.ends_with("src/herdr.rs"))
         .flat_map(|f| {
             let text = std::fs::read_to_string(f).unwrap();
-            let lines: Vec<String> = text.lines().enumerate().filter(|(_, l)| heads.iter().any(|h| l.contains(h))).map(|(i, l)| format!("{}:{}: {}", f.display(), i + 1, l.trim())).collect();
+            let lines: Vec<String> = text
+                .lines()
+                .enumerate()
+                .filter(|(_, l)| heads.iter().any(|h| l.contains(h)))
+                .map(|(i, l)| format!("{}:{}: {}", f.display(), i + 1, l.trim()))
+                .collect();
             lines
         })
         .collect();

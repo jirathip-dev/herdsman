@@ -20,13 +20,16 @@ fn live_server(name: &str) -> (herdsman::Ctx, std::net::SocketAddr) {
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.local_addr().unwrap();
     let c2 = c.clone();
-    std::thread::spawn(move || herdsman::serve::serve_on(&c2, &Fake::default().reply("herdr agent list", NO_AGENTS), l, false));
+    std::thread::spawn(move || {
+        herdsman::serve::serve_on(&c2, &Fake::default().reply("herdr agent list", NO_AGENTS), l, false)
+    });
     (c, addr)
 }
 
 fn subscribe(addr: std::net::SocketAddr, host: &str) -> TcpStream {
     let mut s = TcpStream::connect(addr).unwrap();
-    s.write_all(format!("GET /live HTTP/1.1\r\nHost: {host}\r\n\r\n").as_bytes()).unwrap();
+    s.write_all(format!("GET /live HTTP/1.1\r\nHost: {host}\r\n\r\n").as_bytes())
+        .unwrap();
     s.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
     s
 }
@@ -49,17 +52,26 @@ fn live_pushes_one_frag_per_changed_section() {
     let (c, addr) = live_server("live");
     let mut s = subscribe(addr, &addr.to_string());
     let hello = drain(&mut s, 1_500);
-    assert!(hello.starts_with("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n") && hello.ends_with(": ping\n\n"), "{hello}");
+    assert!(
+        hello.starts_with("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n") && hello.ends_with(": ping\n\n"),
+        "{hello}"
+    );
     assert!(!hello.contains("event:"), "nothing changed yet: {hello}");
     let quiet = drain(&mut s, 2_500);
-    assert!(quiet.lines().all(|l| l.is_empty() || l == ": ping"), "no change: pings only: {quiet}");
+    assert!(
+        quiet.lines().all(|l| l.is_empty() || l == ": ping"),
+        "no change: pings only: {quiet}"
+    );
     append(&c.state, &Event::new(T + 5, "sendmeter", None, "note", json!({}))).unwrap();
     let t0 = Instant::now();
     let mut got = String::new();
     while !got.contains("\n\n") && t0.elapsed() < Duration::from_millis(1_500) {
         got += &drain(&mut s, 50);
     }
-    assert!(t0.elapsed() < Duration::from_millis(1_500), "a frag within 1.5 s: {got}");
+    assert!(
+        t0.elapsed() < Duration::from_millis(1_500),
+        "a frag within 1.5 s: {got}"
+    );
     got += &drain(&mut s, 1_200);
     let frags: Vec<&str> = got.lines().filter(|l| l.starts_with("data: ")).collect();
     assert_eq!(got.matches("event: frag").count(), 1, "{got}");
@@ -82,7 +94,10 @@ fn live_caps_clients_and_checks_host() {
     drop(held);
     std::thread::sleep(Duration::from_millis(1_500));
     let mut again = subscribe(addr, &addr.to_string());
-    assert!(drain(&mut again, 300).starts_with("HTTP/1.1 200 OK"), "closed clients free their slots");
+    assert!(
+        drain(&mut again, 300).starts_with("HTTP/1.1 200 OK"),
+        "closed clients free their slots"
+    );
     let all = TcpStream::connect(addr).and_then(|mut s| {
         s.write_all(format!("GET /?frag=all HTTP/1.1\r\nHost: {addr}\r\n\r\n").as_bytes())?;
         let mut b = String::new();
@@ -100,28 +115,78 @@ const PERMISSION: &str = "╭─────────────────
 
 #[test]
 fn prompt_parser_fixtures() {
-    assert_eq!(pending(MENU), Some(("Which database should the meter use?".into(), vec!["SQLite".into(), "Postgres".into(), "Type something.".into()])));
+    assert_eq!(
+        pending(MENU),
+        Some((
+            "Which database should the meter use?".into(),
+            vec!["SQLite".into(), "Postgres".into(), "Type something.".into()]
+        ))
+    );
     let (q, opts) = pending(PERMISSION).unwrap();
     assert_eq!(q, "Do you want to proceed?");
-    assert_eq!(opts, ["Yes", "Yes, and don't ask again for cargo", "No, and tell Claude what to do"]);
-    assert_eq!(pending("⏺ Done with the migration.\n\nShould I also update the README?\n\n> \n"), Some(("Should I also update the README?".into(), vec![])));
-    assert_eq!(pending("dsh> cargo build\n   Compiling herdsman\n    Finished dev\ndsh> "), None, "dsh pane");
+    assert_eq!(
+        opts,
+        [
+            "Yes",
+            "Yes, and don't ask again for cargo",
+            "No, and tell Claude what to do"
+        ]
+    );
+    assert_eq!(
+        pending("⏺ Done with the migration.\n\nShould I also update the README?\n\n> \n"),
+        Some(("Should I also update the README?".into(), vec![]))
+    );
+    assert_eq!(
+        pending("dsh> cargo build\n   Compiling herdsman\n    Finished dev\ndsh> "),
+        None,
+        "dsh pane"
+    );
     // A numbered list in Claude's own reply (no `❯` cursor) is not a menu.
     assert_eq!(pending("Plan:\n1. Read the spec\n2. Write the code\n"), None);
-    for junk in ["", "\n\n\n", "❯", "❯ 1.", "1. \n2. ", "❯ 99999999999999999999. x\n2. y", "\u{0}\u{1b}[2J?", "│││", "❯ 2. b\n❯ 1. a"] {
+    for junk in [
+        "",
+        "\n\n\n",
+        "❯",
+        "❯ 1.",
+        "1. \n2. ",
+        "❯ 99999999999999999999. x\n2. y",
+        "\u{0}\u{1b}[2J?",
+        "│││",
+        "❯ 2. b\n❯ 1. a",
+    ] {
         let _ = pending(junk);
     }
-    assert_eq!(pending("❯ 2. b\n  1. a\nWhich?"), Some(("Which?".into(), vec![])), "out of order: no menu, never a guess");
+    assert_eq!(
+        pending("❯ 2. b\n  1. a\nWhich?"),
+        Some(("Which?".into(), vec![])),
+        "out of order: no menu, never a guess"
+    );
 }
 
 /// sendmeter-impl-12 (claude) blocked on a permission prompt; sendmeter-rev-9-r1 too.
 fn blocked(name: &str, screens: &[&str]) -> (herdsman::Ctx, Fake) {
     let c = ctx(&tmpdir(name), CONFIG);
     for (issue, role, agent) in [(12, "impl", "sendmeter-impl-12"), (9, "rev", "sendmeter-rev-9-r1")] {
-        append(&c.state, &Event::new(T - 100, "sendmeter", Some(issue), "spawn", json!({"role": role, "agent": agent, "harness": "claude"}))).unwrap();
+        append(
+            &c.state,
+            &Event::new(
+                T - 100,
+                "sendmeter",
+                Some(issue),
+                "spawn",
+                json!({"role": role, "agent": agent, "harness": "claude"}),
+            ),
+        )
+        .unwrap();
     }
-    let list = agents(&[("sendmeter-impl-12", "blocked", "/x", "w1:p2"), ("sendmeter-rev-9-r1", "blocked", "/x", "w1:p3")]);
-    let mut r = Fake::default().reply("herdr agent list", &list).reply("herdr workspace list", "{}").reply("herdr pane send-keys", "");
+    let list = agents(&[
+        ("sendmeter-impl-12", "blocked", "/x", "w1:p2"),
+        ("sendmeter-rev-9-r1", "blocked", "/x", "w1:p3"),
+    ]);
+    let mut r = Fake::default()
+        .reply("herdr agent list", &list)
+        .reply("herdr workspace list", "{}")
+        .reply("herdr pane send-keys", "");
     for s in screens {
         r = r.once("herdr pane read", 0, s);
     }
@@ -129,7 +194,10 @@ fn blocked(name: &str, screens: &[&str]) -> (herdsman::Ctx, Fake) {
 }
 
 fn req(s: &Server, method: &str, path: &str, body: &str, extra: &str) -> String {
-    let r = format!("{method} {path} HTTP/1.1\r\nHost: {ADDR}\r\n{extra}Content-Length: {}\r\n\r\n{body}", body.len());
+    let r = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {ADDR}\r\n{extra}Content-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
     String::from_utf8_lossy(&s.respond(&r, T)).into_owned()
 }
 
@@ -151,31 +219,77 @@ fn answer_sends_the_digit_and_logs_no_question() {
     let page = req(&s, "GET", "/", "", &ck);
     let needs = &page[page.find("<div id=needs>").unwrap()..page.find("<main>").unwrap()];
     let h = shown_h(needs);
-    assert!(needs.contains("Do you want to proceed?") && needs.contains(&format!("<button type=button class=pick value=2 data-h={h}>2. Yes, and don")), "{needs}");
+    assert!(
+        needs.contains("Do you want to proceed?")
+            && needs.contains(&format!(
+                "<button type=button class=pick value=2 data-h={h}>2. Yes, and don"
+            )),
+        "{needs}"
+    );
     assert!(needs.contains("data-ask=\"sendmeter-impl-12\""), "{needs}");
     let res = req(&s, "POST", "/answer", "agent=sendmeter-impl-12&choice=2", "");
     assert!(res.starts_with("HTTP/1.1 401 "), "no device cookie: {res}");
     assert!(!r.called("herdr pane send-keys"));
-    let foreign = req(&s, "POST", "/answer", "agent=sendmeter-impl-12&choice=2", &format!("{ck}Origin: https://evil.example\r\n"));
+    let foreign = req(
+        &s,
+        "POST",
+        "/answer",
+        "agent=sendmeter-impl-12&choice=2",
+        &format!("{ck}Origin: https://evil.example\r\n"),
+    );
     assert!(foreign.starts_with("HTTP/1.1 403 "), "{foreign}");
     for bad in ["0", "4", "12", "2%0A", "Enter"] {
-        let res = req(&s, "POST", "/answer", &format!("agent=sendmeter-impl-12&choice={bad}"), &ck);
+        let res = req(
+            &s,
+            "POST",
+            "/answer",
+            &format!("agent=sendmeter-impl-12&choice={bad}"),
+            &ck,
+        );
         assert!(res.contains("REFUSED BAD_VALUE"), "{bad}: {res}");
     }
     assert!(!r.called("herdr pane send-keys"), "never a guessed key");
     for screen in [PERMISSION, "⏺ Bash(cargo test --all)\n  ⎿ ok"] {
-        r.onces.borrow_mut().push(("herdr pane read".into(), herdsman::runner::Out { code: 0, stdout: screen.into(), stderr: String::new() }));
+        r.onces.borrow_mut().push((
+            "herdr pane read".into(),
+            herdsman::runner::Out {
+                code: 0,
+                stdout: screen.into(),
+                stderr: String::new(),
+            },
+        ));
     }
-    let res = req(&s, "POST", "/answer", &format!("agent=sendmeter-impl-12&choice=2&h={h}"), &ck);
-    assert!(res.starts_with("HTTP/1.1 200 OK") && res.contains("sent to sendmeter-impl-12"), "{res}");
+    let res = req(
+        &s,
+        "POST",
+        "/answer",
+        &format!("agent=sendmeter-impl-12&choice=2&h={h}"),
+        &ck,
+    );
+    assert!(
+        res.starts_with("HTTP/1.1 200 OK") && res.contains("sent to sendmeter-impl-12"),
+        "{res}"
+    );
     assert_eq!(r.count("herdr pane send-keys"), 1);
     assert!(r.called("herdr pane send-keys w1:p2 2"));
     let e = read(&c.state).unwrap().pop().unwrap();
     assert_eq!((e.kind.as_str(), e.issue), ("answer", Some(12)));
-    assert_eq!(serde_json::Value::Object(e.data.clone()), json!({"via": "web", "agent": "sendmeter-impl-12", "device": e.str("device").unwrap(), "choice": "2"}));
-    assert!(!std::fs::read_to_string(&c.state).unwrap().contains("proceed"), "never the question text");
+    assert_eq!(
+        serde_json::Value::Object(e.data.clone()),
+        json!({"via": "web", "agent": "sendmeter-impl-12", "device": e.str("device").unwrap(), "choice": "2"})
+    );
+    assert!(
+        !std::fs::read_to_string(&c.state).unwrap().contains("proceed"),
+        "never the question text"
+    );
     // The prompt is still there after the key: "still waiting". A reviewer may answer a permission prompt.
-    let res = req(&s, "POST", "/answer", &format!("agent=sendmeter-rev-9-r1&choice=1&h={h}"), &ck);
+    let res = req(
+        &s,
+        "POST",
+        "/answer",
+        &format!("agent=sendmeter-rev-9-r1&choice=1&h={h}"),
+        &ck,
+    );
     assert!(res.contains("still waiting: sendmeter-rev-9-r1"), "{res}");
     assert!(r.called("herdr pane send-keys w1:p3 1"));
 }
@@ -189,23 +303,71 @@ fn answer_refuses_a_changed_menu_and_rerenders_fresh() {
     let ck = cookie(&s, &c);
     let h = shown_h(&req(&s, "GET", "/", "", &ck));
     let b = PERMISSION.replace("for cargo  ", "for git    ");
-    r.onces.borrow_mut().push(("herdr pane read".into(), herdsman::runner::Out { code: 0, stdout: b, stderr: String::new() }));
-    let res = req(&s, "POST", "/answer", &format!("agent=sendmeter-impl-12&choice=2&h={h}"), &ck);
+    r.onces.borrow_mut().push((
+        "herdr pane read".into(),
+        herdsman::runner::Out {
+            code: 0,
+            stdout: b,
+            stderr: String::new(),
+        },
+    ));
+    let res = req(
+        &s,
+        "POST",
+        "/answer",
+        &format!("agent=sendmeter-impl-12&choice=2&h={h}"),
+        &ck,
+    );
     assert!(res.contains("REFUSED STALE: menu changed — refreshed"), "{res}");
-    assert_eq!(r.count("herdr pane send-keys"), 0, "menu A tapped, menu B on the pane: no key");
+    assert_eq!(
+        r.count("herdr pane send-keys"),
+        0,
+        "menu A tapped, menu B on the pane: no key"
+    );
     let res = req(&s, "POST", "/answer", "agent=sendmeter-impl-12&choice=2", &ck);
     assert!(res.contains("REFUSED STALE"), "no h: {res}");
     assert_eq!(r.count("herdr pane send-keys"), 0);
     let reads = r.count("herdr pane read");
-    r.onces.borrow_mut().push(("herdr pane read".into(), herdsman::runner::Out { code: 0, stdout: PERMISSION.into(), stderr: String::new() }));
-    r.onces.borrow_mut().push(("herdr pane read".into(), herdsman::runner::Out { code: 0, stdout: "⏺ Bash(cargo test --all)\n  ⎿ ok".into(), stderr: String::new() }));
-    r.onces.borrow_mut().push(("herdr pane read".into(), herdsman::runner::Out { code: 0, stdout: "⏺ Bash(cargo test --all)\n  ⎿ ok".into(), stderr: String::new() }));
-    let res = req(&s, "POST", "/answer", &format!("agent=sendmeter-impl-12&choice=2&h={h}"), &ck);
-    assert!(res.contains("sent to sendmeter-impl-12") && r.called("herdr pane send-keys w1:p2 2"), "same menu: the digit: {res}");
+    r.onces.borrow_mut().push((
+        "herdr pane read".into(),
+        herdsman::runner::Out {
+            code: 0,
+            stdout: PERMISSION.into(),
+            stderr: String::new(),
+        },
+    ));
+    r.onces.borrow_mut().push((
+        "herdr pane read".into(),
+        herdsman::runner::Out {
+            code: 0,
+            stdout: "⏺ Bash(cargo test --all)\n  ⎿ ok".into(),
+            stderr: String::new(),
+        },
+    ));
+    r.onces.borrow_mut().push((
+        "herdr pane read".into(),
+        herdsman::runner::Out {
+            code: 0,
+            stdout: "⏺ Bash(cargo test --all)\n  ⎿ ok".into(),
+            stderr: String::new(),
+        },
+    ));
+    let res = req(
+        &s,
+        "POST",
+        "/answer",
+        &format!("agent=sendmeter-impl-12&choice=2&h={h}"),
+        &ck,
+    );
+    assert!(
+        res.contains("sent to sendmeter-impl-12") && r.called("herdr pane send-keys w1:p2 2"),
+        "same menu: the digit: {res}"
+    );
     // Same second (cache TTLs not expired): the page still reads the pane afresh and drops the old buttons.
     let page = req(&s, "GET", "/", "", &ck);
     assert!(r.count("herdr pane read") > reads + 2, "a fresh read after the send");
-    let card = &page[page.find("data-ask=\"sendmeter-impl-12\"").unwrap()..page.find("data-ask=\"sendmeter-rev-9-r1\"").unwrap()];
+    let card = &page
+        [page.find("data-ask=\"sendmeter-impl-12\"").unwrap()..page.find("data-ask=\"sendmeter-rev-9-r1\"").unwrap()];
     assert!(!card.contains("class=pick") && card.contains("⎿ ok"), "{card}");
 }
 
@@ -223,13 +385,22 @@ fn answer_refuses_reviewer_menus_and_unparsed_panes() {
 
 #[test]
 fn unparsed_blocked_pane_shows_masked_tail_and_reply() {
-    let (c, r) = blocked("tail", &["l1\nl2\nl3\nl4\nl5\nl6\nl7 token=ghp_abcdefghijklmnopqrstuvwxyz0123456789\nl8"]);
+    let (c, r) = blocked(
+        "tail",
+        &["l1\nl2\nl3\nl4\nl5\nl6\nl7 token=ghp_abcdefghijklmnopqrstuvwxyz0123456789\nl8"],
+    );
     let s = Server::new(&c, &r, Some(ADDR.into()));
     let ck = cookie(&s, &c);
     let page = req(&s, "GET", "/", "", &ck);
     let needs = &page[page.find("<div id=needs>").unwrap()..page.find("<main>").unwrap()];
-    assert!(needs.contains("<pre>l3\nl4") && needs.contains("class=rp>Reply") && !needs.contains("l2\n"), "{needs}");
-    assert!(!needs.contains("ghp_abcdefghijklmnopqrstuvwxyz0123456789"), "masked: {needs}");
+    assert!(
+        needs.contains("<pre>l3\nl4") && needs.contains("class=rp>Reply") && !needs.contains("l2\n"),
+        "{needs}"
+    );
+    assert!(
+        !needs.contains("ghp_abcdefghijklmnopqrstuvwxyz0123456789"),
+        "masked: {needs}"
+    );
 }
 
 /// The PR's 390 px screenshots (fixture config): the sync dot's three states, a pull in
@@ -249,7 +420,8 @@ fn live_board_fits_390px() {
     let d = tmpdir("live-png");
     let file = d.join("page.html");
     std::fs::write(&file, &page[page.find("<!doctype").unwrap()..]).unwrap();
-    let stub = "window.fetch = async u => new Response(u === '/answer' ? 'sent to sendmeter-impl-12' : '{}', {status: 200})";
+    let stub =
+        "window.fetch = async u => new Response(u === '/answer' ? 'sent to sendmeter-impl-12' : '{}', {status: 200})";
     let scenes = [
         ("sync-green", "queue", "sync('g'); pulse()".to_string()),
         ("sync-amber", "queue", "sync('a')".into()),
@@ -262,11 +434,28 @@ fn live_board_fits_390px() {
     let dir = std::env::var("HERDSMAN_SNAPSHOTS").ok();
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/webview.swift");
     for (name, tab, js) in scenes {
-        let png = dir.as_ref().map_or(d.join(format!("{name}.png")), |p| std::path::Path::new(p).join(format!("{name}.png")));
-        let o = swift().args([script, file.to_str().unwrap(), "390", tab, "horse", png.to_str().unwrap(), &js]).output().unwrap();
+        let png = dir.as_ref().map_or(d.join(format!("{name}.png")), |p| {
+            std::path::Path::new(p).join(format!("{name}.png"))
+        });
+        let o = swift()
+            .args([
+                script,
+                file.to_str().unwrap(),
+                "390",
+                tab,
+                "horse",
+                png.to_str().unwrap(),
+                &js,
+            ])
+            .output()
+            .unwrap();
         let out = String::from_utf8_lossy(&o.stdout);
         let w: Vec<u32> = out.split_whitespace().filter_map(|n| n.parse().ok()).collect();
-        assert!(o.status.success() && w.len() == 2, "{name}: {out} {}", String::from_utf8_lossy(&o.stderr));
+        assert!(
+            o.status.success() && w.len() == 2,
+            "{name}: {out} {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
         assert!(w[0] <= 390 && w[1] == 390, "{name}: scrollWidth {} at {}", w[0], w[1]);
     }
 }
@@ -278,11 +467,24 @@ fn unpaired_viewers_see_no_pane_text() {
     let (c, r) = blocked("unpaired", &[]);
     let s = Server::new(&c, &r, Some(ADDR.into()));
     let ck = cookie(&s, &c);
-    let pane = ["proceed", "class=pick", "class=rp", "cargo test --all", "don&#39;t ask", "don't ask"];
+    let pane = [
+        "proceed",
+        "class=pick",
+        "class=rp",
+        "cargo test --all",
+        "don&#39;t ask",
+        "don't ask",
+    ];
     for path in ["/", "/?frag=all"] {
         let res = req(&s, "GET", path, "", "");
-        assert!(pane.iter().all(|p| !res.contains(p)) && res.contains("pair this phone to answer"), "{path}: {res}");
-        assert!(req(&s, "GET", path, "", &ck).contains("Do you want to proceed?"), "{path} paired");
+        assert!(
+            pane.iter().all(|p| !res.contains(p)) && res.contains("pair this phone to answer"),
+            "{path}: {res}"
+        );
+        assert!(
+            req(&s, "GET", path, "", &ck).contains("Do you want to proceed?"),
+            "{path} paired"
+        );
     }
     // /live: the blocked lane appears after the watcher's first look; each audience gets its own render.
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -291,15 +493,22 @@ fn unpaired_viewers_see_no_pane_text() {
     std::thread::spawn(move || herdsman::serve::serve_on(&c2, &r.once("herdr agent list", 0, NO_AGENTS), l, false));
     let sub = |extra: &str| {
         let mut s = TcpStream::connect(addr).unwrap();
-        s.write_all(format!("GET /live HTTP/1.1\r\nHost: {addr}\r\n{extra}\r\n").as_bytes()).unwrap();
+        s.write_all(format!("GET /live HTTP/1.1\r\nHost: {addr}\r\n{extra}\r\n").as_bytes())
+            .unwrap();
         s.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
         s
     };
     let (mut anon, mut dev) = (sub(""), sub(&ck));
     let (a, d) = (drain(&mut anon, 4_000), drain(&mut dev, 500));
-    assert!(a.contains("\"id\":\"needs\"") && a.contains("pair this phone to answer"), "{a}");
+    assert!(
+        a.contains("\"id\":\"needs\"") && a.contains("pair this phone to answer"),
+        "{a}"
+    );
     assert!(pane.iter().all(|p| !a.contains(p)), "unpaired stream: {a}");
-    assert!(d.contains("Do you want to proceed?") && d.contains("class=pick"), "paired stream: {d}");
+    assert!(
+        d.contains("Do you want to proceed?") && d.contains("class=pick"),
+        "paired stream: {d}"
+    );
     // The device is removed: its stream closes before the next push, so no more pane text reaches it.
     herdsman::devices::store(&c, &[]).unwrap();
     append(&c.state, &Event::new(T + 5, "sendmeter", None, "note", json!({}))).unwrap();
@@ -314,12 +523,16 @@ fn the_sampler_thread_fills_the_host() {
     let c = ctx(&tmpdir("sampler"), CONFIG);
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.local_addr().unwrap();
-    let r = Fake::default().reply("herdr agent list", NO_AGENTS).reply("vm_stat", "Swapouts: 100.\n").reply("sysctl", "4\n");
+    let r = Fake::default()
+        .reply("herdr agent list", NO_AGENTS)
+        .reply("vm_stat", "Swapouts: 100.\n")
+        .reply("sysctl", "4\n");
     std::thread::spawn(move || herdsman::serve::serve_on(&c, &r, l, false));
     let end = Instant::now() + Duration::from_secs(5);
     loop {
         let mut s = TcpStream::connect(addr).unwrap();
-        s.write_all(format!("GET /herd.json HTTP/1.1\r\nHost: {addr}\r\n\r\n").as_bytes()).unwrap();
+        s.write_all(format!("GET /herd.json HTTP/1.1\r\nHost: {addr}\r\n\r\n").as_bytes())
+            .unwrap();
         let mut out = String::new();
         s.read_to_string(&mut out).unwrap();
         if out.contains(r#""pressure":"critical""#) {

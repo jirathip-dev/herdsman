@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 use herdsman::runner::{Out, Runner};
 use herdsman::Ctx;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub const CONFIG: &str = r#"# fleet config (test)
 [fleet.sendmeter]
@@ -66,15 +66,36 @@ pub struct Fake {
 
 impl Fake {
     pub fn reply(mut self, prefix: &str, stdout: &str) -> Self {
-        self.replies.push((prefix.into(), Out { code: 0, stdout: stdout.into(), stderr: String::new() }));
+        self.replies.push((
+            prefix.into(),
+            Out {
+                code: 0,
+                stdout: stdout.into(),
+                stderr: String::new(),
+            },
+        ));
         self
     }
     pub fn once(self, prefix: &str, code: i32, stdout: &str) -> Self {
-        self.onces.borrow_mut().push((prefix.into(), Out { code, stdout: stdout.into(), stderr: String::new() }));
+        self.onces.borrow_mut().push((
+            prefix.into(),
+            Out {
+                code,
+                stdout: stdout.into(),
+                stderr: String::new(),
+            },
+        ));
         self
     }
     pub fn once_err(self, prefix: &str, code: i32, stderr: &str) -> Self {
-        self.onces.borrow_mut().push((prefix.into(), Out { code, stdout: String::new(), stderr: stderr.into() }));
+        self.onces.borrow_mut().push((
+            prefix.into(),
+            Out {
+                code,
+                stdout: String::new(),
+                stderr: stderr.into(),
+            },
+        ));
         self
     }
     pub fn called(&self, prefix: &str) -> bool {
@@ -101,7 +122,11 @@ impl Runner for Fake {
                 return Ok(o.clone());
             }
         }
-        Ok(Out { code: 1, stdout: String::new(), stderr: format!("unscripted: {line}") })
+        Ok(Out {
+            code: 1,
+            stdout: String::new(),
+            stderr: format!("unscripted: {line}"),
+        })
     }
     fn sleep(&self, secs: u64) {
         self.calls.borrow_mut().push(format!("sleep {secs}"));
@@ -180,15 +205,28 @@ pub fn swift() -> std::process::Command {
 
 /// #59: pair a browser at `now` as the page does (Pair → `serve approve <code>` → claim): its `Cookie:` line.
 pub fn pair(s: &herdsman::serve::Server, c: &Ctx, ua: &str, now: u64) -> String {
-    let post = |path: &str, extra: &str| String::from_utf8_lossy(&s.respond(&format!("POST {path} HTTP/1.1\r\nHost: 127.0.0.1:7777\r\n{extra}Content-Length: 0\r\n\r\n"), now)).into_owned();
+    let post = |path: &str, extra: &str| {
+        String::from_utf8_lossy(&s.respond(
+            &format!("POST {path} HTTP/1.1\r\nHost: 127.0.0.1:7777\r\n{extra}Content-Length: 0\r\n\r\n"),
+            now,
+        ))
+        .into_owned()
+    };
     let res = post("/pair/request", &format!("User-Agent: {ua}\r\n"));
     assert!(res.starts_with("HTTP/1.1 200 OK"), "{res}");
     let code = res.rsplit("\r\n\r\n").next().unwrap().trim().to_string();
     let set = res.lines().find_map(|l| l.strip_prefix("Set-Cookie: ")).unwrap();
     let cookie = format!("Cookie: {}\r\n", &set[..set.find(';').unwrap()]);
-    let (rc, out) = run(&Ctx { now, ..c.clone() }, &Fake::default(), &["serve", "approve", &code]);
+    let (rc, out) = run(
+        &Ctx { now, ..c.clone() },
+        &Fake::default(),
+        &["serve", "approve", &code],
+    );
     assert_eq!(rc, 0, "{out}");
     let res = post("/pair/claim", &cookie);
-    assert!(res.starts_with("HTTP/1.1 200 OK") && res.contains("Max-Age=31536000"), "{res}");
+    assert!(
+        res.starts_with("HTTP/1.1 200 OK") && res.contains("Max-Age=31536000"),
+        "{res}"
+    );
     cookie
 }
