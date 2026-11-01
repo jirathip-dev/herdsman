@@ -557,6 +557,39 @@ fn secret_flags_real_shapes_only() {
             "TELEGRAM_BOT_TOKEN=123456789:AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d".into(),
             "123456789:AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d".into(),
         ),
+        (
+            "const SECRET_KEY: &str = \"h7Gk2pQ9xLm4vB8nR3tZ\";".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "    SECRET_KEY: &str = \"h7Gk2pQ9xLm4vB8nR3tZ\",".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "const API_KEY: string = \"h7Gk2pQ9xLm4vB8nR3tZ\";".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "let apiKey: String = \"h7Gk2pQ9xLm4vB8nR3tZ\"".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "let url = \"bot123456789:AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d\";".into(),
+            "123456789:AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d".into(),
+        ),
+        (
+            "https://api.telegram.org/bot123456789:AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d/sendMessage".into(),
+            "123456789:AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d".into(),
+        ),
+        ("id = ASIAIOSFODNN7EXAMPLE".into(), "ASIAIOSFODNN7EXAMPLE".into()),
+        (
+            "Authorization: Bearer h7Gk2pQ9xLm4vB8nR3tZ".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "  \"authorization\": \"Bearer h7Gk2pQ9xLm4vB8nR3tZ\",".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
     ] {
         assert_eq!(secret(&bad), Some(v.as_str()), "{bad}");
     }
