@@ -173,7 +173,7 @@ enum Cmd {
     },
     /// One pass of the loop for `driver = "herdsman"` fleets: do every step that's due, then exit; safe from cron
     Drive { fleet: Option<String> },
-    /// Alert once per state on stall, lane-dead, ready-unmerged, orch-holding, ask-waiting; nudge an idle orch; idempotent, safe from cron
+    /// Alert once per state on stall, lane-dead, ready-unmerged, orch-holding, ask-waiting, orphan-lane; nudge an idle orch; idempotent, safe from cron
     Check,
     /// Each `[accounts]` account: ok / capped until hh:mm, and the lanes on it (names only, never tokens)
     Accounts {
@@ -199,6 +199,8 @@ enum Cmd {
     },
     /// Send Esc to an agent's pane (it pauses); logs `stop`
     Stop { agent: String },
+    /// Close the pane of a herdr agent that is not a herdsman lane (IS_LANE for lanes); files and worktrees stay
+    Close { agent: String },
     /// Close an agent's pane, pushing unpushed or dirty work to `wip/<agent>-<stamp>` first; the worktree stays. Dry run unless --yes
     Kill {
         agent: String,
@@ -436,7 +438,12 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                         .iter()
                         .flatten()
                         .find(|(x, _)| x.fleet == s.fleet && x.issue == s.issue)
-                        .map_or("-", |w| w.1.what.as_str());
+                        .map(|w| w.1.what.clone())
+                        .or_else(|| {
+                            let skip = queue::skipped(&events, &all, &s.fleet, s.issue, ctx.now);
+                            skip.map(|(c, why)| format!("skipped this pass: {c} ({why})"))
+                        })
+                        .unwrap_or_else(|| "-".into());
                     writeln!(out, "{:<5} {w}", status_line(s, ctx.now))?;
                 }
                 write!(out, "{}", serial.concat())?;
@@ -633,6 +640,7 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                     check::clean(ctx, &cfg, r, out, fleet.as_deref(), (None, lane.as_deref()), yes)?;
                 }
                 Cmd::Stop { agent } => check::stop(ctx, &cfg, r, out, &agent)?,
+                Cmd::Close { agent } => check::close(ctx, &cfg, r, out, &agent)?,
                 Cmd::Kill { agent, yes } => check::kill(ctx, &cfg, r, out, &agent, yes)?,
                 Cmd::Verdict {
                     fleet,

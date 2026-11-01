@@ -30,7 +30,7 @@ queued → impl → review(n) → fix(n) → ready → merged; plus blocked, nee
 - BAD_VALUE: set: a value is empty or has a quote/backslash/control char, or the model is not in `models`; ask: an empty question, over 4 options
 - NO_SUCH_ASK / ALREADY_ANSWERED: answer: the fleet has no such ask id, or it was answered already
 - STALE: serve: fleet.toml changed since the page was rendered; reload and retry
-- NO_SUCH_AGENT / SECRET_IN_WIP / SNAPSHOT_FAILED / UNSAFE_CLEAN: stop/kill: no such live lane; kill: a secret-looking value in the wip diff, or the wip snapshot failed (index restored, nothing pushed, pane stays); clean --lane: not merged/closed, dirty, unpushed or live
+- NO_SUCH_AGENT / IS_LANE / SECRET_IN_WIP / SNAPSHOT_FAILED / UNSAFE_CLEAN: stop/kill: no such live lane; close: a logged lane (use stop/kill/clean); kill: a secret-looking value in the wip diff, or the wip snapshot failed (index restored, nothing pushed, pane stays); clean --lane: not merged/closed, dirty, unpushed or live
 - MCP_FORBIDDEN: spawn/profiles sync: a role's `mcp` names a server matching `mcp_deny` (default `*prod*`)
 
 ## Exit codes
@@ -55,7 +55,7 @@ an `account-capped` one waits `cap_reset_minutes` or `herdsman accounts reset <n
 ## Events
 
 `herdsman check` emits `stall`, `lane-dead`, `ready-unmerged`, `account-capped` (limit banner), `orch-holding` (orch idle >15 min,
-startable work, no open ask), `ask-waiting` (an ask open >30 min) and `alerts-off` (page alerts, no webpush notifier) once per state; `orch-nudged` (an item waiting on an idle
+startable work, no open ask), `ask-waiting` (an ask open >30 min), `orphan-lane` (a herdr agent named like a lane with no spawn event; `spawn` adopts it) and `alerts-off` (page alerts, no webpush notifier) once per state; `orch-nudged` (an item waiting on an idle
 orch >5 min: its pane gets the exact next command, once per issue, head and state), then `orch-stuck` 10 min later; `herdsman merge` emits
 `evidence-missing` (issue left open) if the evidence comment fails twice. Notifiers get one plain line, or raw event JSON with `format = "json"`. A fleet's own `[[fleet.<name>.notify]]` (same fields)
 replaces the global `[[notify]]` for its events; `notify_global = true` in `[fleet.<name>]` sends to both.

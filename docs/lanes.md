@@ -25,7 +25,9 @@ herdsman clean --yes                  # reclaim merged or closed-issue lanes
 - `WORKTREE_DIRTY`: unpushed or uncommitted work from no known lane.
 - `SERIAL_BUSY`, `CAP`, `MCP_FORBIDDEN`, `MERGED`: see `herdsman help --agent`.
 
-`herdsman stop <agent>` sends Esc (logs `stop`). `herdsman kill <agent>` prints what is lost
+`herdsman close <agent>` closes the pane of a herdr agent that is not a herdsman lane (by name or pane id),
+never touching files or worktrees, and logs a passive `closed-other`; a logged lane is refused `IS_LANE`
+(use stop, kill or clean). `herdsman stop <agent>` sends Esc (logs `stop`). `herdsman kill <agent>` prints what is lost
 (state, unpushed commits, dirty files, open PR); with `--yes` it commits dirty files as `wip: kill
 snapshot`, pushes the branch to `wip/<agent>-<yyyymmdd-hhmm>` (never main/staging, never force;
 refused `SECRET_IN_WIP` when the diff has a secret-looking value), closes the pane and logs
@@ -68,7 +70,7 @@ does one pass, from cron after `herdsman check` ([setup.md](setup.md)) or the bo
 
 | State | Step |
 | --- | --- |
-| `next` offers an issue | `spawn impl` (start) |
+| queued, unblocked, no lane (every such item, in queue order) | `spawn impl` (start) |
 | impl/fix lane idle, head pushed, PR open, not reviewed at that head | `spawn rev` (review) |
 | `verdict.md` written since the rev spawn, first line `PASS` or `FAIL`, rev spawned at the PR head | `verdict --sha <head>` |
 | the same, but the PR head moved since the rev spawn (its logged `sha`) | `spawn rev --supersede` at the new head (review) |
@@ -82,7 +84,10 @@ does one pass, from cron after `herdsman check` ([setup.md](setup.md)) or the bo
 Paused fleets are skipped (no pass, no `last pass`); one fleet's error doesn't skip the others. drive never answers asks (a lane's question stays a needs-you card),
 never passes `--force`, and never bypasses a refusal: `REFUSED` (e.g. `HOST_BUSY`, `CAP`,
 `SERIAL_BUSY`) is printed and logged once per item an hour (cron stays quiet), and the step is retried
-next pass. Every action logs a passive `driven` event (step, command, result). A pass holds
+next pass. Starts fan out: a pass tries every startable item in queue order, each spawn sampling the host
+afresh. An item-specific refusal (`SERIAL_BUSY`, `MCP_FORBIDDEN`, …) skips that item for the pass; it keeps
+its queue place and status reads `skipped this pass: <CODE> (<why>)` (board lane `skip <CODE>`). `CAP` ends
+the fleet's starts; `HOST_BUSY` ends starting for every later fleet in the pass too (same Mac). Every action logs a passive `driven` event (step, command, result). A pass holds
 `<state dir>/drive.lock` (taken over after 30 min), so cron and the button never overlap; the
 board shows `driver: herdsman · last pass <age> ago`.
 

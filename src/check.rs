@@ -23,6 +23,18 @@ fn mergeable(ctx: &Ctx, r: &dyn Runner, cfg: &Config, s: &IssueState) -> Option<
     gate(f, &pr, Some(s), cfg.limits.review_rounds).ok()
 }
 
+/// `(url, prompt)` when the issue's latest amendment is missing from the lane's `.brief.md` (#101).
+fn amendment(ctx: &Ctx, r: &dyn Runner, cfg: &Config, s: &IssueState, wt: &str) -> Option<(String, String)> {
+    let f = cfg.fleet(&s.fleet).ok()?;
+    let brief = std::fs::read_to_string(Path::new(wt).join(".brief.md")).ok()?;
+    let spec = gh::spec(ctx, r, f, &s.fleet, s.issue, true).ok()?;
+    let url = spec["amended"].as_str().filter(|u| !brief.contains(*u))?;
+    let n = s.issue;
+    let fleet = &s.fleet;
+    let line = format!("AMENDMENT on #{n} ({url}): run `herdsman brief {fleet} {n}` and apply it");
+    Some((url.to_string(), line))
+}
+
 /// Each alert's dedup key is built from the issue's last activity: once per state, again after a change.
 pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Result<()> {
     let events = read(&ctx.state)?;
@@ -71,6 +83,16 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
                     capped = Some(name);
                 }
             }
+            if let Some(p) = pane.filter(|_| status.is_some()) {
+                if let Some((url, line)) = wt.and_then(|wt| amendment(ctx, r, cfg, s, wt)) {
+                    let key = format!("{lane}:{url}");
+                    let seen = events.iter().any(|e| e.str("key") == Some(&key));
+                    let dsh = spawned.and_then(|e| e.str("harness")) == Some("dsh");
+                    if !seen && herdr::reply(r, dsh, lane, p, &line).is_ok() {
+                        hits.push(("amended", key, line));
+                    }
+                }
+            }
             if idle > stall && status != Some("working") && !parked {
                 let st = status.unwrap_or("gone");
                 hits.push((
@@ -96,6 +118,18 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
                 d["account"] = json!(capped);
             }
             fire(ctx, cfg, out, &events, (&s.fleet, Some(s.issue)), kind, d)?;
+        }
+    }
+    // #107: a herdr agent named like a lane (`<fleet>-<role>-<n>…`) that no `spawn` event logged; once per agent.
+    for name in agents.iter().flatten().filter_map(|a| a["name"].as_str()) {
+        let lane = cfg.fleet.iter().find_map(|(fl, f)| {
+            let mut w = name.strip_prefix(&format!("{fl}-"))?.split('-');
+            f.role.contains_key(w.next()?).then_some(())?;
+            Some((fl.as_str(), Some(w.next()?.parse().ok()?)))
+        });
+        if let Some(at) = lane.filter(|_| last_spawn(&events, name).is_none()) {
+            let d = json!({"key": name, "reason": format!("herdr agent {name} has no spawn event; spawn adopts it")});
+            fire(ctx, cfg, out, &events, at, "orphan-lane", d)?;
         }
     }
     let open = open_asks(&events);
@@ -468,6 +502,21 @@ pub fn stop(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
         Event::new(ctx.now, &e.fleet, e.issue, "stop", json!({"agent": agent})),
     )?;
     Ok(writeln!(out, "sent Esc to {agent}")?)
+}
+
+/// `herdsman close`: close a non-lane herdr agent's pane (by name or pane id); files stay. Logs `closed-other`.
+pub fn close(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent: &str) -> Result<()> {
+    let (events, agents) = (read(&ctx.state)?, herdr::agents(r)?);
+    let a = agents.iter().find(|a| a["name"] == agent || a["pane_id"] == agent);
+    let name = a.and_then(|a| a["name"].as_str()).unwrap_or(agent);
+    if last_spawn(&events, agent).or(last_spawn(&events, name)).is_some() {
+        return crate::gate::refused("IS_LANE", format!("`{name}` is a lane: use stop, kill or clean"));
+    }
+    let pane = a.and_then(|a| a["pane_id"].as_str()).context("no such herdr agent")?;
+    herdr::close(r, pane)?;
+    let ev = Event::new(ctx.now, "", None, "closed-other", json!({"agent": name}));
+    emit(&ctx.state, cfg, ev)?;
+    Ok(writeln!(out, "closed {name}'s pane; its worktree and files stay")?)
 }
 
 /// `herdsman kill`: the dry-run line (what is lost); with `yes`, unpushed or dirty work goes to

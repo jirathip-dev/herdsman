@@ -255,7 +255,7 @@ fn each_check_fails_with_its_fix_and_exit_one() {
                 r
             },
             "vapid.key",
-            "→ chmod 600",
+            "&& chmod 600",
         ),
         (
             |c, _, r| {
