@@ -824,7 +824,7 @@ impl<'a> Server<'a> {
         Ok(format!("sent to {agent}"))
     }
 
-    /// A sheet action (`herdsman stop|kill|clean --lane`; kill and clean dry-run without `confirm=1`); logs `act` unless a dry run.
+    /// A sheet action (`herdsman stop|kill|clean --lane`, or `close <pane>` for an Others agent; kill and clean dry-run without `confirm=1`); logs `act` unless a dry run.
     fn act(&self, ctx: &Ctx, dev: &devices::Device, f: &BTreeMap<String, String>) -> Result<String> {
         let (g, mut out, cfg) = (
             |k: &str| f.get(k).map_or("", String::as_str),
@@ -833,14 +833,15 @@ impl<'a> Server<'a> {
         );
         let (agent, yes) = (g("agent"), g("confirm") == "1");
         let sp = crate::events::last_spawn(&read(&ctx.state)?, agent).map(|e| (e.fleet.clone(), e.issue));
-        let Some((fleet, issue)) = sp else {
+        let Some((fleet, issue)) = sp.or_else(|| (g("op") == "close").then(|| (String::new(), None))) else {
             return refused("NO_SUCH_AGENT", format!("no lane `{agent}` in the log"));
         };
         match g("op") {
             "stop" => crate::check::stop(ctx, &cfg, self.r, &mut out, agent)?,
             "kill" => crate::check::kill(ctx, &cfg, self.r, &mut out, agent, yes)?,
             "clean" => crate::check::clean(ctx, &cfg, self.r, &mut out, Some(&fleet), (None, Some(agent)), yes)?,
-            op => return refused("BAD_VALUE", format!("op is stop, kill or clean, not `{op}`")),
+            "close" => crate::check::close(ctx, &cfg, self.r, &mut out, agent)?,
+            op => return refused("BAD_VALUE", format!("op is stop, kill, clean or close, not `{op}`")),
         }
         if yes || g("op") == "stop" {
             let d = serde_json::json!({"via": "web", "agent": agent, "device": dev.label, "op": g("op")});
@@ -864,7 +865,7 @@ impl<'a> Server<'a> {
         let page = &all[..all.len().saturating_sub(before)];
         // `recent` is herdr's whole window: a short read (or the 2000 clamp) means nothing older.
         let more = all.len() == before + lines && before + lines <= 2000;
-        Some(serde_json::json!({"harness": l.harness, "turns": lanes::turns(page), "before": before + page.len(), "more": more}).to_string())
+        Some(serde_json::json!({"harness": l.harness, "acts": if l.role == "other" { &["close"][..] } else { &["stop", "kill", "clean"] }, "pane": (l.role == "other").then_some(&l.pane), "turns": lanes::turns(page), "before": before + page.len(), "more": more}).to_string())
     }
 
     /// Run one form write; the line shown on the page (CLI output, or `REFUSED <CODE>: …` via `shown`).

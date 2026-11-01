@@ -62,7 +62,11 @@ The sheet header has **Stop** (`herdsman stop`: Esc, the agent pauses), **Kill**
 `herdsman kill`'s dry-run line, e.g. `impl-42 · impl · 3 unpushed commit(s), 0 dirty file(s) →
 wip/… · pane closes, worktree kept`) and **Clean** (`herdsman clean <fleet> --lane <agent>`;
 disabled with the reason under the actions, e.g. "only after merge (PR #42 open)", "live agent";
-a lane with no pane hides Stop and Kill and reads no transcript). Each POSTs `/act {agent, op, confirm}`:
+a lane with no pane hides Stop and Kill and reads no transcript). An Others agent (a herdr agent that is no
+herdsman lane) gets none of the three: one **Close pane** asks "close <agent>'s pane? its worktree and files
+stay", then POSTs `/act {agent: <pane>, op: close}` (`herdsman close`), and `p.st` reads "not a herdsman lane:
+herdsman can only close its pane"; read-only pages and unpaired phones don't get it. The sheet JSON names the
+actions: `"acts": ["close"]` (with `"pane"`) for Others, `["stop", "kill", "clean"]` for lanes. Each POSTs `/act {agent, op, confirm}`:
 a paired device, the Host/Origin checks and the 10-a-minute limit, logged
 `{"type":"act","via":"web","agent","device","op"}` (dry runs are not logged). Typing `/` first in
 the reply box lists `/stop`, `/kill`, `/clean` (the actions) and `/compact`, `/clear`, `/status`
