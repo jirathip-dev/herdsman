@@ -43,6 +43,9 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
         .map_err(|e| eprintln!("herdsman check: herdr agent list failed ({e:#}); skipping lane checks"))
         .ok();
     let stall = cfg.limits.stall_minutes * 60;
+    for name in cfg.fleet.keys() {
+        let _ = crate::overlap::preview(ctx, cfg, r, name, &events);
+    }
     for s in fold(&events).values().filter(|s| s.state != "merged") {
         let idle = ctx.now.saturating_sub(s.last_ts);
         let mut hits = vec![];
@@ -449,7 +452,7 @@ pub fn clean(
     Ok(())
 }
 
-const BUILD_DIRS: [&str; 4] = ["target", "node_modules", ".next", "dist"];
+const BUILD_DIRS: &[&str] = &["target", "node_modules", ".next", "dist"];
 /// #103: delete a lane's build folders, even when the worktree stays; the bytes freed. One git does not ignore stays.
 fn purge(r: &dyn Runner, out: &mut dyn Write, wt: &Path) -> Result<u64> {
     let mut freed = 0;
@@ -633,7 +636,7 @@ pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
         };
         let snap = || -> Result<String> {
             git(&["add", "-A"])?;
-            git(&[&["reset", "-q", "--"][..], &OWN_FILES].concat())?;
+            git(&[&["reset", "-q", "--"][..], OWN_FILES].concat())?;
             Ok(git(&["diff", "--cached"])? + &git(&["log", "-p", "--format=", "HEAD", "--not", "--remotes"])?)
         };
         let diff = match snap() {

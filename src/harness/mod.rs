@@ -15,13 +15,13 @@ pub use hermes::set_mcp;
 pub const NAMES: [&str; 3] = ["claude", "hermes", "dsh"];
 
 /// Effort levels a role may set (`effort = "…"`).
-pub const EFFORTS: [&str; 5] = ["none", "low", "medium", "high", "xhigh"];
+pub const EFFORTS: &[&str] = &["none", "low", "medium", "high", "xhigh"];
 
 /// The levels `harness` takes: Claude `--effort` (`none` omits it), Hermes `--reasoning`; dsh none yet.
 pub fn efforts(harness: &str) -> &'static [&'static str] {
     match harness {
         "dsh" => &["none"],
-        _ => &EFFORTS,
+        _ => EFFORTS,
     }
 }
 

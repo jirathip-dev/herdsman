@@ -84,6 +84,16 @@ pub fn waiting_on(
         return w("orch", what, c.ts, cmd("spawn", &format!(" {role} --supersede")));
     }
     let pushed = pr["headRefOid"].as_str().unwrap_or_default();
+    // #129: an auto-update moves the head without new work, so a review of the head it updated still stands.
+    let mut base = pushed;
+    let update = |to: &str| {
+        events
+            .iter()
+            .find(|e| e.is("auto-updated", f, n) && e.str("to") == Some(to))
+    };
+    while let Some(e) = update(base) {
+        base = e.str("from").unwrap_or_default();
+    }
     // #102: a PASSed PR conflicting with / behind integration gets an update lane; its pushed head is reviewed first.
     let how = match (pr["mergeable"].as_str(), pr["mergeStateStatus"].as_str()) {
         (Some("CONFLICTING"), _) => "conflicts with",
@@ -106,7 +116,7 @@ pub fn waiting_on(
         // The exact command, or none (no nudge) while the verdict word or the head sha is unknown.
         "review" => match rev {
             // #92: a verdict is for the head the rev lane was spawned at; a moved PR head gets a fresh reviewer.
-            Some(_) if head.is_some_and(|h| !pushed.is_empty() && h.0 != pushed) => {
+            Some(_) if head.is_some_and(|h| !pushed.is_empty() && h.0 != base) => {
                 let what = format!(
                     "verdict is for {:.7}, the PR head moved to {pushed:.7}: review again",
                     head.unwrap_or_default().0
@@ -114,7 +124,7 @@ pub fn waiting_on(
                 w("orch", &what, s.last_ts, cmd("spawn", " rev --supersede"))
             }
             Some((path, v)) => {
-                let at = head.is_some_and(|h| h.0 == pushed);
+                let at = head.is_some_and(|h| h.0 == base);
                 let next = (matches!(v, "PASS" | "FAIL") && at)
                     .then(|| format!("herdsman verdict {f} {n} {v} --sha {pushed} --file {path}"));
                 w(

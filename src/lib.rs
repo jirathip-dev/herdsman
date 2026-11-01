@@ -26,6 +26,7 @@ pub mod herdr;
 pub mod hook;
 pub mod host;
 pub mod lanes;
+pub mod overlap;
 pub mod protection;
 pub mod queue;
 pub mod runner;
@@ -36,7 +37,7 @@ pub mod waiting;
 pub mod webpush;
 
 use anyhow::{bail, Result};
-pub use cli::{main_with, usage_doc};
+pub use cli::{main_with, usage_doc, HELP_AGENT_MAX};
 use config::{home, set_in, set_value, write_atomic, Config};
 use events::{emit, read, Event};
 use serde_json::{json, Value};

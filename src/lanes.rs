@@ -123,7 +123,7 @@ fn from_spawn(e: &Event, l: Lane) -> Lane {
 }
 
 /// Section order on the page; any other herdr state (unknown) counts as idle.
-pub const SECTIONS: [&str; 6] = ["blocked", "working", "idle", "done", "parked", "dead"];
+pub const SECTIONS: &[&str] = &["blocked", "working", "idle", "done", "parked", "dead"];
 
 pub type Groups<'a> = Vec<(&'static str, Vec<(String, Vec<&'a Lane>)>)>;
 
@@ -155,7 +155,7 @@ pub fn group(all: &[Lane], changed: impl Fn(&Lane) -> u64) -> Groups<'_> {
 }
 
 const HIDE: &str = "•••";
-pub const PREFIXES: [&str; 8] = ["sk-", "ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "xox", "xapp-"];
+pub const PREFIXES: &[&str] = &["sk-", "ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "xox", "xapp-"];
 
 /// Mask secret-looking runs: `PREFIXES` tokens, JWTs, 32+ char hex/base64, `*KEY=`/`*TOKEN=`/`*SECRET=` values.
 pub fn mask(s: &str) -> String {
@@ -204,7 +204,7 @@ fn word(w: &str) -> (String, bool) {
 }
 
 /// #105, one set for every harness: ≥ 20 rule glyphs in a row make a divider; detail glyphs open a status's lines.
-const GLYPHS: [&str; 2] = ["─━═╌┄▔▁", "⎿┊│"];
+const GLYPHS: &[&str] = &["─━═╌┄▔▁", "⎿┊│"];
 
 /// Box-drawing rules, prompts and status bars: no activity there.
 fn chrome(l: &str) -> bool {
