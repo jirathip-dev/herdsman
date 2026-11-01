@@ -382,6 +382,9 @@ pub struct Opts {
     /// Kill the live agent / unfinished lane in the way, then spawn (logged)
     #[arg(long)]
     pub supersede: bool,
+    /// Fix round that merges the integration branch into a conflicting or behind PR
+    #[arg(long)]
+    pub update: bool,
 }
 
 pub fn spawn(
@@ -450,6 +453,15 @@ pub fn spawn(
     if let Some(n) = issue {
         lane_admit(f, &events, fleet, n, role)?;
     }
+    // #102: an update is a fix round; past `review_rounds` it goes to a human.
+    let rounds = issue
+        .and_then(|n| fold(&events).remove(&(fleet.into(), n)))
+        .map_or(0, |s| s.rounds);
+    if o.update && rounds >= cfg.limits.review_rounds {
+        let why = format!("PR still conflicts after round {rounds}/{}", cfg.limits.review_rounds);
+        event("needs-human", json!({"code": "ROUND_LIMIT", "reason": why}))?;
+        return refused("ROUND_LIMIT", why);
+    }
 
     // Host-load gate, before anything is created.
     if let Err(why) = host::admit(&host::sample(r), &cfg.limits) {
@@ -505,10 +517,16 @@ pub fn spawn(
             let fix = last
                 .filter(|e| role == "impl" && e.str("verdict") == Some("FAIL"))
                 .and_then(|e| e.str("body"));
+            // #102: an update round's instructions follow the spec (and any decisions).
+            let update = o
+                .update
+                .then(|| format!(include_str!("../roles/brief-update.md"), f.integration));
             let decided = events
                 .iter()
                 .filter(|e| e.is("decision", fleet, n))
-                .map(|e| format!("\n\n{}", plain(e)));
+                .map(plain)
+                .chain(update)
+                .map(|t| format!("\n\n{t}"));
             (
                 created,
                 brief(f, n, &p, title, &decided.fold(body.to_string(), |b, d| b + &d), fix),
