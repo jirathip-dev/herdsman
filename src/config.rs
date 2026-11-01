@@ -106,6 +106,9 @@ pub struct Fleet {
     /// The only checks merge, `check` and `wait` look at (latest run of each); empty = all.
     #[serde(default)]
     pub required_checks: Vec<String>,
+    /// #150: a label the PR needs for its full CI (e.g. `merge-ready`), kept on it exactly while a PASS stands at its
+    /// head; unset = none.
+    pub merge_label: Option<String>,
     /// Optional caps on concurrent impl/fix and review lanes (CAP); unset = no cap.
     pub max_impl: Option<usize>,
     pub max_rev: Option<usize>,

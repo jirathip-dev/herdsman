@@ -8,7 +8,8 @@ use serde_json::{json, Value};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const PR_FIELDS: &str = "number,title,state,baseRefName,headRefOid,mergeable,mergeStateStatus,statusCheckRollup";
+pub const PR_FIELDS: &str =
+    "number,title,state,baseRefName,headRefOid,mergeable,mergeStateStatus,statusCheckRollup,labels";
 pub const PR_TTL: u64 = 60;
 const SPEC_FIELDS: &str = "title,body,updatedAt,comments";
 
@@ -158,6 +159,11 @@ pub fn diff_names(
 /// Drop the cached PR read (after fleet changed the PR itself).
 pub fn forget_pr(ctx: &Ctx, fleet: &str, issue: u64) {
     let _ = std::fs::remove_file(cache_path(ctx, "pr", fleet, issue));
+}
+
+/// The PR view carries label `name`.
+pub fn has_label(pr: &Value, name: &str) -> bool {
+    pr["labels"].as_array().into_iter().flatten().any(|l| l["name"] == name)
 }
 
 /// One check of a statusCheckRollup: green | pending | failed | missing.

@@ -830,3 +830,95 @@ fn host_busy_stops_the_pass_and_cap_stops_starting() {
     assert_eq!((state_of(&c, 1), state_of(&c, 3)), ("impl".into(), "queued".into()));
     idle(&c, &fan_fake(&working(&c, &[1])));
 }
+
+/// A PR view (CI: the full run not reported yet) carrying `labels`.
+fn labelled_pr(head: &str, labels: &[&str]) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(&pr(head, "pending")).unwrap();
+    v["labels"] = json!(labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>());
+    v.to_string()
+}
+
+#[test]
+fn a_pass_at_the_head_gets_the_merge_label_once_and_a_moved_head_loses_it() {
+    let dir = tmpdir("drive-label");
+    let cfg = CONFIG.replace(
+        "integration = \"staging\"",
+        "integration = \"staging\"\ndriver = \"herdsman\"\nmerge_label = \"merge-ready\"",
+    );
+    let c = ctx(&dir, &cfg);
+    lane(&c, 10, "impl", "sendmeter-impl-12", "gone-12");
+    std::fs::remove_dir_all(c.worktrees.join("sendmeter/gone-12")).unwrap();
+    let (head, moved) = (sha("abc"), sha("def"));
+    let file = dir.join("verdict.md");
+    std::fs::write(&file, "PASS\nall good\n").unwrap();
+    let add = "gh pr edit 100 -R jirathip-dev/sendmeter --add-label merge-ready";
+    let kinds = |k: &str| read(&c.state).unwrap().iter().filter(|e| e.kind == k).count();
+    // PASS at the head: labelled once, by the verdict itself.
+    let r = fake(NO_AGENTS)
+        .reply("gh pr view issue-12", &labelled_pr(&head, &[]))
+        .reply(
+            "gh api repos/jirathip-dev/sendmeter/branches/issue-12",
+            &format!("{head}\n"),
+        )
+        .reply("gh pr edit", "");
+    let f = file.to_string_lossy();
+    let (code, out) = run(
+        &c,
+        &r,
+        &["verdict", "sendmeter", "12", "PASS", "--sha", &head, "--file", &f],
+    );
+    assert_eq!(code, 0, "{out}");
+    assert!(r.called(add), "{out}");
+    assert_eq!(kinds("labelled"), 1);
+    assert_eq!(state(&c), "ready", "labelled is not activity");
+    // The label shows on the PR: the next pass doesn't re-add it.
+    let r = fake(NO_AGENTS)
+        .reply("gh pr view issue-12", &labelled_pr(&head, &["merge-ready"]))
+        .reply("gh pr edit", "");
+    idle(&c, &r);
+    assert!(!r.called("gh pr edit"));
+    // The head moved past the PASS (a fresh PR read, as after 60 s): the label comes off, and is never added back.
+    herdsman::gh::forget_pr(&c, "sendmeter", 12);
+    let r = fake(NO_AGENTS)
+        .reply("gh pr view issue-12", &labelled_pr(&moved, &["merge-ready"]))
+        .reply("gh pr edit", "");
+    let (out, _) = drive(&c, &r);
+    assert!(
+        r.called("gh pr edit 100 -R jirathip-dev/sendmeter --remove-label merge-ready"),
+        "{out}"
+    );
+    assert_eq!((kinds("labelled"), kinds("unlabelled")), (1, 1));
+    herdsman::gh::forget_pr(&c, "sendmeter", 12);
+    let r = fake(NO_AGENTS)
+        .reply("gh pr view issue-12", &labelled_pr(&moved, &[]))
+        .reply("gh pr edit", "");
+    drive(&c, &r);
+    assert!(!r.called("gh pr edit"), "no label for the old PASS");
+    assert_eq!(kinds("labelled"), 1);
+}
+
+#[test]
+fn status_says_a_ready_pr_lacks_the_merge_label() {
+    let c = ctx(
+        &tmpdir("drive-label-status"),
+        &CONFIG.replace(
+            "integration = \"staging\"",
+            "integration = \"staging\"\nmerge_label = \"merge-ready\"",
+        ),
+    );
+    lane(&c, 10, "impl", "sendmeter-impl-12", "gone-12");
+    std::fs::remove_dir_all(c.worktrees.join("sendmeter/gone-12")).unwrap();
+    let head = sha("abc");
+    ev(
+        &c,
+        30,
+        "verdict",
+        json!({"verdict": "PASS", "sha": head, "body": "PASS"}),
+    );
+    let r = fake(NO_AGENTS).reply("gh pr view issue-12", &labelled_pr(&head, &[]));
+    // Prime the PR cache the way a pass does; `status` reads only the cache.
+    run(&c, &r, &["pr", "sendmeter", "12"]);
+    let (code, out) = run(&c, &r, &["status", "sendmeter"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("PR lacks label `merge-ready`"), "{out}");
+}
