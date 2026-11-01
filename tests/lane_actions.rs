@@ -466,6 +466,8 @@ fn secret_flags_real_shapes_only() {
         "let secret_name = \"orch_idle_after_15_min_alert\";",
         "checksum = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
         "a3f9c2e1b7d4058a6e3f9c2e1b7d4058a6e3f9c2 src/x.rs",
+        "    \"integrity\": \"sha512-z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP+DGNKHfuwvY7kxvUdBeoGlODJ6+SfaPg==\",",
+        "    \"apiKey\": \"config_api_key_from_env\",",
     ] {
         assert_eq!(secret(ok), None, "{ok}");
     }
@@ -487,6 +489,47 @@ fn secret_flags_real_shapes_only() {
         (format!("  {pem}"), pem.into()),
         (format!("Authorization: Bearer {jwt}"), jwt.into()),
         ("SECRET=\"h7Gk2pQ9xLm4vB8nR3tZ\"".into(), "h7Gk2pQ9xLm4vB8nR3tZ".into()),
+        (
+            "API_KEY=\"h7Gk2pQ9xLm4vB8nR3tZ\" // prod".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "API_KEY=h7Gk2pQ9xLm4vB8nR3tZ # note".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        (
+            "  \"apiKey\": \"h7Gk2pQ9xLm4vB8nR3tZ\",".into(),
+            "h7Gk2pQ9xLm4vB8nR3tZ".into(),
+        ),
+        ("api_key: h7Gk2pQ9xLm4vB8nR3tZ".into(), "h7Gk2pQ9xLm4vB8nR3tZ".into()),
+        (
+            format!("x = gho_{}", "aB3".repeat(12)),
+            format!("gho_{}", "aB3".repeat(12)),
+        ),
+        (
+            format!("github_pat_11{}", "aB3".repeat(20)),
+            format!("github_pat_11{}", "aB3".repeat(20)),
+        ),
+        (
+            "slack: xoxb-1234567890-abcdefghijkl".into(),
+            "xoxb-1234567890-abcdefghijkl".into(),
+        ),
+        (
+            "slack: xoxa-2-1234567890-abcdefghij".into(),
+            "xoxa-2-1234567890-abcdefghij".into(),
+        ),
+        (
+            "slack: xoxp-1234567890-abcdefghijkl".into(),
+            "xoxp-1234567890-abcdefghijkl".into(),
+        ),
+        (
+            "bot 123456789:AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d ok".into(),
+            "123456789:AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d".into(),
+        ),
+        (
+            "TELEGRAM_BOT_TOKEN=123456789:AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d".into(),
+            "123456789:AAHfK3x9Lm4vB8nR3tZqW7eY2uI5oP1aS6d".into(),
+        ),
     ] {
         assert_eq!(secret(&bad), Some(v.as_str()), "{bad}");
     }
@@ -502,14 +545,15 @@ fn kill_saves_code_and_names_the_secret_line() {
     assert_eq!(run(&c, &r, &["kill", LANE, "--yes"]).0, 0);
     assert!(r.called(&format!("git -C {wt} push origin HEAD:refs/heads/wip/")));
     let bad = format!(
-        "{ok}diff --git a/.env b/.env\n+++ b/.env\n@@ -3,1 +3,2 @@\n A=1\n-B=2\n+SECRET=\"h7Gk2pQ9xLm4vB8nR3tZ\"\n"
+        "{ok}diff --git a/.env b/.env\n+++ b/.env\n@@ -3,1 +3,2 @@\n A=1\n-B=2\n+SECRET=\"h7Gk2pQ9xLm4vB8nR3tZ\" ghp_{}\n",
+        "aB3".repeat(12)
     );
     let (c, wt) = lane("kill-96-bad");
     let r = git(&wt, "", "2\n", &bad);
     let (code, out) = run(&c, &r, &["kill", LANE, "--yes"]);
     assert_eq!(code, 3, "{out}");
     assert!(
-        out.contains("(.env:4: SECRET=\"•••\")") && !out.contains("h7Gk"),
+        out.contains("(.env:4: SECRET=\"•••\" •••)") && !out.contains("h7Gk") && !out.contains("ghp_"),
         "{out}"
     );
     assert!(!r.called(&format!("git -C {wt} push")));

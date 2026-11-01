@@ -559,17 +559,33 @@ pub fn kill(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, agent:
             Err(e) => return undo(e),
         };
         // The first added hunk line (a file header runs `diff --git` → `@@`) with a secret, as `file:line: masked`.
-        let (mut head, mut file, mut n, mut hit) = (false, "", 0, None);
+        let mut head = false;
+        let mut file = "";
+        let mut n = 0;
+        let mut hit = None;
         for l in diff.lines() {
             head = (head || l.starts_with("diff --git ")) && !l.starts_with("@@");
             if let Some((_, h)) = l.strip_prefix("@@ ").and_then(|h| h.split_once('+')) {
                 n = h.split([',', ' ']).next().and_then(|s| s.parse().ok()).unwrap_or(1);
-            } else if head {
-                file = l.strip_prefix("+++ b/").unwrap_or(file);
-            } else if let Some(a) = l.strip_prefix('+') {
-                hit = hit.or(crate::lanes::secret(a).map(|v| format!("{file}:{n}: {}", a.trim().replace(v, "•••"))));
+                continue;
             }
-            n += usize::from(!head && l.starts_with([' ', '+']));
+            if head {
+                file = l.strip_prefix("+++ b/").unwrap_or(file);
+                continue;
+            }
+            let line = n;
+            if l.starts_with(['+', ' ']) {
+                n += 1;
+            }
+            let Some(a) = l.strip_prefix('+') else { continue };
+            // Mask every secret on the line, not only the first.
+            let mut m = a.trim().to_owned();
+            while let Some(v) = crate::lanes::secret(&m) {
+                m = m.replace(v, "•••");
+            }
+            if hit.is_none() && m != a.trim() {
+                hit = Some(format!("{file}:{line}: {m}"));
+            }
         }
         if let Some(hit) = hit {
             let _ = git(&["reset", "-q"]);
