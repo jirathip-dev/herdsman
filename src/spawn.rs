@@ -1,6 +1,6 @@
 //! `herdsman spawn`, `adopt` and `profiles sync` (docs/lanes.md); per-harness parts live in `harness`.
 use crate::access;
-use crate::config::{Config, Fleet, Role};
+use crate::config::{expand, Config, Fleet, Role};
 use crate::events::{emit, fold, plain, read, Event};
 use crate::gate::refused;
 use crate::harness::{self, hook_command};
@@ -85,6 +85,7 @@ pub struct Plan {
     pub lane: String,
     /// Claude lanes: the account name and the shell assignment exporting its token.
     pub account: Option<(String, String)>,
+    pub env: std::collections::BTreeMap<String, String>,
     /// The only MCP servers the lane gets, and the lane-local file Claude reads them from.
     pub mcp: serde_json::Map<String, Value>,
     pub mcp_file: PathBuf,
@@ -94,9 +95,10 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Exports `HERDSMAN_LANE` (and an account's `CLAUDE_CODE_OAUTH_TOKEN`) in the pane's shell for the harness.
+    /// Exports `HERDSMAN_LANE`, the fleet's `env` (and an account's `CLAUDE_CODE_OAUTH_TOKEN`) in the pane's shell.
     pub fn lane_cmd(&self, pane: &str) -> Vec<String> {
         let mut c = herdr::run_argv(pane, &["export", &format!("HERDSMAN_LANE='{}'", self.lane)]);
+        c.extend(self.env.iter().map(|(k, v)| format!("{k}='{}'", expand(v).display())));
         c.extend(self.account.iter().map(|a| a.1.clone()));
         c
     }
@@ -238,6 +240,7 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: Option<u64>, role: &str
         kick,
         lane,
         account,
+        env: f.env.clone(),
         mcp: access::mcp_servers(cfg, f, r)?,
         mcp_file,
         head,
@@ -455,6 +458,10 @@ pub fn spawn(
     }
 
     // Host-load gate, before anything is created.
+    let min = cfg.limits.min_free_gb;
+    if let Some(gb) = host::free_gb(r).filter(|g| *g < min) {
+        return refused("DISK_LOW", format!("{gb:.1} GB free < {min}; `herdsman clean --yes`"));
+    }
     if let Err(why) = host::admit(&host::sample(r), &cfg.limits) {
         if !o.force {
             return refused("HOST_BUSY", format!("{why}; retry later or pass --force"));
@@ -491,6 +498,10 @@ pub fn spawn(
             let open = herdr::worktree_open_argv(&local, &wt);
             let reopen = p.worktree.exists();
             let created = herdr::json(r, &if reopen { open } else { create_argv(&local, &p) })?;
+            let same = |l: &str| std::fs::read(f.local_path().join(l)).ok() == std::fs::read(p.worktree.join(l)).ok();
+            if f.clone_node_modules && !reopen && ["package-lock.json", "pnpm-lock.yaml"].map(same) == [true; 2] {
+                let _ = ok(r, "cp", &["-cR", &format!("{local}/node_modules"), &wt]);
+            }
             if role == "rev" {
                 // #92: a re-review of the same round moves its worktree to the fetched head; the spawn logs that head.
                 if reopen {

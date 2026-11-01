@@ -80,6 +80,25 @@ fn host_busy_on_swapout_rate() {
     assert!(r.called("sleep 2"), "two samples 2 s apart");
 }
 
+/// #103: a fake `df` under `[limits] min_free_gb` (default 10) refuses DISK_LOW; at or over it admits.
+#[test]
+fn disk_low_under_min_free_gb() {
+    let d = tmpdir("disk-low");
+    let c = ctx(&d, CONFIG);
+    let df = |kb: u64| {
+        format!("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk3s1 239362496 9 {kb} 50% /\n")
+    };
+    let r = happy(&c, NO_AGENTS).once("df -k /", 0, &df(9 * 1_048_576));
+    let out = assert_refused(&c, &r, &[], "DISK_LOW");
+    assert!(
+        out.contains("9.0 GB free < 10;") && out.contains("herdsman clean --yes"),
+        "{out}"
+    );
+    let r = happy(&c, NO_AGENTS).once("df -k /", 0, &df(19 * 1_048_576));
+    let (exit, out) = spawn(&c, &r, &[]);
+    assert_eq!(exit, 0, "{out}");
+}
+
 #[test]
 fn host_busy_on_load_per_cpu() {
     let d = tmpdir("host-load");

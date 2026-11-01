@@ -47,6 +47,7 @@ fn kick_with_non_ascii_path_does_not_panic() {
         kick: "Read /Users/日本語/wt/.brief.md and execute it fully.".into(),
         lane: s(),
         account: None,
+        env: Default::default(),
         mcp: Default::default(),
         mcp_file: wt.join(".mcp.lane.json"),
         head: s(),

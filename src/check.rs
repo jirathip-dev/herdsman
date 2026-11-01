@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Head sha of an open PR that passes every merge gate, if any.
 fn mergeable(ctx: &Ctx, r: &dyn Runner, cfg: &Config, s: &IssueState) -> Option<String> {
@@ -315,7 +315,7 @@ pub fn clean(
     let states = fold(&events);
     let agents = host::agents(r).context("cannot list herdr agents; refusing to clean blind")?;
     let mut seen = std::collections::BTreeSet::new();
-    let mut failed = 0;
+    let (mut failed, mut freed) = (0, 0);
     let mut closed = BTreeMap::new();
     // Newest spawn per worktree wins (it has the current pane).
     for e in events
@@ -352,6 +352,7 @@ pub fn clean(
         seen.insert(wt);
         let pane = e.str("pane").unwrap_or_default();
         let keep = if host::live_in(&agents, e.str("agent").unwrap_or_default(), Path::new(wt)).is_empty() {
+            freed += if yes { purge(Path::new(wt)) } else { 0 }; // #103: even when the worktree stays
             dirty(r, Path::new(wt))
         } else {
             Some("live agent".to_string())
@@ -404,11 +405,28 @@ pub fn clean(
     }
     if !yes {
         writeln!(out, "dry run: nothing changed; pass --yes to remove")?;
+    } else if freed > 0 {
+        writeln!(out, "freed {freed} bytes of build folders")?;
     }
     if failed > 0 {
         anyhow::bail!("{failed} worktree(s) could not be removed; see above");
     }
     Ok(())
+}
+
+const BUILD_DIRS: [&str; 4] = ["target", "node_modules", ".next", "dist"];
+/// #103: delete a lane's build folders; the bytes freed.
+fn purge(wt: &Path) -> u64 {
+    let gone = |d: PathBuf| du(&d) * u64::from(std::fs::remove_dir_all(&d).is_ok());
+    BUILD_DIRS.map(|d| gone(wt.join(d))).iter().sum()
+}
+
+/// Bytes under `p` (symlinks not followed); the worktree total for the disk row.
+pub fn du(p: &Path) -> u64 {
+    match std::fs::symlink_metadata(p) {
+        Ok(m) if m.is_dir() => std::fs::read_dir(p).map_or(0, |d| d.flatten().map(|e| du(&e.path())).sum()),
+        m => m.map_or(0, |m| m.len()),
+    }
 }
 
 /// The fleet's closed issue numbers, read once per fleet per run; a failed read is reported and counts as none.

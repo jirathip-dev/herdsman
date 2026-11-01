@@ -264,9 +264,35 @@ fn clean_removes_only_merged_clean_idle_lanes() {
     );
     assert_eq!(kinds(&c, "clean"), 0);
 
+    // #103: build folders go for merged lanes, even kept (unpushed) ones; a live lane keeps its own.
+    let build = |w: &str, d: &str| {
+        let p = std::path::Path::new(w).join(d).join("deep");
+        std::fs::create_dir_all(&p).unwrap();
+        std::fs::write(p.join("blob"), [0u8; 1000]).unwrap();
+        p.parent().unwrap().to_path_buf()
+    };
+    let (gone, kept_wt, live_dir, open_dir) = (
+        build(&a, "target"),
+        build(&unpushed, "node_modules"),
+        build(&live, "target"),
+        build(&open, "dist"),
+    );
+    let (code, dry) = run(&c, &r(), &["clean"]);
+    assert_eq!(code, 0, "{dry}");
+    let all = [&gone, &kept_wt, &live_dir, &open_dir];
+    assert!(
+        all.iter().all(|p| p.exists()) && !dry.contains("freed"),
+        "a dry run frees nothing: {dry}"
+    );
     let r1 = r();
     let (code, done) = run(&c, &r1, &["clean", "--yes"]);
     assert_eq!(code, 0, "{done}");
+    assert!(!gone.exists() && !kept_wt.exists(), "merged lanes' build folders go");
+    assert!(
+        live_dir.exists() && open_dir.exists(),
+        "live and unmerged lanes keep theirs: {done}"
+    );
+    assert!(done.contains("freed 2000 bytes of build folders"), "{done}");
     assert!(r1.called("herdr worktree remove --workspace wA") && r1.called("herdr worktree remove --workspace wB"));
     assert!(r1.called("herdr pane close wA:p1"));
     for ws in ["wC", "wD", "wE"] {
