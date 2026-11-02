@@ -136,6 +136,29 @@
       // `--screenshot` captures the document's top: the shot drops the needs cards so Alerts is in it (the check keeps them).
       if (!DBG.get('check')) { $('#needs').hidden = true; scrollTo(0, 0); }
     },
+    // #154: three needs-you cards through the live path (frag): [later] on one → `1 need you ▸` and 2 cards; [later all]
+    // → the line alone; a tap on it → all 3; a changed card (its question) comes back by itself. Measured as it ends.
+    'needs-later': () => {
+      tab('queue');
+      put('later', '{}');
+      const cards = [...$$('#needs>.ask')].slice(0, 3).map(c => { const x = c.cloneNode(true); x.querySelector('.lat').remove(); x.className = 'ask'; return x; });
+      if (cards.length < 3) return early.push(`${cards.length} needs-you cards in the demo, not 3`);
+      frag('needs', cards.map(c => c.outerHTML).join(''));
+      const line = () => $('#needs').previousElementSibling, shown = () => [...$$('#needs>.ask')].filter(seen).length;
+      const want = (what, text, n) => { const t = seen(line()) ? line().textContent : 'no line'; if (t !== text || shown() !== n) early.push(`${what}: line "${t}", ${shown()} cards, not "${text}" and ${n}`); };
+      want('fresh', 'no line', 3);
+      $('#needs .lat').click();
+      want('[later] on one', '1 need you ▸later all', 2);
+      $('.later .lall').click();
+      want('[later all]', '3 need you ▸later all', 0);
+      $('.later .lo').click();
+      want('tap the line', '3 need you ▾later all', 3);
+      $('.later .lo').click();
+      cards[1].querySelectorAll(':scope>p')[1].textContent += ' (changed)';
+      frag('needs', cards.map(c => c.outerHTML).join(''));
+      want('a changed card', '2 need you ▸later all', 1);
+      if (!seen($$('#needs>.ask')[1])) early.push('the changed card did not come back');
+    },
     events: () => tab('events'),
     herd1: () => { herd(true); light = 'day'; ranch(); }, // #71: day shots, whatever the runner's clock says
     herd2: () => { herd(true); light = 'day'; ranch(); },

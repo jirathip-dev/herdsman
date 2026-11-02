@@ -80,3 +80,4 @@
 @media (prefers-reduced-motion:reduce){.hp{scroll-behavior:auto}.hrain,.hflash{display:none!important}.hr,.fog{transition:none}}
 .hwx{position:fixed;z-index:3;bottom:calc(var(--ctl) + env(safe-area-inset-bottom));left:var(--s2);display:flex;gap:var(--s4);margin:0;padding:0 var(--s2);border-radius:4px;background:#1f2a38f0}
 #herd .hwx .on{background:var(--l);color:var(--bg)}
+.hs+.later{margin:var(--s2);background:#2a1416ee}
