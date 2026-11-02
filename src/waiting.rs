@@ -100,7 +100,18 @@ pub fn waiting_on(
         (_, Some("BEHIND")) => "is behind",
         _ => "",
     };
-    match s.state.split('(').next().unwrap_or_default() {
+    // #148: a PASSed item blocked by CI, mergeability or host load is retried as ready on every pass.
+    let block = events
+        .iter()
+        .rev()
+        .find(|e| e.is("blocked", f, n))
+        .and_then(|e| e.str("code"));
+    let retry = s.state == "blocked" && s.verdicts.last().is_some_and(|v| v.1 == "PASS");
+    let st = match block.filter(|c| ["CI_NOT_GREEN", "NOT_MERGEABLE", "HOST_BUSY"].contains(c)) {
+        Some(_) if retry => "ready",
+        _ => s.state.split('(').next().unwrap_or_default(),
+    };
+    match st {
         "ready" if !how.is_empty() => {
             let what = format!(
                 "conflict: PR #{} {how} {}",

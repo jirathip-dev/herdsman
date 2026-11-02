@@ -243,6 +243,35 @@ fn pass_and_green_ci_merges() {
 }
 
 #[test]
+fn a_blocked_ci_not_green_item_merges_once_ci_turns_green() {
+    let c = setup("drive-blocked-retry");
+    lane(&c, 10, "impl", "sendmeter-impl-12", "gone-12");
+    std::fs::remove_dir_all(c.worktrees.join("sendmeter/gone-12")).unwrap();
+    let head = sha("abc");
+    ev(
+        &c,
+        30,
+        "verdict",
+        json!({"verdict": "PASS", "sha": head, "body": "PASS"}),
+    );
+    ev(
+        &c,
+        40,
+        "blocked",
+        json!({"code": "CI_NOT_GREEN", "reason": "no checks reported"}),
+    );
+    assert_eq!(state(&c), "blocked");
+    let r = fake(NO_AGENTS)
+        .reply("gh pr view issue-12", &pr(&head, "green"))
+        .reply("gh pr merge 100", "")
+        .reply("gh pr view 100", r#"{"mergeCommit":{"oid":"m3rg3"}}"#)
+        .reply("gh issue", "");
+    let (out, steps) = drive(&c, &r);
+    assert_eq!(steps, ["merge"], "{out}");
+    assert_eq!(state(&c), "merged");
+}
+
+#[test]
 fn a_fail_starts_a_fix_round_with_the_findings_verbatim() {
     let c = setup("drive-fix");
     let wt = lane(&c, 10, "impl", "sendmeter-impl-12", "issue-12");

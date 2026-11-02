@@ -203,6 +203,59 @@ fn gate_refuses_a_merge_head_that_adds_its_own_change() {
 }
 
 #[test]
+fn an_auto_updated_head_waits_for_ci_then_merges_on_a_later_pass() {
+    let (_d, seed, mut c, _) = repos("au-ci-pending");
+    lane(&c, &seed, 1, true);
+    lane(&c, &seed, 3, true);
+    let (h1, from) = (head(&seed, "issue-1"), head(&seed, "issue-3"));
+    commit(&seed, "c.txt", "c\n", "staging"); // #1's merge lands on staging
+    let st = |c: &herdsman::Ctx| {
+        fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 3)]
+            .state
+            .clone()
+    };
+    let pass = |c: &herdsman::Ctx, pr3: &str| {
+        let r = Mixed(
+            Fake::default()
+                .reply("gh pr view issue-1 ", &green_pr(1, &h1))
+                .reply("gh pr view issue-3 ", pr3)
+                .reply("gh pr merge", "")
+                .reply("gh pr view 1", &json!({"mergeCommit": {"oid": "m3rg3"}}).to_string())
+                .reply("gh issue", "")
+                .reply("herdr", NO_AGENTS),
+        );
+        let (code, out) = run(c, &r, &["drive"]);
+        assert_eq!(code, 0, "{out}");
+        (r, out)
+    };
+    // #1 merges and #3 is auto-updated; #3's merge waits for the CI of its new head.
+    let (r, out) = pass(&c, &green_pr(3, &from));
+    let to = head(&seed, "issue-3");
+    assert!(
+        out.contains(&format!("sendmeter #3 ready (CI pending at {to:.7})")),
+        "{out}"
+    );
+    assert_eq!(r.0.count("gh pr merge"), 1, "{:?}", r.0.calls.borrow());
+    assert_eq!(st(&c), "ready");
+    // No checks reported at the new head: still ready, a manual merge refused but not blocked.
+    c.now += 120;
+    let none =
+        json!({"number": 13, "state": "OPEN", "baseRefName": "staging", "headRefOid": to, "statusCheckRollup": []});
+    let (r, _) = pass(&c, &none.to_string());
+    assert!(!r.0.called("gh pr merge"));
+    let (code, out) = run(&c, &r, &["merge", "sendmeter", "3"]);
+    assert_eq!(code, 3, "{out}");
+    assert!(out.contains("REFUSED CI_NOT_GREEN"), "{out}");
+    assert_eq!(st(&c), "ready");
+    // Green on the next pass: merged.
+    c.now += 120;
+    let (r, out) = pass(&c, &green_pr(3, &to));
+    let merge = format!("gh pr merge 13 -R jirathip-dev/sendmeter --merge --match-head-commit {to}");
+    assert!(r.0.called(&merge), "{out}");
+    assert_eq!(st(&c), "merged");
+}
+
+#[test]
 fn conflicting_auto_update_spawns_an_update_lane() {
     let (_d, seed, c, cfg) = repos("au-conflict");
     lane(&c, &seed, 1, true);

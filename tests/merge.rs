@@ -74,9 +74,19 @@ fn refuses_when_ci_not_green() {
     let red = json!([{"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "FAILURE"}]);
     let pending = json!([{"__typename": "CheckRun", "name": "test", "status": "IN_PROGRESS", "conclusion": ""}]);
     // A fresh log each time: the PR read is cached for 60 s per issue.
-    for checks in [red, pending, json!([])] {
-        let (_d, c) = setup("ci-red", CONFIG, &[("PASS", HEAD)]);
-        assert_refused(&c, &pr("staging", checks), "CI_NOT_GREEN");
+    let (_d, c) = setup("ci-red", CONFIG, &[("PASS", HEAD)]);
+    assert_refused(&c, &pr("staging", red), "CI_NOT_GREEN");
+    // #148: pending or not yet reported is refused but stays ready, waiting for CI.
+    for checks in [pending, json!([])] {
+        let (_d, c) = setup("ci-pending", CONFIG, &[("PASS", HEAD)]);
+        let r = pr("staging", checks);
+        let (exit, out) = run(&c, &r, &["merge", "sendmeter", "12"]);
+        assert!(exit == 3 && out.contains("REFUSED CI_NOT_GREEN"), "{out}");
+        assert!(!r.called("gh pr merge"));
+        assert_eq!(
+            fold(&read(&c.state).unwrap())[&("sendmeter".to_string(), 12)].state,
+            "ready"
+        );
     }
 }
 
