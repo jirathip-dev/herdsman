@@ -143,6 +143,7 @@ function nh(f) {
 }
 function card(n) {
   const c = here().querySelector(`.hn .ask[data-n="${n}"]`);
+  if (c && c.matches('.lt') && !unfold) { unfold = true; fold(); } // #154: a horse's hidden card unfolds the line
   if (c) { c.scrollIntoView({ block: 'nearest' }); c.animate([{ outline: '2px solid var(--r)' }, { outline: 'none' }], 1500); }
   return c;
 }
@@ -255,6 +256,7 @@ function needs() {
     });
     p.querySelector('.hn').replaceChildren(...mine.map(c => c.cloneNode(true)));
   });
+  fold(); // #154: [later] and the folded line on the copies too
 }
 new MutationObserver(needs).observe($('#needs'), { childList: true, subtree: true });
 

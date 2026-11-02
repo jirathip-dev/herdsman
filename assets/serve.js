@@ -47,7 +47,7 @@ function sync(s) {
   rf.classList.toggle('spin', s === 'a' || busy);
   $('#stale').hidden = s !== 'r';
   $('#stale').textContent = 'last update ' + new Date(last).toTimeString().slice(0, 5);
-  $$('form button, form select, .ask button').forEach(b => b.disabled = s === 'r' || DEMO);
+  $$('form button, form select, .ask button:not(.lat)').forEach(b => b.disabled = s === 'r' || DEMO);
   if (DEMO) $$('input, textarea, .acts button').forEach(b => b.disabled = true);
 }
 function pulse() { dot.classList.remove('p'); void dot.offsetWidth; dot.classList.add('p'); }
@@ -93,6 +93,7 @@ function frag(id, html) {
   last = Date.now();
   alerts();
   if (id === 'lanes') mode(B.dataset.mode);
+  if (id === 'needs') fold();
 }
 // #68: buttons hold labels, never sentences: a control's runtime result is an 11 px `p.st` under it (red on error).
 function note(b, msg, ok) {
@@ -636,6 +637,49 @@ ta.oninput = () => {
 };
 ta.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && matches().length) { e.preventDefault(); pick(matches()[0]); } };
 cmds.onclick = e => { const li = e.target.closest('li'); if (li) pick(li.textContent); };
+// #154: [later] hides a needs-you card on this phone (localStorage `later`: key → {until, sig}) for 12 h, until its
+// content changes, or until it is gone. Hidden cards fold into one red line before their list (#needs, each Herd
+// page's .hn), `n need you ▸ [later all]`; a tap on it shows them in place. View only: the cards stay in the DOM.
+let unfold = false;
+const lget = () => { try { return JSON.parse(get('later')) || {}; } catch (e) { return {}; } };
+// key: the kind plus fleet, issue and agent (the header less its age); sig: a short hash of the rest (verdict, ask id, prompt).
+const ckey = c => (c.dataset.ask ? 'prompt' : c.dataset.n ? 'nh' : 'ask') + ' ' + ((c.querySelector('.m') || {}).textContent || '').split(' · ').filter(s => !/^\d+[smhd]$/.test(s)).join(' · ');
+function csig(c) {
+  const x = c.cloneNode(true);
+  x.querySelectorAll(':scope>p:first-child, .cd, .st, .as, .lat').forEach(e => e.remove());
+  let h = 0;
+  for (const ch of x.textContent.replace(/\b\d+[smhd]\b/g, '') + ((x.querySelector('[name=id]') || {}).value || '')) h = Math.imul(h, 31) + ch.charCodeAt(0) | 0;
+  return (h >>> 0).toString(36);
+}
+function fold() {
+  const st = lget(), now = Date.now(), keep = {};
+  B.classList.toggle('unf', unfold);
+  for (const box of [$('#needs'), ...$$('.hn')]) {
+    let n = 0;
+    for (const c of box.querySelectorAll(':scope>.ask')) {
+      if (!c.querySelector(':scope>.lat')) c.append(Object.assign(document.createElement('button'), { type: 'button', className: 'lat', textContent: 'later' }));
+      const k = ckey(c), e = st[k], off = !!e && e.until > now && e.sig === csig(c);
+      if (off) { keep[k] = e; n++; }
+      c.classList.toggle('lt', off);
+    }
+    let l = box.previousElementSibling;
+    if (!l || !l.matches('.later')) box.before(l = Object.assign(document.createElement('div'), { className: 'later', innerHTML: '<button type=button class=lo></button><button type=button class=lall>later all</button>' }));
+    l.hidden = !n;
+    l.firstChild.textContent = `${n} need you ${unfold ? '▾' : '▸'}`;
+  }
+  put('later', JSON.stringify(keep));
+}
+fold();
+document.addEventListener('click', e => {
+  const b = e.target.closest('.lat, .later button');
+  if (!b) return;
+  const st = lget(), hide = c => { st[ckey(c)] = { until: Date.now() + 12 * 3600e3, sig: csig(c) }; };
+  if (b.matches('.lo')) unfold = !unfold;
+  else if (b.matches('.lat')) hide(b.closest('.ask'));
+  else { b.parentNode.nextElementSibling.querySelectorAll(':scope>.ask' + (unfold ? '' : ':not(.lt)')).forEach(hide); unfold = false; }
+  put('later', JSON.stringify(st));
+  fold();
+});
 // Delegated: rows and needs-you cards are swapped in place. A menu option POSTs `/answer`.
 // #127: a prompt's command expands on tap; `auto-denies in m:ss` counts down from the pane read.
 document.addEventListener('click', e => { const c = e.target.closest('.ask .command'); if (c) c.classList.toggle('open'); });
