@@ -35,8 +35,9 @@ Lazy senior dev: YAGNI, reuse, stdlib first, shortest correct diff.
 
 ## Standing answers (decide, don't ask)
 
-- A line budget over by ≤ 25 % (or ≤ 15 lines) is fine: state the count and why in the PR.
-  Over that, trim first, then `herdsman ask --kind routine`.
+- An issue's line budget is a guide, not a gate. Never ask about it. State `src/ net +N (budget +M)`
+  in the PR body with one line on why. Only the overall cap in `ci/cap.toml` is hard; if your change
+  would break it, trim first, then ask `--kind owner`.
 - Staging moved or conflicts: merge `origin/<integration>` again and push. Repeat as needed
   (no limit inside one round).
 - Staging itself broken by someone else's merge: fix the minimal break in your PR, say
