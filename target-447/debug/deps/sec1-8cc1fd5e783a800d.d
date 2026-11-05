@@ -1,0 +1,11 @@
+/Users/jkmacmini/.herdr/worktrees/herdsman/issue-447/target-447/debug/deps/sec1-8cc1fd5e783a800d.d: /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/lib.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/point.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/error.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/parameters.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/private_key.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/traits.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/../README.md
+
+/Users/jkmacmini/.herdr/worktrees/herdsman/issue-447/target-447/debug/deps/libsec1-8cc1fd5e783a800d.rmeta: /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/lib.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/point.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/error.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/parameters.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/private_key.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/traits.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/../README.md
+
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/lib.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/point.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/error.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/parameters.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/private_key.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/traits.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sec1-0.8.1/src/../README.md:

@@ -1,0 +1,11 @@
+/Users/jkmacmini/.herdr/worktrees/herdsman/issue-447/target-447/debug/deps/ts_rs-543ec6d3b2764e97.d: /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/lib.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/export.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/export/error.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/export/path.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/serde_json.rs
+
+/Users/jkmacmini/.herdr/worktrees/herdsman/issue-447/target-447/debug/deps/libts_rs-543ec6d3b2764e97.rlib: /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/lib.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/export.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/export/error.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/export/path.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/serde_json.rs
+
+/Users/jkmacmini/.herdr/worktrees/herdsman/issue-447/target-447/debug/deps/libts_rs-543ec6d3b2764e97.rmeta: /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/lib.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/export.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/export/error.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/export/path.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/serde_json.rs
+
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/lib.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/export.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/export/error.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/export/path.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ts-rs-12.0.1/src/serde_json.rs:

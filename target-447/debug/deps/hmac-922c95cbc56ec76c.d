@@ -1,0 +1,10 @@
+/Users/jkmacmini/.herdr/worktrees/herdsman/issue-447/target-447/debug/deps/hmac-922c95cbc56ec76c.d: /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/lib.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/block_api.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/simple.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/simple_reset.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/utils.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/../README.md
+
+/Users/jkmacmini/.herdr/worktrees/herdsman/issue-447/target-447/debug/deps/libhmac-922c95cbc56ec76c.rmeta: /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/lib.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/block_api.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/simple.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/simple_reset.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/utils.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/../README.md
+
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/lib.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/block_api.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/simple.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/simple_reset.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/utils.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hmac-0.13.0/src/../README.md:
