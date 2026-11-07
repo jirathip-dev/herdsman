@@ -244,6 +244,9 @@ fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, rows: &mut Vec<String>) {
         let line = format!("timer — {label} {state} → herdsman timer install (the owner or a conductor)");
         row(rows, state == "loaded", '✗', &line);
     }
+    if cfg.shed().is_some() {
+        shed_rows(ctx, cfg, r, rows);
+    }
     // #235: each enabled remote host's health, its failures as rows `host <name> <check>`.
     for (name, h) in cfg.hosts.iter().filter(|h| h.1.enabled) {
         let Some(m) = h.machine.as_deref() else { continue };
@@ -286,4 +289,36 @@ pub fn serve_plist(ctx: &Ctx) -> Option<std::path::PathBuf> {
     let serves = |text: String| text.contains("herdsman") && text.contains("<string>serve</string>");
     let mut plists = agents.into_iter().flatten().flatten().map(|entry| entry.path());
     plists.find(|plist| std::fs::read_to_string(plist).is_ok_and(serves))
+}
+
+/// #600: shed, and each ACP adapter's command (`shed agents --json`), on the PATH the timer's jobs run with.
+fn shed_rows(ctx: &Ctx, cfg: &Config, r: &dyn Runner, rows: &mut Vec<String>) {
+    let path = crate::timer::job_path(ctx, cfg, r);
+    let find = |b: &str| path.split(':').map(|d| Path::new(d).join(b)).find(|p| p.is_file());
+    rows.push(find("shed").map_or_else(
+        || "✗ shed — not on the timer's PATH → herdsman timer install from a shell where `which shed` finds it".into(),
+        |p| format!("✓ shed — {} on the timer's PATH", p.display()),
+    ));
+    let ids: BTreeSet<String> = cfg.fleet.keys().filter_map(|n| cfg.shed_for(n)?.acp).collect();
+    let agents = ids
+        .first()
+        .and_then(|_| crate::shed::cli(r, &["agents", "--json"]).ok());
+    let agents: serde_json::Value = agents
+        .and_then(|o| serde_json::from_str(&o.stdout).ok())
+        .unwrap_or_default();
+    for id in ids {
+        let a = agents.as_array().into_iter().flatten().find(|a| a["id"] == id.as_str());
+        let Some(cmd) = a.and_then(|a| a["cmd"][0].as_str()) else {
+            rows.push(format!("✗ shed agent {id} — not installed → shed agents add {id}"));
+            continue;
+        };
+        let found = if cmd.contains('/') {
+            Path::new(cmd).is_file()
+        } else {
+            find(cmd).is_some()
+        };
+        let line =
+            format!("shed agent {id} — {cmd} not on the timer's PATH → install {cmd} in a folder on it ({path})");
+        row(rows, found, '✗', &line);
+    }
 }

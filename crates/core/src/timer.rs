@@ -121,13 +121,28 @@ pub fn drift(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> Vec<(&'static str, &'st
     JOBS.map(state).to_vec()
 }
 
-/// The jobs' PATH: the dirs of the harness binaries, `gh`, `herdr` and herdsman, then the system dirs
+/// #600: the PATH the tick job runs with: its installed file's, else the one `install` would write.
+pub fn job_path(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> String {
+    let file = &expect(ctx, cfg, JOBS[0].0, JOBS[0].1, "")[0].0;
+    let key = if MAC {
+        "<key>PATH</key><string>"
+    } else {
+        "Environment=PATH="
+    };
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let got = text
+        .split_once(key)
+        .and_then(|(_, t)| t.split(['<', '\n']).next().map(String::from));
+    got.unwrap_or_else(|| path(ctx, cfg, r))
+}
+
+/// The jobs' PATH: the dirs of the harness binaries, `gh`, `herdr`, `shed` (#600) and herdsman, then the system dirs
 /// (`/usr/sbin:/sbin` for `sysctl` and `vm_stat`, the #30 lesson).
 fn path(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> String {
     let roles = cfg.fleet.values().flat_map(|f| f.role.values());
     let found = roles
         .map(|role| role.harness.as_str())
-        .chain(["gh", herdr::BIN, "cargo"]) // #557: `self-update` builds with cargo
+        .chain(["gh", herdr::BIN, "shed", "cargo"]) // #557: `self-update` builds with cargo
         .filter_map(|b| ok(r, "which", &[b]).ok());
     let dir = |p: String| Some(Path::new(p.trim()).parent()?.to_string_lossy().into_owned());
     let mut dirs: Vec<String> = found.chain([ctx.exe.clone()]).filter_map(dir).collect();

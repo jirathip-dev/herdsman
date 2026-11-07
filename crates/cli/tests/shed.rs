@@ -244,6 +244,7 @@ fn spawn_fake() -> Fake {
         .once("git -C /tmp/does-not-matter/sendmeter rev-parse --verify", 1, "")
         .reply("gh issue view 12", r#"{"title":"Fix the meter","body":"AC: it works"}"#)
         .reply("git -C", "")
+        .reply("which shed", "/opt/shed/bin/shed\n")
 }
 
 #[test]
@@ -261,7 +262,7 @@ fn a_lane_spawns_on_shed() {
 
     let (code, out) = run(
         &c,
-        &Fake::default(),
+        &Fake::default().reply("which shed", "/opt/shed/bin/shed\n"),
         &["spawn", "sendmeter", "12", "impl", "--dry-run", "--json"],
     );
     assert_eq!(code, 0, "{out}");
@@ -570,6 +571,54 @@ fn an_unguardable_acp_lane_refuses_to_start() {
         assert!(code == 3 && out.contains("ACP_UNGUARDED"), "the dry run too: {out}");
     }
     assert!(b.methods().is_empty(), "{:?}", b.methods());
+}
+
+/// #600: drive's launchd PATH had no shed: spawn named it before making anything, doctor checks the timer's PATH
+/// (shed and the ACP adapter's command), and `timer install` puts the resolved shed's folder on it.
+#[test]
+fn a_missing_shed_is_named_by_spawn_and_doctor_and_timer_install_adds_it() {
+    let b = Server::new(shed::proto::VERSION, vec![]);
+    let c = acp_ctx("shed-missing", &acp_config(&b.sock, "claude", true));
+    let f = acp_fake(&["no-such-adapter-600"]).once("which shed", 1, "");
+    let (code, out) = run(&c, &f, &["spawn", "sendmeter", "12", "impl"]);
+    assert_eq!(code, 3, "{out}");
+    assert!(out.contains("REFUSED SHED_MISSING: shed is not on PATH ("), "{out}");
+    assert!(!out.contains("os error 2"), "{out}");
+    assert!(!c.worktrees.join("sendmeter/issue-12").exists(), "no worktree");
+    assert!(!f.called("shed ") && !f.called("git"), "{:?}", f.calls.borrow());
+
+    // The timer's PATH (as installed, no shed resolved) lacks shed: doctor names it, and the adapter's command.
+    let agents = json!([{"id": "claude-acp", "cmd": ["no-such-adapter-600"]}]);
+    let none = Fake::default().reply("shed agents --json", &agents.to_string());
+    assert_eq!(run(&c, &none, &["timer", "install", "--no-load"]).0, 0);
+    let (_, out) = run(&c, &none, &["doctor"]);
+    assert!(out.contains("✗ shed — not on the timer's PATH → "), "{out}");
+    assert!(
+        out.contains("✗ shed agent claude-acp — no-such-adapter-600 not on the timer's PATH → "),
+        "{out}"
+    );
+
+    // `timer install` from a shell where shed resolves puts its folder on the jobs' PATH; doctor is satisfied.
+    let bin = c.home.join("cargo-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(bin.join("shed"), "").unwrap();
+    let r = none.reply("which shed", &format!("{}\n", bin.join("shed").display()));
+    assert_eq!(run(&c, &r, &["timer", "install", "--no-load"]).0, 0);
+    let job = [
+        "Library/LaunchAgents/dev.herdsman.tick.plist",
+        ".config/systemd/user/dev.herdsman.tick.service",
+    ];
+    let text = job
+        .iter()
+        .find_map(|j| std::fs::read_to_string(c.home.join(j)).ok())
+        .unwrap();
+    let path = text.split_once("PATH").unwrap().1;
+    assert!(path.contains(&format!("{}:", bin.display())), "{text}");
+    let (_, out) = run(&c, &r, &["doctor"]);
+    assert!(
+        out.contains(&format!("✓ shed — {} on the timer's PATH", bin.join("shed").display())),
+        "{out}"
+    );
 }
 
 #[test]

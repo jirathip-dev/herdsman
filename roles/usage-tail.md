@@ -35,7 +35,7 @@ A fleet with `[fleet.<n>.role.verify]` adds a verify check after rev's PASS (sta
 - STALE: serve: fleet.toml changed since the page was rendered; reload and retry
 - NO_SUCH_AGENT / IS_LANE / SECRET_IN_WIP / SNAPSHOT_FAILED / UNSAFE_CLEAN: stop/kill: no such live lane; close: a logged lane (use stop/kill/clean); kill: a secret-looking value in the wip diff, or the wip snapshot failed (index restored, nothing pushed, pane stays); clean --lane: not merged/closed, dirty, unpushed or live
 - DESIGN_MAIN_ONLY: spawn: a design lane runs on the main host only; `--host` or a role `host` pin named another
-- MCP_FORBIDDEN: spawn/profiles sync: a role's `mcp` names a server matching `mcp_deny` (default `*prod*`). ACP_UNGUARDED: spawn: an ACP lane (`shed-acp`) herdsman's hook would not guard (an adapter that runs no hook, no synced hook, no account token, another host) does not start
+- MCP_FORBIDDEN: spawn/profiles sync: a role's `mcp` names a server matching `mcp_deny` (default `*prod*`). ACP_UNGUARDED: spawn: an ACP lane (`shed-acp`) herdsman's hook would not guard (an adapter that runs no hook, no synced hook, no account token, another host) does not start. SHED_MISSING: spawn: a shed runtime's `shed` is not on the spawning PATH (drive's is the timer's); nothing is made
 
 ## Lessons
 

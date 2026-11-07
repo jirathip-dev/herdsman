@@ -760,6 +760,12 @@ pub fn spawn(
         let wire = on.shed().map_or(b.wire.clone(), |w| w.wire);
         herdr::Shed(crate::shed::Shed { wire, ..b })
     });
+    // #600: drive's PATH is the timer's; a shed it lacks is named before anything is made.
+    if bt.is_some() && on.machine.is_none() && ok(r, "which", &["shed"]).is_err() {
+        let path = std::env::var("PATH").unwrap_or_default();
+        let fix = "`herdsman timer install` from a shell where `which shed` finds it";
+        return refused("SHED_MISSING", format!("shed is not on PATH ({path}); {fix}"));
+    }
     let acp_id = bt.as_ref().and_then(|b| b.0.acp.clone());
     let n = round(&read(&ctx.state)?, fleet, issue, &p);
     let labels = labels(&p, acp_id.as_ref().map(|_| (f, n)));
