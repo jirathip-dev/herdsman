@@ -3,10 +3,12 @@ use crate::config::Config;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields = nullable))]
@@ -455,6 +457,141 @@ pub const PASSIVE: &[&str] = &[
     "failed",
 ];
 
+/// #584: an ask's endings, the first that applies naming why it closed.
+const ORDER: [&str; 7] = [
+    "answered",
+    "withdrawn",
+    "delivered",
+    "failed",
+    "expired",
+    "closed: merged",
+    "closed: lane gone",
+];
+
+/// #632: events indexed and (ask, event) pairs checked: the ask endings' work, counted.
+pub static VISITS: AtomicUsize = AtomicUsize::new(0);
+
+/// #632: every ask's ending (`closes`' rules, `ORDER`'s choice), one pass over the log, one event at a time (`add`).
+#[derive(Default, Clone)]
+pub struct Asks {
+    /// By the ask's position: its ending (rank in `ORDER`, the closing event's position); `None` while open.
+    ends: BTreeMap<usize, Option<(usize, usize)>>,
+    /// The asks an event naming (0 id | 1 issue | 2 agent, fleet, value) can still end better.
+    by: HashMap<(u8, String, Option<String>), Vec<usize>>,
+    /// The first `spawn-started` of each (agent, pane).
+    started: HashMap<(Option<String>, Option<String>), usize>,
+}
+
+impl Asks {
+    /// Index `events`' last event.
+    pub fn add(&mut self, events: &[Event]) {
+        let Some((e, i)) = events.last().map(|e| (e, events.len() - 1)) else {
+            return;
+        };
+        VISITS.fetch_add(1, Relaxed);
+        let s = |k: &str| e.str(k).map(String::from);
+        let key = |t: u8, v: Option<String>| (t, e.fleet.clone(), v);
+        let issue = e.issue.map(|n| n.to_string());
+        if e.kind == "spawn-started" {
+            self.started.entry((s("agent"), s("pane"))).or_insert(i);
+        } else if e.kind == "needs-decision" {
+            self.ends.insert(i, None);
+            let keys = [key(0, s("id")), key(2, s("agent"))]
+                .into_iter()
+                .chain(issue.clone().map(|n| key(1, Some(n))));
+            keys.for_each(|k| self.by.entry(k).or_default().push(i));
+        }
+        let (t, v) = match e.kind.as_str() {
+            "decision" | "ask-withdrawn" | "ask-delivered" | "ask-failed" | "ask-expired" => (0, s("id")),
+            "merged" | "clean" if issue.is_some() => (1, issue),
+            "spawn" | "lane-killed" => (2, s("agent")),
+            _ => return,
+        };
+        let Some(list) = self.by.get_mut(&key(t, v)) else {
+            return;
+        };
+        let first = self.started.get(&(s("agent"), s("pane"))).copied();
+        for &a in list.iter() {
+            let w = closes(&events[a], e, || first.is_some_and(|f| f < a));
+            let r = ORDER.iter().position(|o| Some(*o) == w).unwrap_or(ORDER.len());
+            let end = self.ends.entry(a).or_default();
+            if r < end.map_or(ORDER.len(), |x| x.0) {
+                *end = Some((r, i));
+            }
+        }
+        // An id can still answer, an issue still merge (over a lane gone), an agent only end an open ask.
+        let floor = [0, 5, 6][usize::from(t)];
+        list.retain(|a| self.ends[a].is_none_or(|x| x.0 > floor));
+    }
+
+    /// The asks of `events` (this index's) still open, oldest first.
+    fn open<'a>(&self, events: &'a [Event]) -> Vec<&'a Event> {
+        self.ends
+            .iter()
+            .filter(|x| x.1.is_none())
+            .map(|x| &events[*x.0])
+            .collect()
+    }
+}
+
+/// #632: `f` on `events`' ask index: the cached `log`'s when `events` is it, else built in one pass.
+fn index<T>(events: &[Event], f: impl FnOnce(&Asks) -> T) -> T {
+    let logs = LOGS.lock().unwrap_or_else(PoisonError::into_inner);
+    let hit = logs
+        .values()
+        .find(|l| std::ptr::eq(l.events.as_slice(), events))
+        .cloned();
+    drop(logs);
+    if let Some(l) = hit {
+        return f(&l.asks);
+    }
+    let mut x = Asks::default();
+    (1..=events.len()).for_each(|n| x.add(&events[..n]));
+    f(&x)
+}
+
+/// #632: the live log (`read`), its ask index and fold, cached per log by its last seq: a new event is read and
+/// folded alone (an archived one since, `rotate`: all again).
+#[derive(Default, Clone)]
+pub struct Log {
+    pub events: Vec<Event>,
+    pub asks: Asks,
+    pub states: States,
+    seq: u64,
+}
+
+impl std::ops::Deref for Log {
+    type Target = [Event];
+    fn deref(&self) -> &[Event] {
+        &self.events
+    }
+}
+
+static LOGS: Mutex<BTreeMap<PathBuf, Arc<Log>>> = Mutex::new(BTreeMap::new());
+
+/// #632: the cached `Log` of `path` (by its database: a demo's scratch one apart), brought up to its last seq.
+pub fn log(path: &Path) -> Result<Arc<Log>> {
+    let mut logs = LOGS.lock().unwrap_or_else(PoisonError::into_inner);
+    let l = logs.entry(crate::db::file(path)).or_default();
+    let last = crate::db::last_seq(path);
+    // Seq 0 (no events, or a read error `last_seq` hides) is read again: its error is the caller's to show.
+    if last == l.seq && last > 0 {
+        return Ok(l.clone());
+    }
+    if crate::db::live_count(path, l.seq)? != l.events.len() {
+        *l = Arc::default();
+    }
+    let new = crate::db::events(path, "archived = 0 AND seq > ?1", l.seq)?;
+    let m = Arc::make_mut(l);
+    m.seq = new.last().map_or(last, |e| e.seq.max(last));
+    m.states = fold_into(std::mem::take(&mut m.states), &new);
+    for e in new {
+        m.events.push(e);
+        m.asks.add(&m.events);
+    }
+    Ok(l.clone())
+}
+
 /// Why ask `a` closed (#584: every ending): answered, withdrawn, delivered or failed (a handoff card), expired, its
 /// issue merged, or its lane killed, cleaned or respawned; `None` while open. The one place that decides "open".
 pub fn closed(events: &[Event], a: &Event) -> Option<&'static str> {
@@ -463,21 +600,10 @@ pub fn closed(events: &[Event], a: &Event) -> Option<&'static str> {
 
 /// `closed`, and the event that closed it.
 fn ending<'a>(events: &'a [Event], a: &Event) -> Option<(&'static str, &'a Event)> {
-    let before = || events.iter().take_while(|e| !std::ptr::eq(*e, a));
-    let why: Vec<_> = (events.iter())
-        .skip_while(|e| !std::ptr::eq(*e, a))
-        .filter_map(|e| closes(a, e, || before().any(|x| started(x, e))).map(|w| (w, e)))
-        .collect();
-    let order = [
-        "answered",
-        "withdrawn",
-        "delivered",
-        "failed",
-        "expired",
-        "closed: merged",
-        "closed: lane gone",
-    ];
-    order.into_iter().find_map(|w| why.iter().find(|x| x.0 == w).copied())
+    let at = (std::ptr::from_ref(a) as usize).wrapping_sub(events.as_ptr() as usize) / size_of::<Event>();
+    let at = events.get(at).filter(|e| std::ptr::eq(*e, a)).map(|_| at)?;
+    let end = index(events, |x| x.ends.get(&at).copied())??;
+    Some((ORDER[end.0], &events[end.1]))
 }
 
 /// #584: `closed` as `herdsman asks` shows it: `withdrawn → q<new>`, `delivered to t<n>`.
@@ -490,14 +616,10 @@ pub fn closed_row(events: &[Event], a: &Event) -> Option<String> {
     })
 }
 
-/// #446: `e` is the `spawn-started` of spawn `sp` (same agent and pane).
-fn started(e: &Event, sp: &Event) -> bool {
-    e.kind == "spawn-started" && e.str("agent") == sp.str("agent") && e.str("pane") == sp.str("pane")
-}
-
 /// #447: what later event `e` does to ask `a` (`closed`'s reasons, one event at a time). `own`: `e`'s
 /// `spawn-started` came before the ask, so a `spawn` `e` is the asking lane itself (#446).
 fn closes(a: &Event, e: &Event, own: impl FnOnce() -> bool) -> Option<&'static str> {
+    VISITS.fetch_add(1, Relaxed);
     let on = |k: &str| e.kind == k && a.issue.is_some() && e.issue == a.issue;
     let mine = matches!(e.kind.as_str(), "spawn" | "lane-killed") && e.str("agent") == a.str("agent");
     let id = e.str("id") == a.str("id");
@@ -528,26 +650,9 @@ pub fn finding<'a>(events: &'a [Event], fleet: &str, issue: u64) -> Option<&'a s
     v.str("body")?.lines().skip(1).map(str::trim).find(|l| !l.is_empty())
 }
 
-/// `needs-decision` events not yet closed, oldest first.
-/// #447: one pass, each closing event checked against the asks still open.
+/// `needs-decision` events not yet closed, oldest first (#632: the ask index's).
 pub fn open_asks(events: &[Event]) -> Vec<&Event> {
-    let (mut open, mut first): (Vec<(usize, &Event)>, std::collections::HashMap<_, usize>) =
-        (vec![], std::collections::HashMap::default());
-    for (i, e) in events.iter().enumerate() {
-        let at = (e.str("agent"), e.str("pane"));
-        match e.kind.as_str() {
-            "spawn-started" => {
-                first.entry(at).or_insert(i);
-            }
-            "needs-decision" => open.push((i, e)),
-            "decision" | "merged" | "clean" | "spawn" | "lane-killed" | "ask-withdrawn" | "ask-delivered"
-            | "ask-failed" | "ask-expired" => {
-                open.retain(|(n, a)| closes(a, e, || first.get(&at).is_some_and(|f| f < n)).is_none());
-            }
-            _ => {}
-        }
-    }
-    open.into_iter().map(|x| x.1).collect()
+    index(events, |x| x.open(events))
 }
 
 /// Current per-issue state (the states in `roles/usage-tail.md`).

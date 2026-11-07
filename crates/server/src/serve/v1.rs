@@ -5,7 +5,7 @@
 //! board's code; every POST takes JSON (or the board's form) and answers `Reply`. #576: the queue rows' marks (`qset`
 //! sets one), an issue's verdicts and the lessons.
 use super::{act, board, busy, coat, gh, moment, words, Auth, BTreeMap, Event, JSON, PAIRED_OPS};
-use super::{fold, form, lanes, lock, read, refused, shown, view, Config, Ctx, Refusal, Result, Server};
+use super::{form, lanes, lock, read, refused, shown, view, Config, Ctx, Refusal, Result, Server};
 use crate::api::{Ask, ChatDefaults, Digest, Ev, Events, Fleet, Harness, IssueView, Lane, LessonFleet, LessonRun};
 use crate::api::{Lessons, Marks, QueueTab, Queued, Reply, Repro, Roles, Row, SetupScreen, State, Verdict};
 use crate::events::plain;
@@ -229,7 +229,7 @@ impl Server<'_> {
         let Some(n) = f.get("issue").and_then(|n| n.parse::<u64>().ok()) else {
             return refused("BAD_VALUE", "no issue number");
         };
-        let st = fold(&events);
+        let st = events.states.clone();
         if st.contains_key(&(fleet.to_string(), n))
             || crate::queue::view(&events, &st, fleet).iter().any(|i| i.issue == n)
         {
@@ -253,7 +253,7 @@ impl Server<'_> {
 
     pub(super) fn state(&self, ctx: &Ctx) -> Result<State> {
         let (cfg, events) = (Config::load(&ctx.config)?, read(&ctx.state)?);
-        let (st, r) = (fold(&events), &self.cached(ctx.now, 60));
+        let (st, r) = (events.states.clone(), &self.cached(ctx.now, 60));
         let all = self.lanes(ctx.now, &cfg, &events, &st).unwrap_or_default();
         let waits = self.waits(ctx, &cfg, &events, &all);
         let lane = |l: &lanes::Lane| {
@@ -419,7 +419,7 @@ fn lessons(ctx: &Ctx) -> Lessons {
         Config::load(&ctx.config).unwrap_or_default(),
         read(&ctx.state).unwrap_or_default(),
     );
-    let st = fold(&ev);
+    let st = ev.states.clone();
     let fleet = |(name, fc): (&String, &crate::config::Fleet)| {
         let off = fc.lessons.as_deref() == Some("off");
         let spawn = |e: &&Event| e.kind == "spawn" && e.fleet == *name && e.str("role") == Some("lesson");
@@ -501,7 +501,7 @@ fn roles(ctx: &Ctx, fleet: &str) -> Result<Roles> {
     };
     Ok(Roles {
         fleet: fleet.into(),
-        config: super::config_sheet(ctx, &cfg, fleet, fc, &fold(&events)),
+        config: super::config_sheet(ctx, &cfg, fleet, fc, &events.states),
         chat: ChatDefaults {
             harness: c.harness.clone(),
             model: c.model.clone(),

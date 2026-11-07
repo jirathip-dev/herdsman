@@ -192,6 +192,12 @@ pub fn live_bytes(state: &Path) -> Result<u64> {
     with(state, false, 0, |c| Ok(c.query_row(q, [], |r| r.get(0))?))
 }
 
+/// #632: the live events up to `seq`: fewer than a cached `events::log` holds, a rotation archived some.
+pub(crate) fn live_count(state: &Path, seq: u64) -> Result<usize> {
+    let q = "SELECT COUNT(*) FROM events WHERE archived = 0 AND seq <= ?1";
+    with(state, false, 0, |c| Ok(c.query_row(q, [seq], |r| r.get(0))?))
+}
+
 pub(crate) fn archive(state: &Path, seqs: &[u64]) -> Result<()> {
     with(state, true, (), |c| {
         let tx = c.transaction()?;

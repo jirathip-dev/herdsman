@@ -7,7 +7,8 @@ use crate::api::{
     Paired, PrLine, QueueCard, QueueLane, QueueRow, QueueTab, RoleRow, Row, Stage, Sub,
 };
 use crate::config::{Config, Limits, Role};
-use crate::events::{age, append, fold, read, Event, IssueState, States};
+// #632: every read is the cached log (`events::log`): its events, ask index and fold.
+use crate::events::{age, append, log as read, Event, IssueState, States};
 use crate::gate::{gate, refused, Refusal};
 use crate::host::{self, Host};
 use crate::runner::{Out, Runner};
@@ -1195,7 +1196,7 @@ impl<'a> Server<'a> {
     fn lane(&self, ctx: &Ctx, agent: &str) -> Result<(lanes::Lane, String, String)> {
         let (cfg, events) = (Config::load(&ctx.config)?, read(&ctx.state)?);
         let all = self
-            .lanes(ctx.now, &cfg, &events, &fold(&events))
+            .lanes(ctx.now, &cfg, &events, &events.states)
             .context("herdr agent list failed")?;
         let l = all
             .into_iter()
@@ -1318,7 +1319,7 @@ impl<'a> Server<'a> {
         let (lines, before) = (n("lines", 200).min(200), n("before", 0));
         let (cfg, events) = (Config::load(&ctx.config).ok()?, read(&ctx.state).ok()?);
         let agent = q.get("agent")?;
-        let ls = self.lanes(ctx.now, &cfg, &events, &fold(&events))?;
+        let ls = self.lanes(ctx.now, &cfg, &events, &events.states)?;
         let file = lanes::log(&ctx.state, agent).filter(|_| self.export.is_none());
         // #218: a lane with no pane: its stored transcript (#248: Claude's saved session first), no live block.
         let Some(l) = ls.into_iter().find(|l| &l.name == agent && l.pane.is_some()) else {
@@ -1617,7 +1618,7 @@ impl<'a> Server<'a> {
     /// lane's pending prompt, then the `needs-human` issues.
     fn needs_tab(&self, ctx: &Ctx, paired: bool) -> NeedsTab {
         let events = read(&ctx.state).unwrap_or_default();
-        let (cfg, st) = (Config::load(&ctx.config).ok(), fold(&events));
+        let (cfg, st) = (Config::load(&ctx.config).ok(), events.states.clone());
         let (cfg, ev, st) = (cfg.as_ref(), &events, &st);
         let all = cfg.and_then(|c| self.lanes(ctx.now, c, ev, st)).unwrap_or_default();
         let mins = cfg.map_or(Limits::default().ask_default_minutes, |c| c.limits.ask_default_minutes);
@@ -1746,7 +1747,7 @@ impl<'a> Server<'a> {
                 return d;
             }
         };
-        let (cfg, events, st) = (&cfg, &events, &fold(&events));
+        let (cfg, events, st) = (&cfg, &events, &events.states);
         // The state of an open lane herdr shows no pane for: `dead`, or `parked` (#83).
         let ls = self.lanes(now, cfg, events, st).unwrap_or_default();
         let gone = |s: &IssueState| {
@@ -2000,7 +2001,7 @@ impl<'a> Server<'a> {
     /// `weather` (loopback only) forces the host values.
     fn herd(&self, ctx: &Ctx, weather: Option<&str>) -> Result<Herd> {
         let events = read(&ctx.state)?;
-        let (cfg, st) = (Config::load(&ctx.config)?, fold(&events));
+        let (cfg, st) = (Config::load(&ctx.config)?, events.states.clone());
         let all = self.lanes(ctx.now, &cfg, &events, &st).unwrap_or_default();
         let waits = self.waits(ctx, &cfg, &events, &all);
         let lanes = |f: Option<&String>| -> Vec<_> {
@@ -2109,7 +2110,7 @@ impl<'a> Server<'a> {
             ..LanesTab::default()
         };
         let events = read(&ctx.state).unwrap_or_default();
-        let (Ok(cfg), st) = (Config::load(&ctx.config), fold(&events)) else {
+        let (Ok(cfg), st) = (Config::load(&ctx.config), events.states.clone()) else {
             t.error = Some("no fleet.toml".into());
             return t;
         };
@@ -3112,7 +3113,7 @@ pub fn export(ctx: &Ctx, r: &dyn Runner, dir: &std::path::Path, demo: bool) -> R
             }
         }
     }
-    let (cfg, st) = (Config::load(&ctx.config)?, fold(&events));
+    let (cfg, st) = (Config::load(&ctx.config)?, events.states.clone());
     for l in s
         .lanes(ctx.now, &cfg, &events, &st)
         .unwrap_or_default()

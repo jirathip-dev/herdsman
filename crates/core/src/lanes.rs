@@ -52,7 +52,12 @@ pub fn join(
     agents: &[Value],
     ws: &BTreeMap<String, String>,
 ) -> Vec<Lane> {
-    let spawns: Vec<&Event> = events.iter().rev().filter(|e| e.kind == "spawn").collect();
+    // #632: each agent's and pane's newest spawn, indexed once.
+    let (mut by_name, mut by_pane) = (BTreeMap::new(), BTreeMap::new());
+    for e in events.iter().filter(|e| e.kind == "spawn") {
+        by_name.insert(e.str("agent"), e);
+        by_pane.insert(e.str("pane"), e);
+    }
     let (mut out, mut seen) = (vec![], BTreeSet::new());
     // #422: each thread's last `conductor-start`, by its agent (`conductor-<thread>`).
     let starts = events.iter().filter(|e| e.kind == "conductor-start");
@@ -61,14 +66,12 @@ pub fn join(
         let s = |k: &str| a[k].as_str().filter(|v| !v.is_empty());
         let (name, pane) = (s("name"), s("pane_id"));
         // Agents that report their own state (dsh-TUI) can lose the name: match the lane's pane.
-        let sp = spawns
-            .iter()
-            .find(|e| name.is_some() && e.str("agent") == name)
-            .or_else(|| {
-                spawns
-                    .iter()
-                    .find(|e| name.is_none() && pane.is_some() && e.str("pane") == pane)
-            });
+        let sp = match (name, pane) {
+            (Some(_), _) => by_name.get(&name),
+            (None, Some(_)) => by_pane.get(&pane),
+            _ => None,
+        }
+        .copied();
         let mut l = Lane {
             state: s("agent_status").unwrap_or("unknown").into(),
             pane: pane.map(String::from),
@@ -117,7 +120,7 @@ pub fn join(
         let Some((_, agent)) = s.active_lane().filter(|(_, a)| !seen.contains(*a)) else {
             continue;
         };
-        if let Some(e) = spawns.iter().find(|e| e.str("agent") == Some(agent)) {
+        if let Some(e) = by_name.get(&Some(agent)) {
             let r = &crate::hosts::On::of(r, Some(e));
             let wt = e
                 .str("worktree")
