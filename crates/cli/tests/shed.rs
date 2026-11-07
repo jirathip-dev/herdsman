@@ -928,3 +928,58 @@ fn a_remote_host_without_shed_is_up_when_its_herdr_answers() {
     let (_, doc) = run(&c, &f, &["doctor"]);
     assert!(doc.contains("host bazzite shed: shed connect failed"), "{doc}");
 }
+
+/// #634: over `build_budget_gb`, drive's pass never trims a running shed ACP lane's scratch (shed lists it, herdr does
+/// not); an exited shed lane's goes as before, its line naming why.
+#[test]
+fn the_build_trim_keeps_a_running_shed_lanes_scratch() {
+    let b = Server::new(shed::proto::VERSION, vec![]);
+    b.add("sendmeter-impl-12", lane_labels());
+    b.terms.lock().unwrap().get_mut("sendmeter-impl-12").unwrap()["acp"] = json!("claude-acp");
+    let mut gone = lane_labels();
+    gone["issue"] = json!("13");
+    b.add("sendmeter-impl-13", gone);
+    b.terms.lock().unwrap().get_mut("sendmeter-impl-13").unwrap()["state"] = json!("exited");
+    let d = tmpdir("shed-trim");
+    let root = d.join("builds");
+    let cfg = CONFIG.replace(
+        "build_root = \"\"",
+        &format!(
+            "build_root = \"{}\"\nbuild_budget_gb = {}",
+            root.display(),
+            2000.0 / 1_073_741_824.0
+        ),
+    );
+    let c = ctx(&d, &cfg);
+    let scratch = |agent: &str, n: u64, at: u64| {
+        let w = c.worktrees.join("sendmeter").join(agent);
+        std::fs::create_dir_all(&w).unwrap();
+        let ev = json!({"role": "impl", "agent": agent, "worktree": w, "pane": agent, "workspace": agent});
+        herdsman::events::append(&c.state, &Event::new(10, "sendmeter", Some(n), "spawn", ev)).unwrap();
+        let p = root.join(".scratch").join(agent);
+        std::fs::create_dir_all(p.join("target")).unwrap();
+        std::fs::write(p.join("target/blob"), vec![0u8; 4096]).unwrap();
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(at);
+        for f in [p.join("target/blob"), p.join("target"), p.clone()] {
+            std::fs::File::open(&f).unwrap().set_modified(at).unwrap();
+        }
+        p
+    };
+    let (live, exited) = (
+        scratch("sendmeter-impl-12", 12, 1_000),
+        scratch("sendmeter-impl-13", 13, 2_000),
+    );
+    let f = Fake::default().reply("herdr agent list", NO_AGENTS);
+    let r = shed::With(&f, b.shed());
+    let mut out = vec![];
+    let cfg = herdsman::config::Config::load(&c.config).unwrap();
+    herdsman::check::budget(&c, &cfg, &r, &mut out).unwrap();
+    let out = String::from_utf8(out).unwrap();
+    assert!(
+        live.exists(),
+        "a running ACP lane's scratch is never trimmed, oldest or not: {out}"
+    );
+    assert!(!exited.exists(), "an exited lane's goes over budget: {out}");
+    let line = format!("builds: trimmed {} ", exited.display());
+    assert!(out.contains(&line) && out.contains("no live agent"), "{out}");
+}

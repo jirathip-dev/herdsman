@@ -110,13 +110,12 @@ fn drive_deletes_an_ended_lanes_scratch() {
 #[test]
 fn the_oldest_scratch_is_trimmed_over_budget() {
     let (c, s) = setup("scratch-trim", 6000);
+    spawn(&c, 9, "rev", "sendmeter-rev-9-r1");
     spawn(&c, 13, "impl", "sendmeter-impl-13");
     let (old, new) = (blob(&s, "sendmeter-rev-9-r1"), blob(&s, "sendmeter-impl-13"));
     age(&old, 1_000);
-    let r = Fake::default().reply(
-        "herdr agent list",
-        &agents(&[("sendmeter-rev-9-r1", "idle", "/x", "p")]),
-    );
+    // #634: no live agent for either (spawned long ago); a live one's scratch is never trimmed (tests/shed.rs).
+    let r = Fake::default().reply("herdr agent list", NO_AGENTS);
     let out = budget(&c, &r);
     assert!(!old.exists() && new.exists(), "{out}");
     assert!(out.contains("builds: trimmed"), "{out}");

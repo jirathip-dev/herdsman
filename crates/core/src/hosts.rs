@@ -504,7 +504,13 @@ pub fn disk_low(ctx: &Ctx, cfg: &Config, on: &On) -> Option<String> {
     let low = || host::free_gb(on).filter(|g| *g < min);
     let mut gb = low()?;
     // #438: short of disk, the shared build folder's idle profiles go first; then the disk is read again.
-    if crate::check::trim_on(on, cfg, 0.0, &mut std::io::sink()).unwrap_or(0) > 0 {
+    // #634: never a live lane's (a remote trim never reaches `.scratch`); unknown lanes: no trim.
+    let live = match on.machine {
+        None => crate::check::live_lanes(ctx, cfg, on).ok(),
+        Some(_) => Some(crate::check::Live::new()),
+    };
+    let trim = |l| crate::check::trim_on(on, cfg, 0.0, l, &mut std::io::sink()).unwrap_or(0);
+    if live.as_ref().is_some_and(|l| trim(l) > 0) {
         gb = low()?;
     }
     let st = fold(&events);
