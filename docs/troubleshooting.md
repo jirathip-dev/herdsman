@@ -55,29 +55,37 @@ kill "$(pgrep -x SecurityAgent)"
 `security find-generic-password -s herdsman/<fleet>/<NAME> ~/Library/Keychains/login.keychain-db` returns at once.
 `herdsman doctor` shows the account rows ✓.
 
-## 3. New build, new cdhash (#548)
+## 3. New build, new cdhash (#548, #631)
 
 **Symptom.** After installing a new herdsman build, its keychain reads time out (`REFUSED KEYCHAIN_LOCKED`) or a
 "herdsman wants to use your confidential information" dialog appears, though the item worked with the old build.
 
-**Cause.** Each install has a new cdhash (code directory hash). A token item's partition list names which code may read
-it without a prompt; until it holds the new cdhash, the item refuses that binary. See [accounts](accounts.md).
+**Cause.** Each build has a new cdhash (code directory hash). A token item's partition list names which code may read
+it without a prompt. Since #631 herdsman reads its items only through `herdsman-keys`, a small helper installed beside
+it (`~/.local/share/herdsman/bin/herdsman-keys`) and reinstalled only when its own source (`crates/keys/`) changes, so
+its cdhash, and your approval, last across herdsman builds. `herdsman self-update` and `scripts/install-gate.sh` swap a
+build in only when its `doctor --tokens` reads every account token through the helper with no dialog; else they keep
+the old build and alert `self-update-failed` with this fix. See [accounts](accounts.md).
 
-**Fix.** Once per install, over ssh, get the installed binary's cdhash, then add it to each item's partition list.
-The login keychain's password can drift from the Mac's login password (a password reset changes one, not the other);
-use the keychain's.
+**Fix.** Once per host (and again only when the helper's source changes; the alert then names
+`herdsman-keys.new`), over ssh, authorise the helper on each item. The login keychain's password can drift from the
+Mac's login password (a password reset changes one, not the other); use the keychain's.
 
 ```sh
-codesign -dvvv ~/.local/share/herdsman/bin/herdsman 2>&1 | grep CDHash   # CDHash=<cdhash>
+K=~/.local/share/herdsman/bin/herdsman-keys   # or the herdsman-keys.new the alert names
+codesign -dvvv "$K" 2>&1 | grep CDHash   # CDHash=<cdhash>
 read -rs P   # the login keychain's password, no echo
 security set-generic-password-partition-list -S "apple-tool:,apple:,unsigned:,cdhash:<cdhash>" -k "$P" \
   -s herdsman/<fleet>/<NAME> ~/Library/Keychains/login.keychain-db
 unset P
 ```
 
-Repeat the `set-generic-password-partition-list` line for every `herdsman/<fleet>/<NAME>` item.
+Repeat the `set-generic-password-partition-list` line for every `herdsman/<fleet>/<NAME>` item. If an item still
+prompts, run `"$K" get herdsman/<fleet>/<NAME> >/dev/null` in a terminal at the Mac and click Always Allow (run by
+herdsman the helper never shows a dialog; it fails at once instead). Then rerun `herdsman self-update`.
 
-**Confirm.** `herdsman doctor` shows each account row ✓ with no dialog on the host's screen.
+**Confirm.** `herdsman doctor --tokens` and `herdsman doctor` show each account row ✓ with no dialog on the host's
+screen.
 
 ## 4. Stale `~/.local/bin/herdsman` on a remote host
 

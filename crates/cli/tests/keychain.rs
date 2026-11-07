@@ -122,8 +122,9 @@ fn a_hung_keychain_is_keychain_locked_in_5_s_with_a_system_row_and_one_alert() {
     let c = setup("keychain-hung");
     let r = herdr();
     let log = say(&c, &Hung(&r), "hello");
+    let fix = herdsman::runner::keychain_fix(SVC_A);
     let row = format!(
-        r#""text":"✗ not delivered: REFUSED KEYCHAIN_LOCKED: approve herdsman in the Keychain dialog on mini: Always Allow for {SVC_A}, once (it lasts while herdsman is signed by \"herdsman-local\")""#
+        r#""text":"✗ not delivered: REFUSED KEYCHAIN_LOCKED: the Keychain wants approval for {SVC_A} on mini: {fix}""#
     );
     assert!(log.contains(&row), "{log}");
     assert_eq!(sleeps(&r), 5, "5 s on the clock, then refused: {:?}", r.calls.borrow());
@@ -161,9 +162,8 @@ fn doctor_prints_a_prompting_items_fix() {
     );
     let r = Fake::default();
     let out = run(&c, &Hung(&r), &["doctor"]).1;
-    let want = format!(
-        "✗ account A — {SVC_A} prompts for Keychain access → approve herdsman in the Keychain dialog: Always Allow for {SVC_A}, once (it lasts while herdsman is signed by \"herdsman-local\")"
-    );
+    let fix = herdsman::runner::keychain_fix(SVC_A);
+    let want = format!("✗ account A — {SVC_A} prompts for Keychain access → {fix}");
     assert!(out.lines().any(|l| l == want), "{out}");
 }
 

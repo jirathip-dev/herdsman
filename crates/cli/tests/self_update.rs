@@ -48,6 +48,16 @@ fn sign_script(c: &herdsman::Ctx) -> String {
     s.to_string_lossy().into()
 }
 
+/// #631: the new build's token check, through the helper beside the live binary (`ext`: `.new` when staged).
+fn tokens(live: &std::path::Path, ext: &str) -> String {
+    let keys = live.with_file_name("herdsman-keys");
+    format!(
+        "env HERDSMAN_KEYS={}{ext} {}.new doctor --tokens",
+        keys.display(),
+        live.display()
+    )
+}
+
 fn kinds(c: &herdsman::Ctx, kind: &str) -> Vec<Event> {
     read(&c.state).unwrap().into_iter().filter(|e| e.kind == kind).collect()
 }
@@ -72,6 +82,7 @@ fn green_is_built_signed_gated_swapped_synced_and_restarted() {
     let new = format!("{}.new", live.display());
     let r = host("SUCCESS")
         .reply(&format!("{new} doctor --config-only"), "✓ config — ok\n")
+        .reply(&tokens(&live, ""), "✓ account A\n")
         .reply(&format!("{} profiles sync", live.display()), "");
     let (code, out) = run(&c, &r, &["self-update", "--dry-run"]);
     assert_eq!(code, 0, "{out}");
@@ -91,6 +102,7 @@ fn green_is_built_signed_gated_swapped_synced_and_restarted() {
         at("cargo build"),
         at(&format!("sh {} sign {new}", sign_script(&c))),
         at(&format!("{new} doctor --config-only")),
+        at(&tokens(&live, "")),
         at(&format!("{} profiles sync", live.display())),
         at(if cfg!(target_os = "macos") {
             "launchctl kickstart -k gui/"
@@ -128,6 +140,88 @@ fn a_failed_doctor_keeps_the_old_binary_and_alerts_once_per_head() {
     assert_eq!(run(&c, &r2, &["self-update"]).0, 1);
     assert!(!r2.called("profiles sync"));
     assert_eq!(kinds(&c, "self-update-failed").len(), 1);
+}
+
+/// #631: a build whose token check fails (its helper read would prompt) is never swapped in, serve keeps running.
+#[test]
+fn a_build_that_cannot_read_the_tokens_keeps_the_old_binary_alerts_once_and_leaves_serve() {
+    let (c, live) = setup("upd-tokens");
+    let new = format!("{}.new", live.display());
+    let bad = "✗ account A — herdsman/all/T_A prompts for Keychain access → authorise /k/herdsman-keys once: …\n";
+    let r = || {
+        host("SUCCESS")
+            .reply(&format!("{new} doctor --config-only"), "✓ config — ok\n")
+            .once(&tokens(&live, ""), 1, bad)
+    };
+    for _ in 0..2 {
+        let r = r();
+        let (code, out) = run(&c, &r, &["self-update"]);
+        assert_eq!(code, 1, "{out}");
+        assert!(
+            out.contains("doctor --tokens, the new build can't read the tokens: ✗ account A"),
+            "{out}"
+        );
+        assert_eq!(std::fs::read_to_string(&live).unwrap(), "OLD");
+        assert!(!PathBuf::from(&new).exists());
+        assert!(!r.called("launchctl") && !r.called("systemctl") && !r.called(&format!("{} profiles", live.display())));
+    }
+    let failed = kinds(&c, "self-update-failed");
+    assert_eq!(failed.len(), 1, "once per head");
+    assert!(failed[0].str("reason").unwrap().contains("authorise /k/herdsman-keys"));
+}
+
+/// #631: the helper is reinstalled only when its source hash changes: kept as is while it matches, else staged as
+/// `.new`, gated, then swapped in with its new hash.
+#[test]
+fn the_keys_helper_is_reinstalled_only_when_its_source_changes() {
+    let (c, live) = setup("upd-keys");
+    let src = c.state.with_file_name("update/src/crates/keys");
+    std::fs::create_dir_all(src.join("src")).unwrap();
+    std::fs::write(src.join("Cargo.toml"), "[package]\n").unwrap();
+    std::fs::write(src.join("src/main.rs"), "fn main() {}\n").unwrap();
+    let built = c.state.with_file_name("update/target/release/herdsman-keys");
+    std::fs::write(&built, "KEYS v2").unwrap();
+    let hash = |main: &str| {
+        use sha2::Digest;
+        let h = sha2::Sha256::digest(format!("[package]\n{main}"));
+        h.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    let (keys, stamp) = (
+        live.with_file_name("herdsman-keys"),
+        live.with_file_name("herdsman-keys.src"),
+    );
+    std::fs::write(&keys, "KEYS v1").unwrap();
+    std::fs::write(&stamp, hash("fn main() {}\n")).unwrap();
+    let r = |ext: &str| {
+        host("SUCCESS")
+            .reply(
+                &format!("{}.new doctor --config-only", live.display()),
+                "✓ config — ok\n",
+            )
+            .reply(&tokens(&live, ext), "✓ account A\n")
+            .reply(&format!("{} profiles sync", live.display()), "")
+    };
+    let r1 = r("");
+    let (code, out) = run(&c, &r1, &["self-update"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(r1.called("cargo build --release --locked -p herdsman -p herdsman-keys"));
+    assert!(r1.called(&tokens(&live, "")), "gated through the installed helper");
+    assert_eq!(
+        std::fs::read_to_string(&keys).unwrap(),
+        "KEYS v1",
+        "same source: not reinstalled"
+    );
+
+    std::fs::remove_file(c.state.with_file_name("update/sha")).unwrap();
+    std::fs::write(built.with_file_name("herdsman"), "NEW").unwrap();
+    std::fs::write(src.join("src/main.rs"), "fn main() { v2() }\n").unwrap();
+    let r2 = r(".new");
+    let (code, out) = run(&c, &r2, &["self-update"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(r2.called(&tokens(&live, ".new")), "gated through the new helper");
+    assert_eq!(std::fs::read_to_string(&keys).unwrap(), "KEYS v2");
+    assert_eq!(std::fs::read_to_string(&stamp).unwrap(), hash("fn main() { v2() }\n"));
+    assert!(!live.with_file_name("herdsman-keys.new").exists());
 }
 
 #[test]

@@ -102,8 +102,44 @@ impl Runner for Real {
     }
 }
 
+/// #631: the `herdsman-keys` helper the store goes through: `$HERDSMAN_KEYS` (the install gates), else beside this
+/// binary. Its cdhash outlasts herdsman builds, so the Keychain's one approval does too.
+pub fn keys_helper() -> std::path::PathBuf {
+    std::env::var_os("HERDSMAN_KEYS").map_or_else(
+        || {
+            let exe = std::env::current_exe()
+                .and_then(std::fs::canonicalize)
+                .unwrap_or_default();
+            exe.with_file_name("herdsman-keys")
+        },
+        Into::into,
+    )
+}
+
+/// #631: `herdsman-keys <cmd> <svc>` (`input` on stdin) within `KEYCHAIN_SECS`; exit 1 is None, 3 or a timeout is
+/// `KEYCHAIN_LOCKED`.
+fn keys(r: &dyn Runner, cmd: &str, svc: &str, input: &str) -> Result<Option<String>> {
+    let k = keys_helper();
+    let o = r.run_for(
+        &k.to_string_lossy(),
+        &argv(&[cmd, svc]),
+        input,
+        Duration::from_secs(KEYCHAIN_SECS),
+    )?;
+    match o.code {
+        0 => Ok(Some(o.stdout)),
+        1 => Ok(None),
+        3 | 124 => locked(r, svc),
+        _ => bail!("secret store: {svc}: {}", o.stderr.trim()),
+    }
+}
+
 /// #441: `svc`'s secret in the OS store (None: not set); #548: on `r`'s clock, `KEYCHAIN_LOCKED` past `KEYCHAIN_SECS`.
+/// #631: through `herdsman-keys` when it is installed.
 pub fn store_get(r: &dyn Runner, svc: &str) -> Result<Option<String>> {
+    if keys_helper().is_file() {
+        return keys(r, "get", svc, "");
+    }
     let e = entry(svc)?;
     match keychain(r, svc, move || e.get_password())? {
         Err(keyring::Error::NoEntry) => Ok(None),
@@ -113,6 +149,10 @@ pub fn store_get(r: &dyn Runner, svc: &str) -> Result<Option<String>> {
 
 /// #441: save `svc`'s secret (None: delete it) in the OS store; #548: as `store_get`, never blocking.
 pub fn store_set(r: &dyn Runner, svc: &str, value: Option<&str>) -> Result<()> {
+    if keys_helper().is_file() {
+        let (cmd, v) = value.map_or(("delete", ""), |v| ("set", v));
+        return keys(r, cmd, svc, v).map(drop);
+    }
     let (e, v) = (entry(svc)?, value.map(String::from));
     let done = keychain(r, svc, move || {
         v.map_or_else(|| e.delete_credential(), |v| e.set_password(&v))
@@ -139,19 +179,28 @@ fn keychain<T: Send + 'static>(r: &dyn Runner, svc: &str, f: impl FnOnce() -> T 
     got.map_or_else(|| locked(r, svc), Ok)
 }
 
-/// #556: the one-time fix for `svc`: the owner's "Always Allow", which lasts across builds signed by "herdsman-local".
+/// #631: the one-time fix for `svc`: authorise `herdsman-keys`, whose cdhash lasts across herdsman builds.
 pub fn keychain_fix(svc: &str) -> String {
-    format!("Always Allow for {svc}, once (it lasts while herdsman is signed by \"herdsman-local\")")
+    let k = keys_helper();
+    if !k.is_file() {
+        return format!(
+            "install {} (herdsman self-update or scripts/install-gate.sh; docs/troubleshooting.md §3)",
+            k.display()
+        );
+    }
+    let k = k.display();
+    format!(
+        "authorise {k} once: codesign -dvvv {k} 2>&1 | grep CDHash; security set-generic-password-partition-list \
+         -S apple-tool:,apple:,unsigned:,cdhash:<CDHash> -s {svc} ~/Library/Keychains/login.keychain-db (asks the \
+         keychain password), or {k} get {svc} >/dev/null at the Mac and Always Allow (docs/troubleshooting.md §3)"
+    )
 }
 
 fn locked<T>(r: &dyn Runner, svc: &str) -> Result<T> {
     let host = ok(r, "hostname", &["-s"]).map_or_else(|_| "this host".into(), |h| h.trim().to_string());
     crate::gate::refused(
         "KEYCHAIN_LOCKED",
-        format!(
-            "approve herdsman in the Keychain dialog on {host}: {}",
-            keychain_fix(svc)
-        ),
+        format!("the Keychain wants approval for {svc} on {host}: {}", keychain_fix(svc)),
     )
 }
 

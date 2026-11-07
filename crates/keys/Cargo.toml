@@ -1,0 +1,14 @@
+# #631: versioned on its own, not with the workspace: self-update reinstalls it only when this file or src/main.rs
+# changes, so its cdhash, and the owner's one Keychain approval, last across herdsman builds.
+[package]
+name = "herdsman-keys"
+description = "herdsman's Keychain reader: get, set and delete of herdsman/* items only"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+keyring.workspace = true

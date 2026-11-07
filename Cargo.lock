@@ -937,6 +937,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "herdsman-keys"
+version = "0.1.0"
+dependencies = [
+ "keyring",
+]
+
+[[package]]
 name = "herdsman-server"
 version = "0.1.0"
 dependencies = [

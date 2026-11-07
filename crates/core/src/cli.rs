@@ -356,6 +356,9 @@ enum Cmd {
         /// Only load the config (the pre-install gate, #539): exit 1 if this binary can't, warnings are fine
         #[arg(long)]
         config_only: bool,
+        /// Only read each account token through herdsman-keys, never a dialog (the install gates' token check, #631)
+        #[arg(long, conflicts_with = "config_only")]
+        tokens: bool,
     },
     /// Read-only: is GitHub branch protection on for main, staging and the integration branch of each fleet repo? Exit 1 unless all are
     Protection,
@@ -1212,7 +1215,8 @@ fn dispatch(cmd: Cmd, ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write, stdin: &mu
                 )?;
             }
         }
-        Cmd::Doctor { json, config_only } => return crate::doctor::doctor(ctx, r, out, json, config_only),
+        Cmd::Doctor { tokens: true, .. } => return crate::doctor::tokens(ctx, r, out),
+        Cmd::Doctor { json, config_only, .. } => return crate::doctor::doctor(ctx, r, out, json, config_only),
         Cmd::Setup { host, name, no_load } => {
             let Some((h, n)) = host.zip(name) else {
                 return crate::timer::setup(ctx, r, out, !no_load);

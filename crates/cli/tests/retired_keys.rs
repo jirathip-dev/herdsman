@@ -79,6 +79,8 @@ fn install_gate_keeps_the_old_binary_when_the_new_one_cannot_load_the_config() {
     let dest = d.join("bin/herdsman");
     std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
     std::fs::write(&dest, "old").unwrap();
+    // #631: the installed keys helper is current, and has the token.
+    fake_keys(dest.parent().unwrap(), "printf tok", Some(&keys_src_hash()));
     // #556: a fake `codesign` logs how the install signs (the real one would reach for the keychain); #568: a fake
     // `security` holds the identity, and `codesign` sleeps (a keychain dialog) while HANG is set.
     let fake = d.join("fake");
@@ -136,4 +138,30 @@ fn install_gate_keeps_the_old_binary_when_the_new_one_cannot_load_the_config() {
         dest.display()
     );
     assert_eq!(std::fs::read_to_string(&log).unwrap(), signed);
+    // #631: the new binary read the token through the installed helper, and the current helper is not reinstalled.
+    let bin = dest.parent().unwrap();
+    let calls = std::fs::read_to_string(bin.join("keys.log")).unwrap();
+    assert!(calls.lines().count() >= 1, "{calls}");
+    assert!(
+        calls
+            .lines()
+            .all(|l| l == "get herdsman/all/CLAUDE_CODE_OAUTH_TOKEN_MAIN"),
+        "{calls}"
+    );
+    assert!(std::fs::read_to_string(bin.join("herdsman-keys"))
+        .unwrap()
+        .contains("printf tok"));
+    assert!(!bin.join("herdsman-keys.new").exists());
+
+    // #631: a helper the Keychain would prompt (exit 3): the token check fails, the old binary stays.
+    fake_keys(bin, "exit 3", None);
+    std::fs::write(&dest, "old").unwrap();
+    let o = gate(RETIRED, "");
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains("can't read the tokens") && out.contains("prompts for Keychain access → authorise "),
+        "{out}"
+    );
+    assert_eq!(std::fs::read_to_string(&dest).unwrap(), "old");
 }

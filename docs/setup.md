@@ -14,6 +14,9 @@ adapter: a herdr CLI change touches that file only.
 gh auth status
 herdr --version
 cargo install --path crates/cli --locked --root ~/.local/share/herdsman
+# #631: the Keychain helper, built from its own source; authorise it once (docs/troubleshooting.md §3).
+cargo install --path crates/keys --locked --root ~/.local/share/herdsman
+shasum -a 256 <(cat crates/keys/Cargo.toml crates/keys/src/main.rs) | cut -d' ' -f1 > ~/.local/share/herdsman/bin/herdsman-keys.src
 # macOS (#556): sign with one local identity, so the keychain's "Always Allow" outlasts every reinstall.
 sh scripts/signing-identity.sh   # once: creates "herdsman-local", lets codesign use it (asks the login password)
 sh scripts/signing-identity.sh sign ~/.local/share/herdsman/bin/herdsman   # by hash; fails, never hangs, on a dialog

@@ -730,3 +730,31 @@ pub fn v1_board(name: &str) -> (herdsman::Ctx, Fake) {
         .reply("gh issue close", "");
     (c, r)
 }
+
+/// #631: the sha256 of the keys helper's source, as `herdsman-keys.src` records it.
+pub fn keys_src_hash() -> String {
+    use sha2::Digest;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../keys");
+    let src = [root.join("Cargo.toml"), root.join("src/main.rs")].map(|p| std::fs::read(p).unwrap());
+    sha2::Sha256::digest(src.concat())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// #631: a fake `herdsman-keys` in `dir` that logs each call to `<dir>/keys.log` and runs `body`; `stamp` its
+/// `herdsman-keys.src` (Some: the installed one is current).
+pub fn fake_keys(dir: &Path, body: &str, stamp: Option<&str>) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let k = dir.join("herdsman-keys");
+    let sh = format!(
+        "#!/bin/sh\necho \"$@\" >> '{}'\n{body}\n",
+        dir.join("keys.log").display()
+    );
+    std::fs::write(&k, sh).unwrap();
+    std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if let Some(s) = stamp {
+        std::fs::write(dir.join("herdsman-keys.src"), s).unwrap();
+    }
+    k
+}

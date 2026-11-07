@@ -1,7 +1,7 @@
 # #264: core (state, gates, commands) <- server (the phone page) <- service (#345) <- cli (the `herdsman` binary);
 # docs/architecture.md.
 [workspace]
-members = ["crates/core", "crates/server", "crates/service", "crates/cli"]
+members = ["crates/core", "crates/server", "crates/service", "crates/cli", "crates/keys"]
 resolver = "2"
 
 [workspace.package]

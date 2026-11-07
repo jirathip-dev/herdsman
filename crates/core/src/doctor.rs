@@ -53,6 +53,46 @@ fn config_rows(ctx: &Ctx, cfg: &Config, rows: &mut Vec<String>) {
     rows.extend(cfg.warnings().iter().map(|(k, w)| format!("! config — {k} is {w}")));
 }
 
+/// #631 `doctor --tokens`, the install gates' token check (with `$HERDSMAN_KEYS` the helper to be installed): each
+/// `[accounts]` token read through `herdsman-keys`, which never shows a dialog; exit 1 on any ✗ (each with its fix).
+pub fn tokens(ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write) -> Result<i32> {
+    let mut rows = vec![];
+    match Config::load(&ctx.config) {
+        Err(e) => rows.push(format!("✗ config — {e:#} → edit {}", ctx.config.display())),
+        Ok(_) if !crate::runner::keys_helper().is_file() => {
+            let fix = crate::runner::keychain_fix("herdsman/*");
+            rows.push(format!("✗ keys — no herdsman-keys helper → {fix}"));
+        }
+        Ok(cfg) => account_rows(&cfg, r, &mut rows),
+    }
+    writeln!(out, "{}", rows.join("\n"))?;
+    Ok(i32::from(rows.iter().any(|line| line.starts_with('✗'))))
+}
+
+fn account_rows(cfg: &Config, r: &dyn Runner, rows: &mut Vec<String>) {
+    for (name, var) in &cfg.accounts.names {
+        let svc = crate::secret::service("all", var);
+        let line = format!("account {name} — {svc} in the store → herdsman accounts import <tokens.env>");
+        let bad = if cfg.legacy_secret(var).is_some() { '!' } else { '✗' }; // #539: the retired file still serves it
+        let got = r.secret(&svc);
+        // #548: an item the Keychain guards with a dialog gets its one-time fix.
+        if got.as_ref().is_err_and(|e| {
+            e.downcast_ref::<crate::gate::Refusal>()
+                .is_some_and(|f| f.code == "KEYCHAIN_LOCKED")
+        }) {
+            let fix = crate::runner::keychain_fix(&svc);
+            row(
+                rows,
+                false,
+                '✗',
+                &format!("account {name} — {svc} prompts for Keychain access → {fix}"),
+            );
+            continue;
+        }
+        row(rows, got.is_ok_and(|v| v.is_some()), bad, &line);
+    }
+}
+
 fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, rows: &mut Vec<String>) {
     config_rows(ctx, cfg, rows);
     if cfg.runtime.kind == crate::config::RuntimeKind::Berth {
@@ -140,27 +180,7 @@ fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, rows: &mut Vec<String>) {
                 .map(|p| format!("  {} — {} (fleet.toml:{})", p.rule, p.msg, p.line)),
         );
     }
-    for (name, var) in &cfg.accounts.names {
-        let svc = crate::secret::service("all", var);
-        let line = format!("account {name} — {svc} in the store → herdsman accounts import <tokens.env>");
-        let bad = if cfg.legacy_secret(var).is_some() { '!' } else { '✗' }; // #539: the retired file still serves it
-        let got = r.secret(&svc);
-        // #548: an item the Keychain guards with a dialog gets its one-time fix.
-        if got.as_ref().is_err_and(|e| {
-            e.downcast_ref::<crate::gate::Refusal>()
-                .is_some_and(|f| f.code == "KEYCHAIN_LOCKED")
-        }) {
-            let fix = crate::runner::keychain_fix(&svc);
-            row(
-                rows,
-                false,
-                '✗',
-                &format!("account {name} — {svc} prompts for Keychain access → approve herdsman in the Keychain dialog: {fix}"),
-            );
-            continue;
-        }
-        row(rows, got.is_ok_and(|v| v.is_some()), bad, &line);
-    }
+    account_rows(cfg, r, rows);
     // #556: signed by the one local identity, the keychain's "Always Allow" outlasts a reinstall.
     if cfg!(target_os = "macos") {
         let req = [
