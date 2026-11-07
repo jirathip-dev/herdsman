@@ -70,6 +70,7 @@ pub fn check(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
             fire(ctx, cfg, out, &events, ("herdsman", None), kind, d)?;
         }
     }
+    crate::roots::watch(ctx, cfg, r, out)?; // #630
     crate::setup::reap(ctx, r, &events)?;
     // #537: CI runners below `slots × VMs` alert once per drop, `runners-ok` once on the way back.
     match crate::runners::tick(ctx, cfg, r, &events) {
@@ -935,7 +936,7 @@ fn save(
 /// #164: the worktree total by a full walk (drive's pass, never a request), stamped for spawn's `DISK_BUDGET` and the
 /// Host tab. Over `worktree_budget_gb`, the idlest lanes' build folders go first (`budget-freed`), never a working one's.
 pub fn budget(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Result<()> {
-    let mut total = du(&ctx.worktrees);
+    let mut total = du(&ctx.worktrees).saturating_sub(du(&ctx.worktrees.join(crate::roots::BUILD)));
     let over = |t: u64| gb(t) > cfg.limits.worktree_budget_gb;
     if over(total) {
         let (events, agents) = (read(&ctx.state)?, host::agents(r)?);
@@ -979,7 +980,7 @@ pub fn budget(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> R
         }
     }
     sweep_scratch(ctx, cfg, r, out)?;
-    trim_builds(cfg, cfg.limits.build_budget_gb, out, false)?;
+    trim_builds(ctx, cfg, cfg.limits.build_budget_gb, out, false)?;
     Ok(std::fs::write(
         ctx.state.with_file_name("worktrees.du"),
         format!("{total} {}", ctx.now),
@@ -988,32 +989,41 @@ pub fn budget(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> R
 
 /// #438: each enabled remote host's shared build folder trimmed to `build_budget_gb`; #485: after the tick's drive,
 /// one quick ssh per host (a disabled or offline one never holds the pass up).
-pub fn trim_hosts(cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Result<()> {
+pub fn trim_hosts(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Result<()> {
     let mut tried = std::collections::BTreeSet::new();
     let hosts = cfg.hosts.iter().filter(|h| h.1.enabled);
     for (name, m) in hosts.filter_map(|(n, h)| Some((n, h.machine.as_deref()?))) {
         if !tried.insert(m) {
             continue;
         }
-        if let Err(e) = trim_on(&On::quick(r, Some(m)), cfg, cfg.limits.build_budget_gb, out) {
+        if let Err(e) = trim_on(ctx, &On::quick(r, Some(m)), cfg, cfg.limits.build_budget_gb, out) {
             writeln!(out, "builds: {name}: {e:#}")?;
         }
     }
     Ok(())
 }
 
-/// #536: an ended lane's scratch (`<build_root>/.scratch/<agent>`: no herdr agent of that name, not an open issue's
+/// #536: an ended lane's scratch (`<root>/.build/.scratch/<agent>`: no herdr agent of that name, not an open issue's
 /// active lane) goes, unless cargo is building there.
 fn sweep_scratch(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Result<()> {
-    let root = crate::config::expand(&cfg.limits.build_root).join(crate::spawn::SCRATCH);
-    if cfg.limits.build_root.is_empty() || !root.is_dir() {
+    let roots: Vec<_> = (builds(ctx, cfg).into_iter())
+        .map(|b| b.join(crate::spawn::SCRATCH))
+        .filter(|d| d.is_dir())
+        .collect();
+    if roots.is_empty() {
         return Ok(());
     }
     let (agents, states) = (host::agents(r)?, fold(&read(&ctx.state)?));
     let active: std::collections::BTreeSet<&str> = (states.values().filter(|s| !s.done()))
         .filter_map(|s| Some(s.active_lane()?.1))
         .collect();
-    for d in std::fs::read_dir(&root)?.flatten().map(|e| e.path()) {
+    for d in roots
+        .iter()
+        .flat_map(std::fs::read_dir)
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+    {
         let name = d.file_name().unwrap_or_default().to_string_lossy();
         if active.contains(&*name) || agents.iter().any(|a| a["name"] == *name) || building(&d, 3) {
             continue;
@@ -1043,17 +1053,32 @@ fn mtime(d: &Path) -> u64 {
     ls.map(|e| m(&e.path())).fold(m(d), u64::max)
 }
 
-/// #438: over `budget` GB, the shared build folder's profiles (`<build_root>/<repo>/<profile>`) whose
+/// #630: this host's build folders, `<root>/.build` of each of its roots.
+fn builds(ctx: &Ctx, cfg: &Config) -> Vec<std::path::PathBuf> {
+    let name = cfg
+        .hosts
+        .iter()
+        .find(|h| h.1.machine.is_none())
+        .map_or("", |h| h.0.as_str());
+    let roots = crate::roots::listed(cfg, name, None, &ctx.worktrees);
+    roots.into_iter().map(|r| r.join(crate::roots::BUILD)).collect()
+}
+
+/// `trim_root` on each of this host's build folders. Bytes freed.
+pub fn trim_builds(ctx: &Ctx, cfg: &Config, budget: f64, out: &mut dyn Write, dry: bool) -> Result<u64> {
+    builds(ctx, cfg).iter().map(|b| trim_root(b, budget, out, dry)).sum()
+}
+
+/// #438: over `budget` GB, the shared build folder's profiles (`<root>/.build/<repo>/<profile>`) whose
 /// `.cargo-lock` no cargo holds go, until it is under; a building one stays. #536: lane scratch dirs count and go
 /// too, oldest first. Bytes freed.
-pub fn trim_builds(cfg: &Config, budget: f64, out: &mut dyn Write, dry: bool) -> Result<u64> {
-    let root = crate::config::expand(&cfg.limits.build_root);
-    if cfg.limits.build_root.is_empty() || !root.is_dir() {
+fn trim_root(root: &Path, budget: f64, out: &mut dyn Write, dry: bool) -> Result<u64> {
+    if !root.is_dir() {
         return Ok(0);
     }
-    let (mut total, mut freed) = (du(&root), 0);
+    let (mut total, mut freed) = (du(root), 0);
     let ls = |p: &Path| std::fs::read_dir(p).into_iter().flatten().flatten().map(|e| e.path());
-    let profiles = ls(&root)
+    let profiles = ls(root)
         .flat_map(|r| ls(&r))
         .filter(|p| p.join(".cargo-lock").is_file())
         .map(|p| (p, 0));
@@ -1133,16 +1158,26 @@ for d in */*/; do
 done
 echo "freed $f""#;
 
-/// The shared build folder on `on`'s host trimmed to `budget` GB; bytes freed.
-pub fn trim_on(on: &On, cfg: &Config, budget: f64, out: &mut dyn Write) -> Result<u64> {
-    if on.machine.is_none() || cfg.limits.build_root.is_empty() {
-        return trim_builds(cfg, budget, out, false);
+/// The shared build folders on `on`'s host trimmed to `budget` GB each; bytes freed.
+pub fn trim_on(ctx: &Ctx, on: &On, cfg: &Config, budget: f64, out: &mut dyn Write) -> Result<u64> {
+    let Some(h) = cfg
+        .hosts
+        .values()
+        .find(|h| h.machine.as_deref() == on.machine && on.machine.is_some())
+    else {
+        return trim_builds(ctx, cfg, budget, out, false);
+    };
+    let roots = Some(h.roots()).filter(|v| !v.is_empty());
+    let mut freed = 0;
+    for root in roots.unwrap_or_else(|| vec![crate::roots::DEFAULT.into()]) {
+        freed += trim_remote(on, &format!("{root}/{}", crate::roots::BUILD), budget, out)?;
     }
+    Ok(freed)
+}
+
+fn trim_remote(on: &On, root: &str, budget: f64, out: &mut dyn Write) -> Result<u64> {
     let kb = format!("{:.0}", budget * 1_048_576.0);
-    let o = on.run(
-        "sh",
-        &crate::runner::argv(&["-c", TRIM, "sh", &cfg.limits.build_root, &kb]),
-    )?;
+    let o = on.run("sh", &crate::runner::argv(&["-c", TRIM, "sh", root, &kb]))?;
     anyhow::ensure!(o.code == 0, "trim failed ({}): {}", o.code, o.stderr.trim());
     let s = o.stdout;
     let (log, last) = s.trim_end().rsplit_once('\n').unwrap_or(("", s.trim()));
@@ -1180,7 +1215,7 @@ pub fn reclaim(ctx: &Ctx, cfg: &Config, r: &dyn Runner, o: &mut dyn Write, i: &m
             writeln!(o, "skip {}: {why}", wt.display())?;
         }
     }
-    total += trim_builds(cfg, cfg.limits.build_budget_gb, o, !yes)?;
+    total += trim_builds(ctx, cfg, cfg.limits.build_budget_gb, o, !yes)?;
     let done = if yes { "freed" } else { "reclaimable" };
     writeln!(o, "{:.2} GB {done} {NOTE}", gb(total))?;
     if yes {
@@ -1227,7 +1262,12 @@ pub fn orphan_dirs(ctx: &Ctx, cfg: &Config) -> Vec<std::path::PathBuf> {
     let ours: Vec<&str> = cfg.fleet.values().map(crate::config::Fleet::repo_name).collect();
     let all = std::fs::read_dir(&ctx.worktrees).into_iter().flatten().flatten();
     all.map(|d| d.path())
-        .filter(|p| p.is_dir() && !p.file_name().is_some_and(|n| ours.iter().any(|o| n == *o)))
+        .filter(|p| {
+            p.is_dir()
+                && !p
+                    .file_name()
+                    .is_some_and(|n| n.as_encoded_bytes()[0] == b'.' || ours.iter().any(|o| n == *o))
+        })
         .collect()
 }
 
@@ -1251,7 +1291,7 @@ pub fn remote_orphans(cfg: &Config, r: &dyn Runner, out: &mut dyn Write, remove:
     for (name, h) in cfg.hosts.iter().filter(|h| h.1.enabled && h.1.machine.is_some()) {
         let (on, root) = (
             On::new(r, h.machine.as_deref()),
-            h.root.as_deref().unwrap_or("~/.herdr/worktrees"),
+            h.root.as_deref().unwrap_or(crate::roots::DEFAULT),
         );
         let list = ok(&on, "sh", &["-c", DIRS, "sh", root.trim_start_matches("~/")]);
         let list = list.or_else(|e| writeln!(out, "cannot list orphans on {name}: {e:#}").map(|()| String::new()))?;
@@ -1520,7 +1560,7 @@ pub fn stale(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
 }
 
 /// `wip/<agent>-<YYYYmmdd-HHMM>` (the epoch when `date` is unreadable).
-fn wip_branch(ctx: &Ctx, r: &dyn Runner, agent: &str) -> String {
+pub(crate) fn wip_branch(ctx: &Ctx, r: &dyn Runner, agent: &str) -> String {
     let stamp = crate::usage::date(r, ctx.now, "+%Y%m%d-%H%M");
     let ok = stamp.chars().all(|c| c.is_ascii_digit() || c == '-');
     format!("wip/{agent}-{}", if ok { stamp } else { ctx.now.to_string() })

@@ -32,6 +32,7 @@ pub mod propose;
 pub mod protection;
 pub mod queue;
 pub mod report;
+pub mod roots;
 pub mod runner;
 pub mod runners;
 pub mod secret;
@@ -99,7 +100,7 @@ impl Ctx {
         Ctx {
             config,
             state,
-            worktrees: env("FLEET_WORKTREES", home().join(".herdr/worktrees")),
+            worktrees: env("FLEET_WORKTREES", home().join(roots::DEFAULT.trim_start_matches("~/"))),
             hermes: env("FLEET_HERMES_PROFILES", home().join(".hermes/profiles")),
             exe: std::env::current_exe().map_or("herdsman".into(), |p| p.to_string_lossy().into()),
             now: now(),

@@ -36,6 +36,8 @@ pub struct Lane {
     pub kept: Option<String>,
     /// #260: its worktree, from the spawn.
     pub worktree: Option<String>,
+    /// #630: its workspace root, from the spawn.
+    pub root: Option<String>,
     /// #302: `on <entry> (<entries> resting until 18:40)` when a `fallback` entry carries on.
     pub resting: Option<String>,
     /// #422: a conductor's chat thread (`t6`); with no pane it is `asleep`.
@@ -179,6 +181,7 @@ fn from_spawn(e: &Event, l: Lane) -> Lane {
         host: s("host").or(l.host),
         machine: s("machine").or(l.machine),
         worktree: s("worktree"),
+        root: s("root"),
         resting: s("resting"),
         ..l
     }

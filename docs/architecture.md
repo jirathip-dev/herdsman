@@ -69,7 +69,7 @@ writer died mid-line has a torn tail; its import skips it. A merged issue stays 
 | `~/.config/herdsman/fleet.toml` (`FLEET_CONFIG`) | config: fleets, roles, limits, notifiers |
 | `~/.local/state/herdsman/events.jsonl` (`FLEET_STATE`) | names the state dir; `state.db` beside it holds the log (#344), the file itself only before its import |
 | `~/.local/state/herdsman/cache/` | cached issue specs and PR/CI reads |
-| `~/.herdr/worktrees/` (`FLEET_WORKTREES`) | lane worktrees, `<repo>/issue-<n>` |
+| `~/.local/share/herdsman/work/` (`FLEET_WORKTREES`; a host's `root`/`roots`, #630) | lane worktrees, `<repo>/issue-<n>`; builds under `.build/` |
 | `~/.config/herdsman/claude/<profile>/` | `settings.json` (PreToolUse hook), `role.md`, `fleet.md` |
 | `~/.hermes/profiles/<profile>/config.yaml` (`FLEET_HERMES_PROFILES`) | sync rewrites its `hooks:` key and drops `agent.reasoning_effort` (fleet.toml `effort` owns it) |
 | `~/.config/herdsman/dsh/<profile>.patch.yml` | DSH patch layer for `harness = "dsh"` lanes ([dsh.md](dsh.md)) |

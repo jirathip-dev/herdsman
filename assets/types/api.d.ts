@@ -490,7 +490,16 @@ busy: number,
 /**
  * #255: a cloud host's gh token, as its card says it.
  */
-github: string, };
+github: string, 
+/**
+ * #630: its set workspace roots.
+ */
+roots: Array<HostRoot>, };
+
+/**
+ * A root as the last look saw it (`hosts.json`, the host card, `/api/v1`).
+ */
+export type HostRoot = { path: string, state: string, free_gb?: number | null, };
 
 /**
  * #234: one row a minute per host in `<state dir>/host-history.jsonl`, written by the fast step; 24 h kept.

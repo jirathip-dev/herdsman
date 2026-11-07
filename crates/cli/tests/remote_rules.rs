@@ -190,7 +190,7 @@ fn the_rules_file_holds_no_secrets_and_the_lane_may_not_edit_it() {
     let r = remote_fake().stored("herdsman/sendmeter/API_KEY", "tok-VALUE-123");
     let (code, out) = run(&c, &r, &["spawn", "sendmeter", "12", "impl", "--host", "bazzite"]);
     assert_eq!(code, 0, "{out} {:?}", r.calls.borrow());
-    let wt = "/home/me/.herdr/worktrees/sendmeter/issue-12";
+    let wt = "/home/me/.local/share/herdsman/work/sendmeter/issue-12"; // #630
     let inputs = r.inputs.borrow();
     let rules = inputs
         .iter()

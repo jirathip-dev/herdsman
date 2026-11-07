@@ -24,7 +24,7 @@ profile = "fleet-rev"
 review_rounds = 3
 stall_minutes = 30
 max_parallel_spawns = 0   # spawns in the pass; tests/drive_kicks.rs runs them as kicks (#318)
-build_root = ""           # #438: no shared CARGO_TARGET_DIR (and no trim of the real one) unless a test sets it
+build_root = ""           # #630: retired (builds go under the worktree root); a stale key is ignored
 stray_roots = []          # #536: never clean the real /tmp or $TMPDIR
 "#;
 

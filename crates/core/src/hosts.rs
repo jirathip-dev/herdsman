@@ -69,7 +69,7 @@ impl<'a> On<'a> {
         let ssh = argv(&["-oBatchMode=yes", self.connect, CM[0], CM[1], CM[2], m, "--", &line]);
         ("ssh".into(), ssh)
     }
-    fn sh(&self, script: &str, p: &Path, input: &str) -> Result<Out> {
+    pub(crate) fn sh(&self, script: &str, p: &Path, input: &str) -> Result<Out> {
         self.run_in("sh", &argv(&["-c", script, "sh", &p.to_string_lossy()]), input)
     }
     pub fn exists(&self, p: &Path) -> bool {
@@ -315,6 +315,8 @@ pub struct Seen {
     pub busy: u64,
     /// #255: a cloud host's gh token, as its card says it.
     pub github: String,
+    /// #630: its set workspace roots.
+    pub roots: Vec<crate::roots::Root>,
 }
 
 fn file(ctx: &Ctx) -> PathBuf {
@@ -379,6 +381,7 @@ pub fn survey(ctx: &Ctx, cfg: &Config, r: &dyn Runner, refresh: bool) -> BTreeMa
             (s.load, s.mem, s.mem_total) = (hs.load_per_cpu, hs.free_mem_gb, hs.mem_total_gb);
             ((s.disk, s.disk_total), s.swap) = (host::df(&on).unzip(), hs.swapout);
             s.pressure = hs.pressure.as_deref().map(level);
+            s.roots = crate::roots::rows(cfg, &events, &on, name, &s.home);
             // #234: a remote host's top memory users and its history row come from this 5-minute look (no extra SSH).
             if let Some(ag) = a.as_ref().filter(|_| h.machine.is_some()) {
                 s.top = host::top(&on, ag);
@@ -504,7 +507,7 @@ pub fn disk_low(ctx: &Ctx, cfg: &Config, on: &On) -> Option<String> {
     let low = || host::free_gb(on).filter(|g| *g < min);
     let mut gb = low()?;
     // #438: short of disk, the shared build folder's idle profiles go first; then the disk is read again.
-    if crate::check::trim_on(on, cfg, 0.0, &mut std::io::sink()).unwrap_or(0) > 0 {
+    if crate::check::trim_on(ctx, on, cfg, 0.0, &mut std::io::sink()).unwrap_or(0) > 0 {
         gb = low()?;
     }
     let st = fold(&events);
@@ -547,7 +550,10 @@ pub struct Placed {
     rank: (bool, f64, f64),
 }
 
-fn at(ctx: &Ctx, cfg: &Config, f: &Fleet, r: &dyn Runner, (name, machine): (&str, Option<&str>)) -> Placed {
+/// #630: the log and the root of the issue's last spawn.
+type Pre<'a> = (&'a [Event], Option<&'a str>);
+
+fn at(ctx: &Ctx, cfg: &Config, f: &Fleet, r: &dyn Runner, (name, machine): (&str, Option<&str>), pre: Pre) -> Placed {
     let on = On::new(r, machine);
     let mut seen = cached(ctx).remove(name).unwrap_or_default();
     let cloud = crate::cloud::held(ctx, cfg, name);
@@ -557,11 +563,16 @@ fn at(ctx: &Ctx, cfg: &Config, f: &Fleet, r: &dyn Runner, (name, machine): (&str
     let home = machine.and(Some(seen.home.clone()).filter(|h| !h.is_empty()));
     let ex = |p: &str| under(p, home.as_deref());
     let def = if home.is_some() {
-        ex("~/.herdr/worktrees")
+        ex(crate::roots::DEFAULT)
     } else {
         ctx.worktrees.clone()
     };
-    let root = cfg.hosts.get(name).and_then(|h| h.root.as_deref());
+    // #630: one root is taken as is; of several, the issue's last or the first mounted with room.
+    let roots = crate::roots::listed(cfg, name, home.as_deref(), &def);
+    let root = match &roots[..] {
+        [one] => one.clone(),
+        _ => crate::roots::pick(cfg, pre.0, &on, name, &roots, pre.1),
+    };
     let reach = format!("can't reach {}:", f.repo); // #307: a repo only keeps its own fleet's lanes off
     let sick = (seen.health.iter()).find(|w| w.starts_with('✗') && (!w.starts_with("✗ git ") || w.contains(&reach)));
     let (hs, refusal) = match cloud.map_or_else(|| host::agents(&on).map_err(|_| None), |c| Err(Some(c))) {
@@ -573,7 +584,7 @@ fn at(ctx: &Ctx, cfg: &Config, f: &Fleet, r: &dyn Runner, (name, machine): (&str
     Placed {
         name: name.into(),
         machine: machine.map(String::from),
-        root: root.map_or(def, ex),
+        root,
         local: ex(&f.local),
         rank: (
             refusal.is_some(),
@@ -691,6 +702,8 @@ pub fn place(
         };
     }
     let f = cfg.fleet(fleet)?;
+    let last = events.iter().rev().find(|e| e.is("spawn", fleet, issue));
+    let pre = (events, last.and_then(|e| e.str("root")));
     // #236: `--host`, else the role's `host` pin; a design lane runs in the main host's herdr only.
     let design = f.family(role) == "design";
     let pin = f.role.get(f.role_key(role)).and_then(|r| r.host.as_deref());
@@ -712,11 +725,11 @@ pub fn place(
                 format!("host {h}: design lanes run on the main host only"),
             );
         }
-        return Ok(Some(at(ctx, cfg, f, r, (h, machine))));
+        return Ok(Some(at(ctx, cfg, f, r, (h, machine), pre)));
     }
-    if let Some(e) = events.iter().rev().find(|e| e.is("spawn", fleet, issue)) {
+    if let Some(e) = last {
         let was = (e.str("host").unwrap_or("local"), e.str("machine"));
-        return Ok(Some(at(ctx, cfg, f, r, was)));
+        return Ok(Some(at(ctx, cfg, f, r, was, pre)));
     }
     let needs = needs(f, role, events, (fleet, issue));
     let seen = cached(ctx);
@@ -728,7 +741,7 @@ pub fn place(
     let mut on: Vec<Placed> = fits
         .iter()
         .filter(|h| h.1.enabled)
-        .map(|(n, h)| at(ctx, cfg, f, r, (n, h.machine.as_deref())))
+        .map(|(n, h)| at(ctx, cfg, f, r, (n, h.machine.as_deref()), pre))
         .collect();
     // #256: a cloud host over its budget is no host for a need only it covers.
     if on
@@ -787,7 +800,7 @@ pub fn wake(ctx: &Ctx, cfg: &Config, r: &dyn Runner, f: (&Fleet, bool), p: Optio
             let why = p.why.clone();
             Ok(Some(Placed {
                 why,
-                ..at(ctx, cfg, f.0, r, (&p.name, p.machine.as_deref()))
+                ..at(ctx, cfg, f.0, r, (&p.name, p.machine.as_deref()), (&[], None))
             }))
         }
         p => Ok(p),

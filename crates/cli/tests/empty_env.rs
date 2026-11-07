@@ -19,7 +19,7 @@ fn empty_values_are_unset() {
     let c = Ctx::from_env();
     assert_eq!(c.config, h.join(".config/herdsman/fleet.toml"));
     assert_eq!(c.state, h.join(".local/state/herdsman/events.jsonl"));
-    assert_eq!(c.worktrees, h.join(".herdr/worktrees"));
+    assert_eq!(c.worktrees, h.join(".local/share/herdsman/work")); // #630
     assert_eq!(c.hermes, h.join(".hermes/profiles"));
     assert_eq!(c.home, h);
     assert!(c.hints.is_empty() && !Path::new(&h).exists(), "{:?}", c.hints);

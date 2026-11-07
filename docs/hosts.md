@@ -33,9 +33,26 @@ tags = ["fast"]
 [hosts.bazzite]
 machine = "bazzite"     # the herdr machine label (also its SSH name)
 tags = ["gpu"]          # hand tags, added to the detected ones
-root = "~/lanes"        # worktree root on that host (default ~/.herdr/worktrees)
+root = "~/lanes"        # workspace root on that host (default ~/.local/share/herdsman/work)
 enabled = true          # false: no new lanes go there (see below)
 ```
+
+## Workspace roots (#630)
+
+Everything herdsman makes on a host lives under its workspace root: worktrees at `<root>/<repo>/<lane>`, the
+shared Cargo builds and lane scratch under `<root>/.build`. `herdsman migrate` moves the worktrees from the old
+`~/.herdr/worktrees` (a live lane's on a later run, once it has ended), then drops `~/.cache/herdsman/target`.
+
+`roots = ["/Volumes/NVMe/herdsman", "~/.local/share/herdsman/work"]` lists several in order (an external drive
+first): a new lane takes the first that is mounted, writable and has `min_free_gb`; its spawn logs that `root`, and
+an issue's later lanes stay on it while it can take them. `herdsman hosts eject <host> [<root>]` (default the first)
+takes the root out at once: each lane there is saved (`wip/<agent>-<stamp>` for anything unpushed or uncommitted),
+its worktree removed, the live one restarted on the next root from that save; then it prints
+`safe to unplug <root>` (exit 1 while an agent still works there). A root pulled without eject is noted once by
+`check` (`! root <path> gone`): its live lane restarts on the next root from its branch, and the issue's waiting line
+says what was lost. Mounted again, the root takes new lanes; nothing moves back on its own. `herdsman status`, the
+lane sheet and each host card (with `/api/v1`'s host data) show the roots, their state (`active`, `ejecting`,
+`gone`) and free space.
 
 A fleet's `local` that starts with `~/` points to that path under each host's own home. An absolute `local` is used
 as written on every host.

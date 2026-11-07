@@ -176,9 +176,10 @@ impl Plan {
         harness::get(&self.harness).kick_cmds(self, pane)
     }
 
-    /// #157: the lane's files under `root` on its host.
-    fn at(&mut self, root: &Path, repo: &str) {
-        self.worktree = root.join(repo).join(&self.branch);
+    /// #157: the lane's files under `root` on its host; #630: its builds too.
+    fn at(&mut self, root: &Path, f: &Fleet) {
+        self.env.extend(shared_target(root, f, &self.agent));
+        self.worktree = root.join(f.repo_name()).join(&self.branch);
         self.brief = self.worktree.join(".brief.md");
         self.mcp_file = self.worktree.join(".mcp.lane.json");
         self.kick = format!("Read {} and execute it fully.", self.brief.display());
@@ -326,7 +327,7 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: u64, role: &str) -> Res
         .collect();
     let port = lane_port(f.port_range.as_deref(), &format!("{fleet}/{branch}"), &taken);
     let title = lane_title(&head, &crate::gh::cached_title(ctx, fleet, issue).unwrap_or_default());
-    let env = shared_target(cfg, f, &agent)
+    let env = shared_target(&ctx.worktrees, f, &agent)
         .chain(f.env.clone())
         .chain(f.shared_cache.clone())
         .collect();
@@ -357,17 +358,18 @@ pub fn plan(ctx: &Ctx, cfg: &Config, fleet: &str, issue: u64, role: &str) -> Res
     })
 }
 
-/// #438: one Cargo build folder per host and repo, `[limits] build_root`'s `<repo>`; a fleet's own setting replaces it.
-/// #536: plus the lane's private scratch, `<build_root>/.scratch/<agent>`, for second builds and checkouts.
-fn shared_target(cfg: &Config, f: &Fleet, agent: &str) -> impl Iterator<Item = (String, String)> {
-    let root = cfg.limits.build_root.trim_end_matches('/');
-    let d = format!("{root}/{}", f.repo_name());
-    let s = format!("{root}/{SCRATCH}/{agent}");
+/// #438: one Cargo build folder per host root and repo, `<root>/.build/<repo>` (#630); a fleet's own setting replaces it.
+/// #536: plus the lane's private scratch, `<root>/.build/.scratch/<agent>`, for second builds and checkouts.
+fn shared_target<'a>(root: &Path, f: &'a Fleet, agent: &str) -> impl Iterator<Item = (String, String)> + 'a {
+    let b = root.join(crate::roots::BUILD);
+    let d = b.join(f.repo_name()).display().to_string();
+    let s = b.join(SCRATCH).join(agent).display().to_string();
     let vars = [("CARGO_TARGET_DIR".into(), d), ("HERDSMAN_SCRATCH_TARGET".into(), s)];
-    (!root.is_empty()).then_some(vars).into_iter().flatten()
+    vars.into_iter()
+        .filter(|v| !f.env.contains_key(&v.0) && !f.shared_cache.contains_key(&v.0))
 }
 
-/// #536: the folder under `build_root` holding each lane's scratch.
+/// #536: the folder under a root's `.build` holding each lane's scratch.
 pub const SCRATCH: &str = ".scratch";
 
 /// #92: a fix round may dispute a finding; the next, fresh reviewer decides.
@@ -735,7 +737,7 @@ pub fn spawn(
     let on = crate::hosts::On::new(r, placed.as_ref().and_then(|pl| pl.machine.as_deref()));
     let (base, r): (&dyn Runner, &dyn Runner) = (r, &on);
     if let Some(pl) = &placed {
-        p.at(&pl.root, f.repo_name());
+        p.at(&pl.root, f);
         p.env.insert("HERDSMAN_HOST".into(), pl.name.clone()); // #256: the lane hook's per-host rules
         if pl.machine.is_some() {
             // #389: its asks, answers, verdicts and events wait in its outbox; it holds no route to the main host.
@@ -1195,8 +1197,7 @@ pub fn spawn(
             d["update"] = json!(o.update);
             d["handover"] = json!(note);
             if let Some(pl) = &placed {
-                d["host"] = json!(pl.name);
-                d["machine"] = json!(pl.machine);
+                (d["host"], d["machine"], d["root"]) = (json!(pl.name), json!(pl.machine), json!(pl.root));
                 if let Some(w) = &pl.why {
                     d["why"] = json!(w);
                 }
@@ -1508,7 +1509,7 @@ pub fn adopt(
 }
 
 /// #376: the lane a herdr agent looks like, `(fleet, issue, role, worktree)`: named `<fleet>-<role>-<issue>[-rN]`, or
-/// working under `worktrees/<repo>/issue-N` (role: none) or `worktrees/<repo>/<check role>-N-rK`.
+/// working under `work/<repo>/issue-N` (#630; or `worktrees/`; role: none) or `work/<repo>/<check role>-N-rK`.
 pub fn shaped<'a>(cfg: &'a Config, a: &Value) -> Option<(&'a str, u64, Option<String>, Option<String>)> {
     let name = a["name"].as_str().unwrap_or_default();
     let cwd = Path::new(a["cwd"].as_str().or(a["foreground_cwd"].as_str()).unwrap_or_default());
@@ -1524,7 +1525,7 @@ pub fn shaped<'a>(cfg: &'a Config, a: &Value) -> Option<(&'a str, u64, Option<St
         let named = name.strip_prefix(&format!("{fl}-")).and_then(|w| lane(w, true));
         let at = parts
             .windows(3)
-            .position(|w| w[0] == "worktrees" && w[1] == f.repo_name());
+            .position(|w| matches!(w[0], "worktrees" | "work") && w[1] == f.repo_name());
         let by_cwd = at.and_then(|i| match parts[i + 2].strip_prefix("issue-") {
             Some(n) => Some((None, n.parse().ok()?)),
             None => lane(parts[i + 2], false),

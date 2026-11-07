@@ -99,6 +99,7 @@ macro_rules! each {
             IssueState,
             Waiting,
             hosts::Seen,
+            herdsman_server::roots::Root,
             hosts::Row,
             Value
         )

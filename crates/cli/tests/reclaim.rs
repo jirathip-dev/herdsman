@@ -135,11 +135,8 @@ fn busy_or_recent_worktrees_are_skipped() {
 #[test]
 fn the_shared_build_folder_is_trimmed_past_its_budget_except_a_building_profile() {
     let d = tmpdir("reclaim-shared");
-    let root = d.join("builds");
-    let cfg = CONFIG.replace(
-        "build_root = \"\"",
-        &format!("build_root = \"{}\"\nbuild_budget_gb = 0", root.display()),
-    );
+    let root = d.join("worktrees/.build"); // #630: the root's build folder
+    let cfg = CONFIG.replace("build_root = \"\"", "build_budget_gb = 0");
     let c = ctx(&d, &cfg);
     let profile = |p: &str| {
         let dir = root.join(p);

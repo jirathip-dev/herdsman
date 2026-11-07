@@ -16,7 +16,12 @@ fn plan(c: &herdsman::Ctx, r: &Fake, role: &str) -> Value {
     serde_json::from_str(&out).unwrap()
 }
 
+/// The argv, without #630's build folders under the lane's root (`<root>/.build/…`; `raw` keeps them).
 fn words(v: &Value) -> Vec<String> {
+    raw(v).into_iter().filter(|w| !w.contains("/.build/")).collect()
+}
+
+fn raw(v: &Value) -> Vec<String> {
     v.as_array()
         .unwrap()
         .iter()
@@ -209,12 +214,13 @@ fn shared_cache_is_exported_into_the_lane() {
     );
 }
 
-/// #438: lanes of one repo on a host share one Cargo build folder; another repo's lanes get their own.
+/// #438: lanes of one repo on a host share one Cargo build folder; another repo's lanes get their own. #630: under
+/// the lane's root, `<root>/.build/<repo>`.
 #[test]
 fn lanes_share_one_cargo_target_per_repo() {
     let other = "[fleet.other]\nrepo = \"jirathip-dev/other\"\nlocal = \"/tmp/x/other\"\nintegration = \"staging\"\n\n\
                  [fleet.other.role.impl]\nharness = \"hermes\"\nprofile = \"fleet-impl\"\n\n";
-    let cfg = other.to_string() + &CONFIG.replace("build_root = \"\"", "build_root = \"/c/builds/\"");
+    let cfg = other.to_string() + CONFIG + "\n[hosts.mini]\nroot = \"/c\"\n";
     let c = ctx(&tmpdir("spawn-shared-target"), &cfg);
     let target = |fleet: &str, n: &str| {
         let (code, out) = run(
@@ -224,42 +230,45 @@ fn lanes_share_one_cargo_target_per_repo() {
         );
         assert_eq!(code, 0, "{out}");
         let p: Value = serde_json::from_str(&out).unwrap();
-        words(&p["commands"][2])
+        raw(&p["commands"][2])
             .into_iter()
             .find(|w| w.starts_with("CARGO_TARGET_DIR="))
     };
     let one = target("sendmeter", "12");
-    assert_eq!(one.as_deref(), Some("CARGO_TARGET_DIR='/c/builds/sendmeter'"));
+    assert_eq!(one.as_deref(), Some("CARGO_TARGET_DIR='/c/.build/sendmeter'"));
     assert_eq!(target("sendmeter", "13"), one);
     assert_eq!(
         target("other", "12").as_deref(),
-        Some("CARGO_TARGET_DIR='/c/builds/other'")
+        Some("CARGO_TARGET_DIR='/c/.build/other'")
     );
 }
 
-/// #536: each lane gets its own scratch dir under `build_root`, named for its agent; a reviewer's per round.
+/// #536: each lane gets its own scratch dir, named for its agent; a reviewer's per round. #630: under its root's
+/// `.build`; with no `[hosts]`, the worktree root's.
 #[test]
-fn each_lane_gets_a_private_scratch_dir_under_build_root() {
-    let cfg = CONFIG.replace("build_root = \"\"", "build_root = \"/c/builds/\"");
-    let c = ctx(&tmpdir("spawn-scratch"), &cfg);
-    let scratch = |role: &str| {
-        words(&plan(&c, &Fake::default(), role)["commands"][2])
+fn each_lane_gets_a_private_scratch_dir_under_its_roots_build_folder() {
+    let c = ctx(
+        &tmpdir("spawn-scratch"),
+        &(CONFIG.to_string() + "\n[hosts.mini]\nroot = \"/c\"\n"),
+    );
+    let scratch = |c: &herdsman::Ctx, role: &str| {
+        raw(&plan(c, &Fake::default(), role)["commands"][2])
             .into_iter()
             .find(|w| w.starts_with("HERDSMAN_SCRATCH_TARGET="))
     };
     assert_eq!(
-        scratch("impl").as_deref(),
-        Some("HERDSMAN_SCRATCH_TARGET='/c/builds/.scratch/sendmeter-impl-12'")
+        scratch(&c, "impl").as_deref(),
+        Some("HERDSMAN_SCRATCH_TARGET='/c/.build/.scratch/sendmeter-impl-12'")
     );
     assert_eq!(
-        scratch("rev").as_deref(),
-        Some("HERDSMAN_SCRATCH_TARGET='/c/builds/.scratch/sendmeter-rev-12-r1'")
+        scratch(&c, "rev").as_deref(),
+        Some("HERDSMAN_SCRATCH_TARGET='/c/.build/.scratch/sendmeter-rev-12-r1'")
     );
-    let off = ctx(&tmpdir("spawn-scratch-off"), CONFIG);
-    let none = words(&plan(&off, &Fake::default(), "impl")["commands"][2]);
-    assert!(
-        !none.iter().any(|w| w.contains("SCRATCH")),
-        "no build_root, no scratch: {none:?}"
+    let bare = ctx(&tmpdir("spawn-scratch-bare"), CONFIG);
+    let want = bare.worktrees.join(".build/.scratch/sendmeter-impl-12");
+    assert_eq!(
+        scratch(&bare, "impl"),
+        Some(format!("HERDSMAN_SCRATCH_TARGET='{}'", want.display()))
     );
 }
 

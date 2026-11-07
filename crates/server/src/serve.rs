@@ -2170,6 +2170,7 @@ impl<'a> Server<'a> {
             o(&l.account),
             o(&l.resting),
             o(&l.port),
+            l.root.as_ref().map_or(String::new(), |r| format!("root {r}")),
             a,
         ];
         let screen = screen.unwrap_or_default();
@@ -2607,6 +2608,17 @@ impl<'a> Server<'a> {
                 ));
             }
             rows.extend(cloud.map(|c| plain("cloud", &c[1], None, c[2].clone(), vec![])));
+            for r in &s.roots {
+                let t = [grey("g"), "a", "m"][usize::from(r.state != "active") + usize::from(r.state == "gone")];
+                let free = r.free_gb.map(|g| format!("{g:.0} GB free"));
+                rows.push(plain(
+                    "root",
+                    t,
+                    None,
+                    r.path.clone(),
+                    [Some(r.state.clone()), free].into_iter().flatten().collect(),
+                ));
+            }
             let ls = [lanes.join(" · "), "none".into()][usize::from(lanes.is_empty())].clone();
             let ln = plain("", "", Some(lanes.len().to_string()), String::new(), vec![ls]);
             rows.push(row("lanes", "lanes", grey("g"), ln, None));

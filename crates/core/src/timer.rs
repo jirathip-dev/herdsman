@@ -258,7 +258,7 @@ pub fn tick(ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write) -> Result<i32> {
             }
         }
         pass.step("trim");
-        crate::check::trim_hosts(cfg, &pass, out)?; // #485: maintenance after drive, never before it
+        crate::check::trim_hosts(ctx, cfg, &pass, out)?; // #485: maintenance after drive, never before it
         pass.step("lesson");
         crate::lesson::weekly(ctx, cfg, &pass, out)?; // #419
         driven
