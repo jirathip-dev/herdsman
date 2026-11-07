@@ -161,6 +161,17 @@ fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, rows: &mut Vec<String>) {
         }
         row(rows, got.is_ok_and(|v| v.is_some()), bad, &line);
     }
+    // #626: GitHub webhooks need their secret; the refused deliveries are only counted.
+    let n = crate::webhook::rejected(ctx);
+    let bad = if n > 0 {
+        format!(" · {n} refused (bad signature)")
+    } else {
+        String::new()
+    };
+    let on = !crate::webhook::secrets(cfg, r).is_empty();
+    let fix = "herdsman secret request <thread> GITHUB_WEBHOOK_SECRET --why 'GitHub webhooks' (docs/serve.md)";
+    let line = format!("webhook — {}{bad} → {fix}", if on { "secret set" } else { "no secret" });
+    row(rows, on, '!', &line);
     // #556: signed by the one local identity, the keychain's "Always Allow" outlasts a reinstall.
     if cfg!(target_os = "macos") {
         let req = [

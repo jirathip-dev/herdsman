@@ -75,6 +75,7 @@ fn setup(name: &str, harness: &str) -> (herdsman::Ctx, PathBuf) {
 fn good() -> Fake {
     Fake::default()
         .stored("herdsman/all/TOKEN_MAIN", TOKEN)
+        .stored("herdsman/all/GITHUB_WEBHOOK_SECRET", "hook")
         .reply("herdr status", HERDR)
         .reply("sysctl -n kern.memorystatus_vm_pressure_level", "1")
         .reply("vm_stat", "Swapouts: 5.\n")

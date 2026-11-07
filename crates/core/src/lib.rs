@@ -45,6 +45,7 @@ pub mod timer;
 pub mod usage;
 pub mod verify;
 pub mod waiting;
+pub mod webhook;
 pub mod webpush;
 
 use anyhow::{bail, Result};

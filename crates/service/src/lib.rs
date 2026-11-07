@@ -52,7 +52,7 @@ pub fn main(ctx: &Ctx, api: &str, board: Option<&str>) -> Result<()> {
     if let Some(b) = board.map(String::from) {
         let c = ctx.clone();
         std::thread::spawn(move || {
-            if let Err(e) = herdsman_server::serve::serve(&c, &Real, &b, false) {
+            if let Err(e) = herdsman_server::hooks::serve(&c, &Real, &b, false) {
                 eprintln!("herdsman service: board on {b}: {e:#}");
             }
         });

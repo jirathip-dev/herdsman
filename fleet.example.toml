@@ -6,6 +6,7 @@ models = ["opus", "sonnet", "claude-opus-5-5"]   # the model dropdown `herdsman 
 allowed_hosts = ["<mac>.<tailnet>.ts.net"]   # `tailscale serve` proxies the page over HTTPS
 # approve_hint = "or send 'pair {code}' to the owner"   # appended to the pairing panel's Mac line
 # tailscale_https_port = 8443   # `herdsman setup` runs `tailscale serve --bg --https=<port> http://<addr>`
+# hooks_addr = "127.0.0.1:7778"   # the Funnel listener: POST /hooks/github only ("" = off; docs/serve.md)
 # launchd_label = "dev.herdsman.serve"   # the board job `herdsman setup` writes (or adopts)
 # theme = "kitchen"   # the Herd's theme: farm (default), kitchen or <config dir>/themes/<name>/ (docs/serve.md)
 
@@ -166,6 +167,7 @@ fast_secs = 60       # `herdsman timer install`: the fast job (`drive --fast`: r
 slow_secs = 300      # and the tick (check + the full pass that starts lanes)
 max_parallel_spawns = 6   # the pass launches each spawn as a detached kick, this many at once (0: spawn in the pass)
 spawn_pending_max_secs = 300   # a spawn marker or kick lock older than this (or whose pid is gone) is stale
+# webhook_poll_minutes = 10   # #626: with GitHub webhooks on, the fast step's catch-up PR read runs this often
 
 [[notify]]
 cmd = "notify <chat>"   # any command; one plain line on stdin

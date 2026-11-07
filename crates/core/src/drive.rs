@@ -524,6 +524,7 @@ pub fn drive(
     std::fs::create_dir_all(state_dir(ctx))?;
     let i = usize::from(fast);
     gh::FORCE.set(fast || KICK.get().is_some());
+    gh::CATCHUP.set(if fast { cfg.limits.webhook_poll_minutes * 60 } else { 0 });
     let stamp = ctx.state.with_file_name(["drive.at", "drive-fast.at"][i]);
     let _ = std::fs::write(&stamp, ctx.now.to_string());
     let lock = ["drive.lock", "drive-fast.lock"][i];

@@ -25,6 +25,8 @@ pub fn cache_path(ctx: &Ctx, kind: &str, fleet: &str, issue: u64) -> PathBuf {
 
 // #212: the fast step reads every PR afresh, so a minute's launchd jitter never leaves a card 2 min old.
 thread_local!(pub static FORCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+// #626: the fast step's catch-up interval (secs, 0: off): a fleet with webhooks on is re-read only this often.
+thread_local!(pub static CATCHUP: std::cell::Cell<u64> = const { std::cell::Cell::new(0) });
 
 /// A `{"ts": …}` cache entry younger than `PR_TTL` at `now` (#246: while `FORCE` is set, only one of this step).
 fn fresh(c: &Value, now: u64) -> bool {
@@ -168,7 +170,10 @@ pub fn snapshot(ctx: &Ctx, r: &dyn Runner, f: &Fleet, fleet: &str, now: u64) -> 
         let settled = old["prs"]
             .as_object()
             .is_some_and(|m| m.values().all(|v| v["mergeable"] != "UNKNOWN"));
-        let same = FORCE.get() && unchanged(r, f, &mut etags) && settled && now.saturating_sub(at) < PROBE_MAX;
+        let age = now.saturating_sub(at);
+        let on = || crate::secret::lookup(r, fleet, crate::webhook::SECRET).is_ok_and(|s| s.is_some());
+        let hooked = || settled && age < CATCHUP.get() && on();
+        let same = FORCE.get() && (hooked() || unchanged(r, f, &mut etags) && settled && age < PROBE_MAX);
         let c = if same {
             json!({"ts": now, "at": at, "prs": old["prs"], "etags": etags})
         } else {
@@ -342,6 +347,15 @@ pub fn diff_names(
         .filter_map(Value::as_str)
         .map(String::from)
         .collect())
+}
+
+/// #626: the fleet's open-PR snapshot is read afresh by the next step (a webhook said a PR moved).
+pub fn stale(ctx: &Ctx, fleet: &str) {
+    let p = cache_path(ctx, "prs", fleet, 0);
+    if let Some(mut c) = load::<Value>(&p) {
+        (c["ts"], c["at"]) = (json!(0), json!(0));
+        let _ = store(&p, &c);
+    }
 }
 
 /// Drop the cached PR read (after fleet changed the PR itself): the next read is of that PR alone (#246).
