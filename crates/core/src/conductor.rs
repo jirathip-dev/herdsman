@@ -93,7 +93,7 @@ pub fn archive(ctx: &Ctx, cfg: &Config, r: &dyn Runner, id: &str, on: bool) -> R
     let last = of(&events, id).rfind(|e| e.kind.starts_with("conductor-"));
     if let Some(s) = last.filter(|s| on && s.kind == "conductor-start") {
         if herdr::agents(r)?.iter().any(|a| a["name"] == s.data["agent"]) {
-            herdr::workspace_close(r, s.str("workspace").unwrap_or_default())?;
+            close(r, s)?;
         }
         let d = json!({"thread": id, "agent": s.str("agent"), "why": "archived"});
         emit(
@@ -544,7 +544,7 @@ fn once(ctx: &Ctx, cfg: &Config, r: &dyn Runner, t: &Event, line: &str) -> Resul
     let picked = awake.is_some_and(|s| of(&events, id).any(|e| e.kind == "thread-model" && e.seq > s.seq));
     let Some(s) = awake.filter(|_| !picked) else {
         if let Some(s) = awake {
-            herdr::workspace_close(r, s.str("workspace").unwrap_or_default())?;
+            close(r, s)?;
             let d = json!({"thread": id, "agent": s.str("agent"), "why": "model"});
             emit(
                 &ctx.state,
@@ -555,6 +555,11 @@ fn once(ctx: &Ctx, cfg: &Config, r: &dyn Runner, t: &Event, line: &str) -> Resul
         return start(ctx, cfg, r, t, &read(&ctx.state)?, line);
     };
     let (agent, pane) = (s.str("agent").unwrap_or_default(), s.str("pane").unwrap_or_default());
+    // #608: an ACP conductor takes the line as one prompt, multi-line as it is (#397's one line is herdr's).
+    if acp(s) {
+        crate::shed::cli(r, &["send", agent, line])?;
+        return Ok(agent.into());
+    }
     herdr::reply(
         r,
         s.str("harness") == Some("dsh"),
@@ -563,6 +568,19 @@ fn once(ctx: &Ctx, cfg: &Config, r: &dyn Runner, t: &Event, line: &str) -> Resul
         &line.replace('\n', " "),
     )?;
     Ok(agent.into())
+}
+
+/// #608: a conductor that runs as an ACP session in shed.
+fn acp(s: &Event) -> bool {
+    s.str("runtime") == Some("shed-acp")
+}
+
+/// Close conductor `s`: its shed terminal (#608), else its herdr workspace.
+fn close(r: &dyn Runner, s: &Event) -> Result<()> {
+    if acp(s) {
+        return herdr::close(r, s.str("agent").unwrap_or_default()).map(drop);
+    }
+    herdr::workspace_close(r, s.str("workspace").unwrap_or_default()).map(drop)
 }
 
 /// The conductor role: the thread fleet's `[fleet.<n>.role.conductor]` (#401: else its impl role on profile
@@ -799,7 +817,9 @@ fn start(ctx: &Ctx, cfg: &Config, r: &dyn Runner, t: &Event, events: &[Event], l
     let (role, resting) = crate::access::fallback(cfg, events, &base, ctx.now)?;
     let h = harness::get(&role.harness);
     // Only a session this harness started resumes (a fallback to another harness starts its own).
-    let first = of(events, id).find(|e| e.kind == "conductor-start" && e.str("harness") == Some(&role.harness));
+    // #608: an ACP session is never resumed (shed's bridge loads none): it starts fresh with the thread file.
+    let first =
+        of(events, id).find(|e| e.kind == "conductor-start" && e.str("harness") == Some(&role.harness) && !acp(e));
     let session = first
         .and_then(|e| e.str("session"))
         .map_or_else(uuid, |s| Ok(s.into()))?;
@@ -848,10 +868,50 @@ fn start(ctx: &Ctx, cfg: &Config, r: &dyn Runner, t: &Event, events: &[Event], l
         session: Some((session.clone(), resume)),
     };
     p.env.insert("HERDSMAN_THREAD".into(), id.into());
+    // #608: a shed-acp fleet's conductor is an ACP session under the same guard as its lanes (#565), or none at all.
+    let shed = cfg.shed_for(fleet).filter(|b| b.acp.is_some());
+    let acp = match shed.map(|b| (b.acp.clone().unwrap_or_default(), herdr::Shed(b))) {
+        Some((aid, b)) => match crate::spawn::acp_cmd(ctx, r, &p, &aid, false) {
+            Ok(cmd) => Some((b, cmd)),
+            Err(e) => {
+                if e.downcast_ref::<crate::gate::Refusal>().is_some() {
+                    log(
+                        ctx,
+                        cfg,
+                        t,
+                        "system",
+                        (&format!("the conductor does not start: {e:#}"), &[]),
+                    )?;
+                }
+                return Err(e);
+            }
+        },
+        None => None,
+    };
     h.ready(ctx, r, &p)?;
-    on.write(&brief, &profile(cfg, t, fleet))?;
+    let text = profile(cfg, t, fleet);
+    on.write(&brief, &text)?;
     h.prepare(ctx, &on, &p)?;
     let _secrets = crate::spawn::deliver(&on, cfg, &p)?;
+    if let Some((b, cmd)) = acp {
+        let labels = [
+            ("fleet", fleet),
+            ("issue", "-"),
+            ("role", "conductor"),
+            ("harness", &p.harness),
+            ("source", "drover"),
+            ("group", f.repo_name()),
+            ("thread", id),
+        ]
+        .map(|(k, v)| (k, v.to_string()));
+        b.start(r, &agent, &labels, &dir.to_string_lossy(), &cmd)?;
+        let kick = format!("The thread so far is in {}, the last message new.", thread.display());
+        let kicked = b.kick_acp(r, &agent, &format!("{}\n\n{kick}\n\n{line}", text.trim_end()))?;
+        let d = json!({"thread": id, "agent": agent, "pane": agent, "runtime": "shed-acp", "harness": p.harness,
+            "model": p.model, "effort": p.effort, "account": p.account.as_ref().map(|a| &a.0), "resumed": false,
+            "confirmed": kicked});
+        return started(ctx, cfg, r, t, &p, d);
+    }
     let ws = |p: &str| p.split(':').next().unwrap_or(p).to_string();
     let mine =
         |a: &&Value| a["name"] == agent.as_str() && a["cwd"].as_str().map(std::path::Path::new) == Some(dir.as_path());
@@ -918,6 +978,12 @@ fn start(ctx: &Ctx, cfg: &Config, r: &dyn Runner, t: &Event, events: &[Event], l
     if o.code != 0 {
         d["adopted"] = json!(true);
     }
+    started(ctx, cfg, r, t, &p, d)
+}
+
+/// Log conductor start `d` (and a fallback's `switched to` line); the agent.
+fn started(ctx: &Ctx, cfg: &Config, r: &dyn Runner, t: &Event, p: &Plan, d: Value) -> Result<String> {
+    let agent = d["agent"].as_str().unwrap_or_default().to_string();
     emit(
         &ctx.state,
         cfg,
@@ -1163,11 +1229,13 @@ pub fn sleep_idle(ctx: &Ctx, cfg: &Config, r: &dyn Runner, events: &[Event], age
         if a.is_some() && switch(ctx, cfg, r, t, s)? {
             continue;
         }
-        if !quiet || a.is_some_and(|a| a["agent_status"] == "working") {
+        // #608: an ACP conductor shed no longer runs is asleep at once (the board's dot is shed's state).
+        let gone = a.is_none() && acp(s);
+        if !gone && (!quiet || a.is_some_and(|a| a["agent_status"] == "working")) {
             continue;
         }
         if a.is_some() {
-            herdr::workspace_close(r, s.str("workspace").unwrap_or_default())?;
+            close(r, s)?;
         }
         let d = json!({"thread": id, "agent": s.str("agent"), "why": if a.is_some() { "idle" } else { "gone" }});
         emit(
@@ -1204,7 +1272,7 @@ fn switch(ctx: &Ctx, cfg: &Config, r: &dyn Runner, t: &Event, s: &Event) -> Resu
         let d = json!({"agent": s.str("agent"), "harness": hn, "account": account, "until": until});
         emit(&ctx.state, cfg, Event::new(ctx.now, &t.fleet, None, kind, d))?;
     }
-    herdr::workspace_close(r, s.str("workspace").unwrap_or_default())?;
+    close(r, s)?;
     let why = if out { "signed out" } else { "usage limit" };
     let d = json!({"thread": id, "agent": s.str("agent"), "why": why});
     emit(

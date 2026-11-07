@@ -130,6 +130,17 @@ no login), or when the lane is placed on another host (`shed run --acp` runs on 
 `--policy` has no per-command rules, so a hook-less adapter has no fallback guard. Not carried over from a pane
 yet: the role's `effort` and its `mcp` servers (the bridge's `session/new` passes none).
 
+**Conductors (#608).** A thread whose fleet (for an `all` thread, the fleet whose conductor role it runs on) is on
+`shed-acp` starts its conductor the same way: `shed run --acp <acp> --policy <acp_policy> --name conductor-<thread>
+--cwd <state dir>/conductor/<thread>/` with the labels `fleet`, `issue=-`, `role=conductor`, `harness`,
+`source=drover`, `group=<repo>` and `thread=<thread>`, so cooee lists it. The brief, the kick and the message are its
+first prompt; every later line (an owner message, a `DECISION`, a handoff, a system line) goes in through `shed send`,
+multi-line as it is. The guard is a lane's: `HERDSMAN_LANE=<fleet>:-:conductor` and `HERDSMAN_THREAD` reach the
+profile's hook, so owner-only verbs stay refused. An unguardable setup refuses `ACP_UNGUARDED`, posts the reason in the
+thread as a `system` line, and never falls back to herdr. The idle sleep kills and removes the session, and a session
+shed no longer runs is asleep on the next `check`. shed's bridge loads no saved session yet (`session/load`), so the
+next message starts a fresh one pointed at `.thread.md`. A fleet on herdr keeps herdr conductors.
+
 **Proof (2026-11-06, the mini).** shed 0.0.0 with claude-acp 0.101.0. A session in a scratch repo had herdsman's
 hook as its project settings' `PreToolUse` hook and `HERDSMAN_LANE=herdsman:565:impl`. It was asked to run
 `git push origin staging`, `pkill -f …` and `gh pr merge 1`. Each tool call ended `failed` with herdsman's refusal

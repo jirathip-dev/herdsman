@@ -488,7 +488,7 @@ fn round(events: &[Event], fleet: &str, issue: u64, p: &Plan) -> u32 {
 /// #565: an ACP lane's adapter (its agent's command in `shed agents`), run by `sh` after the lane's exports and secrets
 /// file, with its profile as its harness's config folder and no `$SHED` (its state is the session's, not the hook's).
 /// Refused `ACP_UNGUARDED` when herdsman's hook would not guard it (#508: fail closed).
-fn acp_cmd(ctx: &Ctx, r: &dyn Runner, p: &Plan, id: &str, remote: bool) -> Result<Vec<String>> {
+pub fn acp_cmd(ctx: &Ctx, r: &dyn Runner, p: &Plan, id: &str, remote: bool) -> Result<Vec<String>> {
     let dir = harness::profiles_root(ctx).join(&p.profile);
     let settings: Value = std::fs::read_to_string(dir.join("settings.json"))
         .ok()
