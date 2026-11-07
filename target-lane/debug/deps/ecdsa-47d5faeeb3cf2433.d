@@ -1,0 +1,11 @@
+/Users/jkmacmini/.herdr/worktrees/herdsman/issue-501/target-lane/debug/deps/ecdsa-47d5faeeb3cf2433.d: /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/lib.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/recovery.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/der.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/hazmat.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/signing.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/verifying.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/../README.md
+
+/Users/jkmacmini/.herdr/worktrees/herdsman/issue-501/target-lane/debug/deps/libecdsa-47d5faeeb3cf2433.rmeta: /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/lib.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/recovery.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/der.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/hazmat.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/signing.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/verifying.rs /Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/../README.md
+
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/lib.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/recovery.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/der.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/hazmat.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/signing.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/verifying.rs:
+/Users/jkmacmini/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecdsa-0.17.0/src/../README.md:
