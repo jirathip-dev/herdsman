@@ -1,0 +1,11 @@
+/Users/jkmacmini/.herdr/worktrees/herdsman/rev-441-r2/target-rev/debug/deps/events_tab-fcca4e4b5d6ade80.d: crates/cli/tests/events_tab.rs crates/cli/tests/common/mod.rs Cargo.toml
+
+/Users/jkmacmini/.herdr/worktrees/herdsman/rev-441-r2/target-rev/debug/deps/libevents_tab-fcca4e4b5d6ade80.rmeta: crates/cli/tests/events_tab.rs crates/cli/tests/common/mod.rs Cargo.toml
+
+crates/cli/tests/events_tab.rs:
+crates/cli/tests/common/mod.rs:
+Cargo.toml:
+
+# env-dep:CARGO_MANIFEST_DIR=/Users/jkmacmini/.herdr/worktrees/herdsman/rev-441-r2/crates/cli
+# env-dep:CLIPPY_ARGS=-D__CLIPPY_HACKERY__warnings__CLIPPY_HACKERY__
+# env-dep:CLIPPY_CONF_DIR

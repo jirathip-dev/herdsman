@@ -1,0 +1,2 @@
+cargo:rustc-env=HERDSMAN_SHA=c0472037035e6d1c05029fdc5082abf0a48f4970
+cargo:rerun-if-changed=/Users/jkmacmini/Projects/herdsman/.git/worktrees/rev-441-r2/logs/HEAD
