@@ -30,9 +30,18 @@ fn lane_prompt(f: &Fleet, role: &str) -> String {
         f.role.get(role).and_then(|r| r.prompt.as_deref()).map(|p| {
             std::fs::read_to_string(expand(p)).unwrap_or_else(|e| format!("(prompt file {p} unreadable: {e})"))
         });
-    let own = role == "lesson" || role == "verify" && f.family(role) == "rev";
-    let base = role_prompt(if own { role } else { f.family(role) });
+    let base = role_prompt(prompt_kind(f, role));
     extra.map_or_else(|| base.into(), |x| format!("{}\n\n{}", base.trim_end(), x.trim_end()))
+}
+
+/// #577: whose prompt a role gets: `lesson` and a check `verify` their own, any other its family's.
+fn prompt_kind<'a>(f: &'a Fleet, role: &'a str) -> &'a str {
+    let own = role == "lesson" || role == "verify" && f.family(role) == "rev";
+    if own {
+        role
+    } else {
+        f.family(role)
+    }
 }
 
 /// Each profile once, at its first (fleet, role) in fleet.toml order.
@@ -51,9 +60,9 @@ fn profiles(cfg: &Config) -> Vec<(&str, &Fleet, &str, &Role, String)> {
 pub fn profiles_sync(ctx: &Ctx, cfg: &Config, usage: &str, out: &mut dyn Write) -> Result<()> {
     let all = profiles(cfg);
     for (_, f, role, r, profile) in &all {
-        // #173: a role's profile is its kind's: a check role's is read-only, as rev's.
+        // #173: a role's profile hook is its kind's: a check role's is read-only, as rev's; #577: its prompt its own.
         for h in harness::NAMES {
-            harness::get(h).sync(ctx, f.family(role), profile, usage, out)?;
+            harness::get(h).sync(ctx, f.family(role), prompt_kind(f, role), profile, usage, out)?;
         }
         harness::set_mcp(ctx, profile, &access::mcp_servers(cfg, f, r)?)?;
     }

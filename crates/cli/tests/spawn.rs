@@ -99,6 +99,21 @@ fn profiles_sync_removes_a_stale_generated_profile() {
     assert!(dir.join("fleet-impl/role.md").exists() && dir.join("fleet-rev/role.md").exists());
 }
 
+/// #577: a verify role's own profile gets verify's prompt, still with the read-only check hook.
+#[test]
+fn profiles_sync_gives_a_verify_profile_its_own_prompt() {
+    let verify = "\n[fleet.sendmeter.role.verify]\nharness = \"claude\"\nprofile = \"fleet-verify\"\n";
+    let c = ctx(&tmpdir("spawn-verify"), &format!("{CONFIG}{verify}"));
+    let (code, out) = run(&c, &Fake::default(), &["profiles", "sync"]);
+    assert_eq!(code, 0, "{out}");
+    let dir = c.config.parent().unwrap().join("claude/fleet-verify");
+    assert!(out.contains(&format!("synced {} (verify)", dir.display())), "{out}");
+    let role = std::fs::read_to_string(dir.join("role.md")).unwrap();
+    assert!(role.starts_with("# ROLE: VERIFIER"), "{role}");
+    let s = std::fs::read_to_string(dir.join("settings.json")).unwrap();
+    assert!(s.contains("hook --role rev"), "{s}");
+}
+
 /// #198: lanes add no AI co-author: Claude's attribution is off, and every lane's role text says so.
 #[test]
 fn profiles_turn_attribution_off_and_role_md_has_the_rule() {

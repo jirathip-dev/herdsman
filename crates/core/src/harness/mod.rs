@@ -92,8 +92,16 @@ pub fn accounts() -> Option<&'static dyn Harness> {
 }
 
 pub trait Harness: Sync {
-    /// Write this harness's files for role `role`'s `profile` (prompts, hooks).
-    fn sync(&self, _ctx: &Ctx, _role: &str, _profile: &str, _usage: &str, _out: &mut dyn Write) -> Result<()> {
+    /// Write this harness's files for a `role`-family `profile` (hooks) with `prompt`'s role prompt.
+    fn sync(
+        &self,
+        _ctx: &Ctx,
+        _role: &str,
+        _prompt: &str,
+        _profile: &str,
+        _usage: &str,
+        _out: &mut dyn Write,
+    ) -> Result<()> {
         Ok(())
     }
     /// Fail unless the profile and install are ready to spawn plan `p`.

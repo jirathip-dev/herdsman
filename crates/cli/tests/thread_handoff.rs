@@ -706,14 +706,17 @@ fn three_taps_on_one_handoff_deliver_it_once_and_each_gets_the_first_result() {
 fn a_failed_handoff_tap_shows_its_error_and_its_retry_is_the_one_delivery() {
     let c = card("handoff-retry", "add facets");
     let why = "input contains a 1486-byte line but the terminal is in canonical mode with a 1024-byte limit; wait for the shell prompt and retry";
-    let r = herdr(NO_AGENTS).once_err("herdr agent start", 1, why);
+    // #623: a failed delivery is tried once more, so the tap fails only when both starts do.
+    let r = herdr(NO_AGENTS)
+        .once_err("herdr agent start", 1, why)
+        .once_err("herdr agent start", 1, why);
     let (code, out) = run(&c, &r, &["answer", "sendmeter", "q1", "1"]);
     assert_ne!(code, 0, "{out}");
     assert!(show(&c, "t1").contains(why), "{}", show(&c, "t1"));
     let (code, out) = run(&c, &r, &["answer", "sendmeter", "q1", "1"]);
     assert_eq!((code, out.as_str()), (0, "sendmeter q1: Search · t2 (0s ago) -> t2\n"));
     assert_eq!(copies(&c, "t2", "add facets"), (1, 1));
-    assert_eq!(r.count("herdr agent start"), 2, "{:?}", r.calls.borrow());
+    assert_eq!(r.count("herdr agent start"), 3, "{:?}", r.calls.borrow());
     let md = c.state.with_file_name("conductor").join("t2/.thread.md");
     assert_eq!(
         std::fs::read_to_string(md).unwrap(),

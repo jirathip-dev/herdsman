@@ -45,7 +45,7 @@ pub fn root(ctx: &Ctx) -> PathBuf {
 }
 
 impl Harness for Claude {
-    fn sync(&self, ctx: &Ctx, role: &str, profile: &str, usage: &str, out: &mut dyn Write) -> Result<()> {
+    fn sync(&self, ctx: &Ctx, role: &str, prompt: &str, profile: &str, usage: &str, out: &mut dyn Write) -> Result<()> {
         let dir = root(ctx).join(profile);
         std::fs::create_dir_all(&dir)?;
         let hook_cmd = serde_json::to_string(&hook_command(ctx, role))?;
@@ -56,13 +56,13 @@ impl Harness for Claude {
             .replace("\"{{FLEET_STATUSLINE}}\"", &line)
             .replace("\"{{TRANSCRIPT_DAYS}}\"", &days.to_string());
         std::fs::write(dir.join("settings.json"), settings)?;
-        let role_md = format!("{}\n\n{usage}", role_prompt(role));
+        let role_md = format!("{}\n\n{usage}", role_prompt(prompt));
         std::fs::write(dir.join("role.md"), &role_md)?;
         // #565: an ACP lane (the profile as `CLAUDE_CONFIG_DIR`, `bypassPermissions` as the CLI's flag) reads its role
         // as user memory, since the adapter takes no `--append-system-prompt-file`.
         std::fs::write(dir.join("CLAUDE.md"), role_md)?;
         std::fs::write(dir.join("fleet.md"), usage)?;
-        writeln!(out, "synced {} ({role})", dir.display())?;
+        writeln!(out, "synced {} ({prompt})", dir.display())?;
         Ok(())
     }
 

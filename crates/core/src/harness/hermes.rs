@@ -32,7 +32,15 @@ static DIALECT: Dialect = Dialect {
 };
 
 impl Harness for Hermes {
-    fn sync(&self, ctx: &Ctx, role: &str, profile: &str, _usage: &str, out: &mut dyn Write) -> Result<()> {
+    fn sync(
+        &self,
+        ctx: &Ctx,
+        role: &str,
+        _prompt: &str,
+        profile: &str,
+        _usage: &str,
+        out: &mut dyn Write,
+    ) -> Result<()> {
         let yaml = ctx.hermes.join(profile).join("config.yaml");
         let Ok(text) = std::fs::read_to_string(&yaml) else {
             return Ok(());

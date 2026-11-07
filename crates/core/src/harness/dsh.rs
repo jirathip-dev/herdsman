@@ -38,7 +38,15 @@ fn patch(role: &str) -> String {
 }
 
 impl Harness for Dsh {
-    fn sync(&self, ctx: &Ctx, role: &str, profile: &str, _usage: &str, out: &mut dyn Write) -> Result<()> {
+    fn sync(
+        &self,
+        ctx: &Ctx,
+        role: &str,
+        _prompt: &str,
+        profile: &str,
+        _usage: &str,
+        out: &mut dyn Write,
+    ) -> Result<()> {
         let f = patch_file(ctx, profile);
         std::fs::create_dir_all(f.parent().context("patch dir")?)?;
         std::fs::write(&f, patch(role))?;
