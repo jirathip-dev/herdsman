@@ -154,6 +154,12 @@ pub fn serve_on(ctx: &Ctx, r: &dyn Runner, l: TcpListener, read_only: bool) -> R
     let addr = (!read_only)
         .then(|| l.local_addr().map(|a| a.to_string()))
         .transpose()?;
+    // #603: shed's lanes (#565: or one fleet's) as the CLI reaches them; `service --board` hands over a bare runner.
+    let with = (r.shed().is_none())
+        .then(|| Config::load(&ctx.config).ok()?.shed())
+        .flatten()
+        .map(|b| crate::shed::With(r, b));
+    let r: &dyn Runner = with.as_ref().map_or(r, |w| w);
     let (tx, rx) = channel();
     let s = Server {
         jobs: Some(tx),

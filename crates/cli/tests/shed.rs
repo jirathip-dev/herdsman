@@ -858,6 +858,53 @@ fn the_service_follows_sheds_events_and_says_when_the_stream_drops() {
     );
 }
 
+/// #603: a fleet-only `shed-acp` runtime (the board handed a runner with no shed, as `service --board` does): the
+/// Lanes tab lists shed's running lane live, with its shed state, never dead, parked or gone.
+#[test]
+fn the_lanes_tab_lists_a_running_shed_acp_lane_live() {
+    let b = Server::new(shed::proto::VERSION, vec![]);
+    b.add("sendmeter-impl-12", lane_labels());
+    let c = ctx(&tmpdir("acp-lanes-tab"), &acp_config(&b.sock, "claude", true));
+    let d = json!({"role": "impl", "agent": "sendmeter-impl-12", "harness": "claude", "runtime": "shed",
+        "pane": "sendmeter-impl-12", "worktree": "/w/issue-12"});
+    herdsman::events::append(&c.state, &Event::new(999_000, "sendmeter", Some(12), "spawn", d)).unwrap();
+    let r: &'static Fake = Box::leak(Box::new(Fake::default().reply("herdr agent list", NO_AGENTS)));
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let sc = c.clone();
+    std::thread::spawn(move || herdsman::serve::serve_on(&sc, r, l, false));
+    let mut s = std::net::TcpStream::connect(addr).unwrap();
+    write!(s, "GET /api/v1/lanes HTTP/1.1\r\nHost: {addr}\r\n\r\n").unwrap();
+    let mut body = String::new();
+    std::io::Read::read_to_string(&mut s, &mut body).unwrap();
+    let v: Value = serde_json::from_str(body.split_once("\r\n\r\n").expect(&body).1).expect(&body);
+    let row = v["sections"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{v}"))
+        .iter()
+        .flat_map(|s| {
+            s["repos"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(move |r| (s["name"].clone(), r))
+        })
+        .flat_map(|(sec, r)| {
+            r["lanes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(move |l| (sec.clone(), l.clone()))
+        })
+        .find(|(_, l)| l["name"] == "sendmeter-impl-12")
+        .unwrap_or_else(|| panic!("{v}"));
+    assert_eq!(
+        (row.0.as_str(), row.1["state"].as_str(), row.1["gone"].as_bool()),
+        (Some("working"), Some("working"), Some(false)),
+        "{v}"
+    );
+}
+
 /// #601: with a shed runtime, a remote host whose herdr answers is up though shed is not installed there (its
 /// `shed connect` over ssh fails): its herdr agents count, spawn there is not `HOST_OFFLINE`, its lanes are not
 /// `host offline`, and the shed failure is one `! shed:` health row (`hosts refresh`, `doctor`).
