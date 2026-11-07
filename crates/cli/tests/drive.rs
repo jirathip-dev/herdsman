@@ -416,6 +416,139 @@ fn clean_reclaims_merged_lanes() {
     idle(&c, &r);
 }
 
+/// #605: drive's pass over #12's impl lane, its pane listed as `status`, `s` seconds after `c.now`.
+fn idle_lane(name: &str, merged: bool, status: &str) -> (herdsman::Ctx, PathBuf, impl Fn(u64) -> Fake) {
+    let c = setup(name);
+    let wt = lane(&c, 10, "impl", "sendmeter-impl-12", "issue-12");
+    if merged {
+        ev(&c, 30, "merged", json!({"pr": "100"}));
+    }
+    let w = wt.display().to_string();
+    let list = agents(&[("sendmeter-impl-12", status, &w, "w9:sendmeter-impl-12")]);
+    // One unpushed commit until the wip push.
+    let r = move |_| {
+        fake(&list)
+            .once(&format!("git -C {w} rev-list"), 0, "1\n")
+            .reply(&format!("git -C {w} rev-list"), "0\n")
+            .reply("date -r", "20261107-1200\n")
+            .reply("git -C", "")
+    };
+    (c, wt, r)
+}
+
+fn at(c: &herdsman::Ctx, s: u64) -> herdsman::Ctx {
+    herdsman::Ctx {
+        now: c.now + s,
+        ..c.clone()
+    }
+}
+
+#[test]
+fn a_merged_issues_idle_lane_pane_closes_after_the_limit_with_its_work_on_wip() {
+    let (c, wt, r) = idle_lane("drive-merged-idle", true, "idle");
+    let r0 = r(0);
+    let (code, out) = run(&c, &r0, &["drive"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        !r0.called("herdr pane close"),
+        "idle under idle_merged_minutes (15): {out}"
+    );
+    assert!(read(&c.state).unwrap().iter().all(|e| e.kind != "lane-closed"));
+    let r1 = r(900);
+    let (code, out) = run(&at(&c, 900), &r1, &["drive"]);
+    assert_eq!(code, 0, "{out}");
+    let w = wt.display();
+    let push = format!("git -C {w} push origin HEAD:refs/heads/wip/sendmeter-impl-12-20261107-1200");
+    let close = r1.index("herdr pane close w9:sendmeter-impl-12").expect("pane closed");
+    assert!(r1.index(&push).expect("wip pushed") < close, "{:?}", r1.calls.borrow());
+    let all = read(&c.state).unwrap();
+    let e = all.iter().find(|e| e.kind == "lane-closed").expect("lane-closed");
+    assert_eq!(
+        (e.str("agent"), e.str("why"), e.str("wip")),
+        (
+            Some("sendmeter-impl-12"),
+            Some("merged-idle"),
+            Some("wip/sendmeter-impl-12-20261107-1200")
+        )
+    );
+    // Then the worktree goes the clean way.
+    assert!(close < r1.index("herdr worktree remove --workspace w9").expect("removed"));
+}
+
+#[test]
+fn a_working_lane_of_a_merged_issue_is_never_closed() {
+    let (c, _, r) = idle_lane("drive-merged-working", true, "working");
+    for s in [0, 900, 3600] {
+        let r = r(s);
+        let (code, out) = run(&at(&c, s), &r, &["drive"]);
+        assert_eq!(code, 0, "{out}");
+        assert!(
+            !r.called("herdr pane close") && !r.called("herdr worktree remove"),
+            "{out}"
+        );
+    }
+    assert!(read(&c.state).unwrap().iter().all(|e| e.kind != "lane-closed"));
+}
+
+#[test]
+fn an_open_issues_idle_lane_is_kept() {
+    let (c, _, r) = idle_lane("drive-open-idle", false, "idle");
+    for s in [0, 900, 3600] {
+        let r = r(s);
+        let (code, out) = run(&at(&c, s), &r, &["drive"]);
+        assert_eq!(code, 0, "{out}");
+        assert!(
+            !r.called("herdr pane close w9:sendmeter-impl-12"),
+            "{:?}",
+            r.calls.borrow()
+        );
+    }
+    assert!(read(&c.state).unwrap().iter().all(|e| e.kind != "lane-closed"));
+}
+
+#[test]
+fn a_secret_in_a_merged_lanes_wip_keeps_its_pane_reported_once_and_clean_dry_run_names_the_close() {
+    let c = setup("drive-merged-secret");
+    let wt = lane(&c, 10, "impl", "sendmeter-impl-12", "issue-12");
+    ev(&c, 30, "merged", json!({"pr": "100"}));
+    let w = wt.display().to_string();
+    let list = agents(&[("sendmeter-impl-12", "done", &w, "w9:sendmeter-impl-12")]);
+    let r = || {
+        fake(&list)
+            .reply(&format!("git -C {w} rev-list"), "1\n")
+            .reply(
+                &format!("git -C {w} log -p"),
+                concat!("+TOKEN = \"gh", "p_abcdefghijklmnopqrstu1234\"\n"),
+            )
+            .reply("git -C", "")
+    };
+    run(&c, &r(), &["drive"]);
+    let (code, dry) = run(&at(&c, 900), &r(), &["clean", "sendmeter"]);
+    assert_eq!(code, 0, "{dry}");
+    assert!(
+        dry.contains("would close sendmeter-impl-12's idle pane w9:sendmeter-impl-12"),
+        "{dry}"
+    );
+    for s in [900, 1200] {
+        let r = r();
+        let (code, out) = run(&at(&c, s), &r, &["drive"]);
+        assert_eq!(code, 0, "{out}");
+        assert!(
+            !r.called("herdr pane close") && !r.called(&format!("git -C {w} push")),
+            "{out}"
+        );
+        let n = s == 900;
+        assert_eq!(r.called(&format!("git -C {w} add -A")), n, "tried once, never again");
+    }
+    let kept: Vec<_> = read(&c.state)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.kind == "lane-kept-dirty")
+        .collect();
+    assert_eq!(kept.len(), 1);
+    assert!(kept[0].str("why").unwrap().contains("SECRET_IN_WIP"), "{:?}", kept[0]);
+}
+
 /// #285: PR #100 of #12 as GitHub shows it after it left the open set (`MERGED` / `CLOSED`).
 fn gone_pr(state: &str) -> String {
     let mut v: serde_json::Value = serde_json::from_str(&pr(&sha("a1"), "green")).unwrap();

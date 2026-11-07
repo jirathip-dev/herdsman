@@ -74,7 +74,11 @@ refused `SECRET_IN_WIP` when the diff has a secret-looking value), closes the pa
 `lane-killed`. The worktree stays; a killed impl goes back
 to `queued` (or `fix(n)`), a killed review to the state before it, both re-spawnable.
 `herdsman clean <fleet> --lane <agent>` applies `clean`'s safety to one lane and refuses
-`UNSAFE_CLEAN` with the reason.
+`UNSAFE_CLEAN` with the reason. #605: a merged or closed issue's lane whose agent is not `working` for
+`[limits] idle_merged_minutes` (default 15) has its pane closed by `clean` (and so by drive's pass) the `kill --yes`
+way, logged `lane-closed` with `why: merged-idle`, then its worktree removed; the dry run says `would close`. A
+`SECRET_IN_WIP` or failed snapshot keeps the pane, one `lane-kept-dirty`, never retried. A working agent, an open
+issue's lane, a conductor or any other agent in the folder stays `keep …: live agent`.
 
 `--supersede` kills the old agent and logs it. If `herdr agent start` times out but the
 harness came up in the pane, spawn names the agent and logs the lane anyway; if nothing

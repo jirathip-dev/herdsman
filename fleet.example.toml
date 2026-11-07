@@ -145,6 +145,7 @@ ci_start_minutes = 10   # a PR head with no checks this long after its push is C
 ask_default_minutes = 30  # herdsman check: a routine ask unanswered this long takes its recommended option
 ask_expire_hours = 24     # herdsman check: an ask nobody waits on (no live asking lane) closes as expired
 done_close_minutes = 5    # herdsman check: a done lane whose push/verdict is logged this long closes its session
+idle_merged_minutes = 15  # drive/clean: a merged or closed issue's lane not working this long has its pane closed (work to wip/)
 import_max_age_hours = 24 # a remote host's unanswered asks older than this are never imported
 max_pushes_per_pass = 3   # herdsman check pushes at most this many alerts a pass, then one summary
 # fallback_rest_minutes = 60   # #302: an unavailable agent rests this long when its message names no reset
