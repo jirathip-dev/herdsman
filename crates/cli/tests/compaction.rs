@@ -134,6 +134,28 @@ fn rotation_keeps_every_event_and_deleting_the_checkpoint_is_harmless() {
     }
 }
 
+/// #560: `shared` (serve's read) is `read` at every point: rows appended, a rotation's archive, a new log.
+#[test]
+fn the_shared_read_follows_appends_and_rotations() {
+    let d = tmpdir("shared");
+    let p = d.join("events.jsonl");
+    let now = 90 * 86_400;
+    let seqs = |v: &[Event]| v.iter().map(|e| e.seq).collect::<Vec<_>>();
+    let same = || assert_eq!(seqs(&herdsman::events::shared(&p).unwrap()), seqs(&read(&p).unwrap()));
+    same(); // no database yet
+    write(&p, &log(3, 400, 0));
+    same();
+    let first = herdsman::events::shared(&p).unwrap();
+    append(&p, &Event::new(now - 10, "a", Some(1), "stall", json!({}))).unwrap();
+    same();
+    assert_eq!(herdsman::events::shared(&p).unwrap().len(), first.len() + 1);
+    rotate(&p, 1, now).unwrap();
+    assert!(read(&p).unwrap().len() < first.len(), "the rotation archived some");
+    same();
+    append(&p, &Event::new(now, "a", Some(1), "stall", json!({}))).unwrap();
+    same();
+}
+
 /// #343 measure: `status` / `queue ls` fold a 50 MB log in under 20 ms from its checkpoint (release:
 /// `cargo test --release --test compaction -- --ignored --nocapture`).
 #[test]

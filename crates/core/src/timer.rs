@@ -471,7 +471,7 @@ fn tick_row(ctx: &Ctx, events: &[Event]) -> (&'static str, String) {
 /// The Host tab's Services rows from the event log, `herdr`, the host and the stamps; `board`: the serving
 /// page's own detail, else the board is up when its address listens.
 pub fn services(ctx: &Ctx, cfg: &Config, r: &dyn Runner, board: Option<String>) -> Vec<Row> {
-    let events = read(&ctx.state).unwrap_or_default();
+    let events = crate::events::shared(&ctx.state).unwrap_or_default();
     let row = |item: &str, t, d: String, fix: &str| (item.to_string(), t, d, fix.to_string());
     let addr = cfg.serve.addr();
     let port = format!("-iTCP:{}", addr.rsplit(':').next().unwrap_or_default());

@@ -844,7 +844,7 @@ pub fn leftovers(
     yes: bool,
 ) -> Result<Vec<(String, String, String)>> {
     let (events, ps, mut seen, mut found) = (
-        read(&ctx.state)?,
+        crate::events::shared(&ctx.state)?,
         host::cwds(r),
         std::collections::BTreeSet::new(),
         vec![],

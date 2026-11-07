@@ -198,6 +198,11 @@ pub(crate) fn archive(state: &Path, seqs: &[u64]) -> Result<()> {
         for s in seqs {
             tx.execute("UPDATE events SET archived = 1 WHERE seq = ?1", [s])?;
         }
+        // #560: a new `archived` row: `events::shared` reads the live log afresh.
+        tx.execute(
+            "INSERT OR REPLACE INTO snapshot (key, ts, json) VALUES ('archived', 0, '{}')",
+            [],
+        )?;
         Ok(tx.commit()?)
     })
 }
@@ -217,6 +222,12 @@ pub fn stamp(state: &Path, key: &str) -> Option<u64> {
         Ok(c.query_row(q, [key], |r| r.get(0)).optional()?)
     })
     .ok()?
+}
+
+/// #560: the database file's inode and its last rotation's stamp: a change makes `events::shared` read afresh.
+pub fn version(state: &Path) -> (Option<u64>, Option<u64>) {
+    let ino = std::fs::metadata(file(state)).map(|m| m.ino()).ok();
+    (ino, ino.and_then(|_| stamp(state, "archived")))
 }
 
 /// The newest event's seq (0: none): the page's change check.

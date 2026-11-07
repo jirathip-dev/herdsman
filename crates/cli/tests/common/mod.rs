@@ -309,7 +309,8 @@ pub fn run(ctx: &Ctx, r: &dyn Runner, args: &[&str]) -> (i32, String) {
 }
 
 /// `swift` for tests/support/webview.swift, its page based at a local server of serve's `/a/<hash>/`
-/// assets (#57: the page links them; a same-origin base lets herd.js fetch horses.svg).
+/// assets (#57: the page links them; a same-origin base lets herd.js fetch horses.svg). #560: it runs under
+/// scripts/ui-lock.sh, one WebKit audit at a time on the host.
 pub fn swift() -> std::process::Command {
     static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let base = BASE.get_or_init(|| {
@@ -326,9 +327,58 @@ pub fn swift() -> std::process::Command {
         });
         base
     });
-    let mut c = std::process::Command::new("swift");
-    c.env("HERDSMAN_BASE", base);
+    // #560: WebKit under the user's home, never a test's temporary `$HOME` (live_board's, deleted when it ends).
+    if HELD.load(Ordering::SeqCst) {
+        let mut c = std::process::Command::new("swift");
+        c.env("HERDSMAN_BASE", base).env("HOME", user_home());
+        return c;
+    }
+    let mut c = std::process::Command::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/ui-lock.sh"));
+    c.arg("swift").env("HERDSMAN_BASE", base).env("HOME", user_home());
     c
+}
+
+/// The user's home from the password database, as scripts/ui-lock.sh finds it (a test may point `$HOME` elsewhere).
+fn user_home() -> PathBuf {
+    let sh = ["-c", "eval echo ~$(id -un)"];
+    let home = std::process::Command::new("sh").args(sh).output().unwrap();
+    PathBuf::from(String::from_utf8_lossy(&home.stdout).trim())
+}
+
+static HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// #560: scripts/ui-lock.sh's host lock held for a whole WebKit test whose steps are timed (a `/live` update 2.5 s
+/// in), so its clock starts once WebKit is its own; `swift()` meanwhile runs without the wrapper. Every WebKit test
+/// of a binary that takes it must take it.
+pub struct UiLock(std::fs::File, std::sync::MutexGuard<'static, ()>);
+
+pub fn ui_lock() -> UiLock {
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let one = ONE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let path =
+        std::env::var_os("UI_AUDIT_LOCK").map_or(user_home().join(".cache/herdsman/ui-audit.lock"), PathBuf::from);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .unwrap();
+    if f.try_lock().is_err() {
+        let by = std::fs::read_to_string(&path).unwrap_or_default();
+        eprintln!("waiting for the UI audit lock (held by {})", by.trim());
+        f.lock().unwrap();
+    }
+    let me = std::env::var("HERDSMAN_LANE").unwrap_or_else(|_| format!("pid {}", std::process::id()));
+    f.set_len(0).unwrap();
+    std::io::Write::write_all(&mut f, format!("{me}\n").as_bytes()).unwrap();
+    HELD.store(true, Ordering::SeqCst);
+    UiLock(f, one)
+}
+
+impl Drop for UiLock {
+    fn drop(&mut self) {
+        HELD.store(false, Ordering::SeqCst);
+    }
 }
 
 /// #59: pair a browser at `now` as the page does (Pair → `serve approve <code>` → claim): its `Cookie:` line.

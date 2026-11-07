@@ -742,6 +742,26 @@ pub fn scan(
         );
         out.push((s, w));
     }
+    // #560: a review held for want of room names its place in drive's order: the reviews due before it go first.
+    let review = |w: &Waiting| {
+        let role = w.next_cmd.as_deref().and_then(|c| c.strip_prefix("herdsman spawn "));
+        let role = role.and_then(|c| c.split(' ').nth(2));
+        role.is_some_and(|r| cfg.fleet[&w.fleet].flow().is_check(r))
+    };
+    let held = |w: &Waiting| {
+        let mine = of.get(&(w.fleet.as_str(), w.issue)).map_or(&[][..], Vec::as_slice);
+        let tried = mine.iter().rfind(|e| matches!(e.kind.as_str(), "driven" | "spawn"));
+        tried
+            .and_then(|e| e.str("code"))
+            .is_some_and(|c| c == "SPAWN_PENDING" || HOST_WAIT.contains(&c))
+    };
+    let ahead = out
+        .iter_mut()
+        .filter(|(s, w)| s.lane.as_ref() == Some(&w.lane) && review(w));
+    for (ahead, (_, w)) in ahead.enumerate().filter(|(n, (_, w))| *n > 0 && held(w)) {
+        let s = if ahead == 1 { "" } else { "s" };
+        w.what = format!("review waits behind {ahead} earlier review{s}");
+    }
     out
 }
 

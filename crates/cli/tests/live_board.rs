@@ -131,6 +131,7 @@ fn live_board_chat_and_ascii_in_webkit() {
     if !webkit() {
         return;
     }
+    let _lock = ui_lock();
     let home = tmpdir("home334");
     // Lane::session() reads $HOME/.claude; no other test here reads it.
     std::env::set_var("HOME", &home);
@@ -216,6 +217,7 @@ fn herd_paints_at_once_and_refresh_is_the_plain_spinner() {
     if !webkit() {
         return;
     }
+    let _lock = ui_lock();
     let (_c, url, cookie) = board("herd334", &tmpdir("home-herd334"));
     let shots = std::env::var("HERDSMAN_SNAPSHOTS").map_or_else(|_| tmpdir("herd334-png"), std::path::PathBuf::from);
     let pre = "localStorage.herd = '1'; const f = fetch; window.fetch = (u, o) => String(u).includes('herd.json') ? \

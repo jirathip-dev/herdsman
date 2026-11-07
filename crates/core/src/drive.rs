@@ -174,6 +174,8 @@ thread_local! {
     /// #304: the one issue a kick drives (`None`: all); `IN_ACT` while a pass runs a command, which then kicks nothing.
     static KICK: Cell<Option<u64>> = const { Cell::new(None) };
     static IN_ACT: Cell<bool> = const { Cell::new(false) };
+    /// #560: the pass's one look at this host's admission (`room`), taken at its first launch: (looked, refusal).
+    static ROOM: RefCell<(bool, Option<(&'static str, String)>)> = const { RefCell::new((false, None)) };
 }
 
 /// #304: `herdsman kick`: drive `issue`'s due steps now in a detached `kick --now` (#389: none from a lane on
@@ -288,6 +290,9 @@ fn launch(
         return crate::gate::refused("SPAWN_PENDING", format!("{n_live} spawns starting"));
     }
     crate::spawn::lane_admit(ctx, cfg.fleet(fleet)?, ev, fleet, n, role)?;
+    if let Some((code, why)) = room(ctx, cfg, r) {
+        return crate::gate::refused(code, why);
+    }
     let mut d = json!({"role": role, "check": cfg.fleet(fleet)?.flow().is_check(role)});
     let (key, ttl) = (format!("spawn-{fleet}-{n}.pending"), cfg.limits.spawn_pending_max_secs);
     let ev = |d: &Value| serde_json::to_string(&Event::new(ctx.now, fleet, Some(n), "spawn", d.clone()));
@@ -301,6 +306,21 @@ fn launch(
     let pid = pid.unwrap_or(0);
     crate::db::renew(&ctx.state, &l, &crate::db::Lease { pid, data, ..l.clone() });
     Ok(0)
+}
+
+/// #560: a host short of room launches nothing: its refusal holds every spawn of the pass, so a review the order put
+/// first never loses the room to a start whose kick happened to sample a quieter moment. Only without a remote host
+/// to place on (each kick still places and admits its own spawn).
+fn room(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> Option<(&'static str, String)> {
+    if cfg.hosts.values().any(|h| h.enabled && h.machine.is_some()) {
+        return None;
+    }
+    ROOM.with_borrow_mut(|s| {
+        if !s.0 {
+            *s = (true, crate::hosts::gate(ctx, cfg, &crate::hosts::On::new(r, None)).1);
+        }
+        s.1.clone()
+    })
 }
 
 /// #604: a pass waits this long for its kicks to end before it logs one still running `pending`.
@@ -569,6 +589,7 @@ pub fn drive(
     // A paused fleet gets no pass (and no `last pass`); one fleet's error doesn't skip the others.
     let (mut res, mut start) = (Ok(()), true);
     ACTS.with_borrow_mut(BTreeMap::clear);
+    ROOM.set((false, None));
     let mut fail = |name: &str, e: anyhow::Error| {
         let w = format!("failed: {e:#}");
         let a = json!({"step": "pass", "outcome": "error", "code": "ERROR", "words": w});
@@ -787,9 +808,10 @@ fn pass(
             .as_deref()
             .is_some_and(|c| c.starts_with("herdsman verdict "))
     };
-    // #513: in-flight spawns first (fix rounds and respawns, then reviews), then verdicts before any merge.
-    let fix = |w: &Waiting| !rev(w) && w.next_cmd.as_deref().is_some_and(|c| c.starts_with("herdsman spawn "));
-    waits.sort_by_key(|(s, w)| (!fix(w), !rev(w), !verdict(w), conflicts.contains_key(&s.issue)));
+    // #560: verdicts, then merges, then reviews of pushed heads, then fix and update rounds and respawns (new starts
+    // follow every fleet's pass): a host short of room spends it in that order.
+    let merge = |w: &Waiting| w.next_cmd.as_deref().is_some_and(|c| c.starts_with("herdsman merge "));
+    waits.sort_by_key(|(s, w)| (!verdict(w), !merge(w), !rev(w), conflicts.contains_key(&s.issue)));
     let (mut go, mut updated) = (true, false);
     for (s, w) in waits
         .iter()
@@ -912,7 +934,7 @@ fn pass(
                     &args,
                     fast,
                 )? {
-                    go &= !matches!(code, Some("HOST_BUSY" | "DISK_LOW"));
+                    go &= !matches!(code, Some("HOST_BUSY" | "DISK_LOW" | "MEM_LOW"));
                     continue;
                 }
             }
@@ -939,7 +961,7 @@ fn pass(
                 let d = json!({"role": args.get(3), "agent": w.lane, "why": why});
                 append(&ctx.state, &Event::new(ctx.now, fleet, Some(s.issue), "respawn", d))?;
             }
-            go &= !matches!(code, Some("HOST_BUSY" | "DISK_LOW"));
+            go &= !matches!(code, Some("HOST_BUSY" | "DISK_LOW" | "MEM_LOW"));
             // #182: a PASS recorded this pass merges in it once CI is green at that head (a merge label's full run
             // starts only now, so that one waits for the next pass).
             let mut merge = step == "merge";
@@ -967,7 +989,7 @@ fn pass(
             // #214: a merge that conflicts (known before, or failed on it) gets its `--update` lane instead.
             if merge && !fast && conflicted(fleet, code) {
                 let code = update_lane(ctx, cfg, r, out, &events, fleet, s.issue)?;
-                go &= !matches!(code, Some("HOST_BUSY" | "DISK_LOW"));
+                go &= !matches!(code, Some("HOST_BUSY" | "DISK_LOW" | "MEM_LOW"));
             } else if merge && !fast && code.is_none() {
                 updated = true;
                 if let Err(e) = auto_update(ctx, cfg, r, out, fleet) {

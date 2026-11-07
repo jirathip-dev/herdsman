@@ -65,6 +65,27 @@ pub fn read(path: &Path) -> Result<Vec<Event>> {
     crate::db::events(path, "archived = ?1", 0)
 }
 
+/// #560: `read`, kept between calls (serve's requests and watcher): each call reads only the events appended since;
+/// a rotation or another database file reads it all again. The last few databases read are kept.
+pub fn shared(path: &Path) -> Result<std::sync::Arc<Vec<Event>>> {
+    type Kept = (PathBuf, (Option<u64>, Option<u64>), std::sync::Arc<Vec<Event>>);
+    static KEPT: std::sync::Mutex<Vec<Kept>> = std::sync::Mutex::new(Vec::new());
+    let (file, key) = (crate::db::file(path), crate::db::version(path));
+    let mut kept = KEPT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut all = match kept.iter().position(|k| k.0 == file && k.1 == key) {
+        Some(i) => kept.remove(i).2,
+        None => std::sync::Arc::new(vec![]),
+    };
+    let last = all.last().map_or(0, |e| e.seq);
+    let new = crate::db::events(path, "archived = 0 AND seq > ?1", last)?;
+    if !new.is_empty() {
+        std::sync::Arc::make_mut(&mut all).extend(new);
+    }
+    kept.truncate(7);
+    kept.insert(0, (file, key, all.clone()));
+    Ok(all)
+}
+
 /// #344: the log in the JSONL format before #344, one event a line with its seq (`herdsman events --jsonl`).
 pub fn jsonl(path: &Path) -> Result<String> {
     history(path)?

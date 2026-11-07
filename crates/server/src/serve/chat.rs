@@ -404,9 +404,9 @@ impl super::Server<'_> {
         let mut c = self.chat.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if c.0 != key {
             // #483: a config or log read error shows its own text (as the Queue tab does).
-            let (cfg, events) = match (Config::load(&ctx.config), crate::events::read(&ctx.state)) {
+            let (cfg, events) = match (Config::load(&ctx.config), crate::events::shared(&ctx.state)) {
                 (Ok(c), Ok(e)) => (Ok(c), e),
-                (Err(e), _) | (_, Err(e)) => (Err(format!("{e:#}")), vec![]),
+                (Err(e), _) | (_, Err(e)) => (Err(format!("{e:#}")), std::sync::Arc::default()),
             };
             *c = (
                 key,
@@ -448,7 +448,7 @@ pub fn post(
     later: &mut Vec<(Event, String)>,
 ) -> Result<String> {
     let cfg = Config::load(&ctx.config)?;
-    let events = crate::events::read(&ctx.state)?;
+    let events = crate::events::shared(&ctx.state)?;
     let g = |k: &str| f.get(k).map_or("", String::as_str);
     let (id, mut out) = (g("t"), vec![]);
     match g("op") {
@@ -576,7 +576,7 @@ fn stop(r: &dyn Runner, events: &[Event], id: &str) {
 /// #407: at a turn's end (the conductor no longer working) its queued messages go in, oldest first, each logged as
 /// the owner's and unqueued; the lines for `deliver`.
 pub fn flush(ctx: &Ctx, agents: &[Value]) -> Vec<(Event, String)> {
-    let (Ok(cfg), Ok(events)) = (Config::load(&ctx.config), crate::events::read(&ctx.state)) else {
+    let (Ok(cfg), Ok(events)) = (Config::load(&ctx.config), crate::events::shared(&ctx.state)) else {
         return vec![];
     };
     let mut out = vec![];

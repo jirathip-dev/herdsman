@@ -26,8 +26,8 @@ jobs:
         run: cargo test --locked
       - name: "no test temp dirs left (#535: each test removes its fleet-test-* dirs, pass or fail)"
         run: "! ls -a \"${TMPDIR:-/tmp}\" | grep '^fleet-test-'"
-      - name: "perf in release (#447: waits and the Lanes tab on a 30,000-event log; budgets hold in a release build)"
-        run: cargo test --release --locked --test perf waits_and_the_lanes_tab_stay_fast_on_a_30k_event_log -- --nocapture
+      - name: "perf in release (#447: waits and the Lanes tab on a 30,000-event log; #560: the board's CPU per 100 requests)"
+        run: cargo test --release --locked --test perf -- waits_and_the_lanes_tab_stay_fast_on_a_30k_event_log a_hundred_board_requests --nocapture --test-threads=1
       - name: demo export (#39, synthetic data in demo/)
         run: HERDSMAN_HOME=demo FLEET_CONFIG=demo/fleet.toml FLEET_STATE=demo/events.jsonl ./target/release/herdsman serve --export site --demo
       - name: leak gate (no ts.net hostname, chat ID or /Users/ path in docs/, demo/ or the exported demo)

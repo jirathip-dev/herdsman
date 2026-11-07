@@ -4,6 +4,8 @@
 # Usage: scripts/ui-audit.sh [site-dir] [shot-dir]; CHROME=<binary> overrides the browser. Use chrome-headless-shell:
 # Chrome's new headless keeps windows ≥ 500 px wide, and the page fails the audit unless it is 390 (#68).
 set -euo pipefail
+# #560: one UI audit at a time on this host (scripts/ui-lock.sh).
+[ -n "${UI_AUDIT_LOCKED:-}" ] || UI_AUDIT_LOCKED=1 exec "$(dirname "$0")/ui-lock.sh" "$0" "$@"
 site=${1:-site} shots=${2:-ui-390}
 chrome=${CHROME:-$(command -v google-chrome || command -v chromium || command -v chromium-browser || echo "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")}
 port=${UI_AUDIT_PORT:-${HERDSMAN_PORT:-8390}}

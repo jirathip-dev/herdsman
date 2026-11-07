@@ -135,7 +135,9 @@ cargo test --test ui_tokens
 cargo build --release && HERDSMAN_HOME=demo FLEET_CONFIG=demo/fleet.toml FLEET_STATE=demo/events.jsonl \
   ./target/release/herdsman serve --export site --demo && scripts/ui-audit.sh site ui-390
 ```
-`scripts/ui-audit.sh` finds `google-chrome`/`chromium`; set `CHROME=<binary>` otherwise.
+`scripts/ui-audit.sh` finds `google-chrome`/`chromium`; set `CHROME=<binary>` otherwise. #560: it and the WebKit
+tests' `swift` run under `scripts/ui-lock.sh`, one audit at a time on the host (`~/.cache/herdsman/ui-audit.lock`,
+run past once held 10 min; a dead holder lets go at once); a lane that waits logs `waiting for the UI audit lock (held by <lane>)`.
 
 **Exceptions:** each is listed by name with its reason in `tests/ui_tokens.rs` (`EXCEPTIONS`). **Adding an
 exception needs the owner's OK.**

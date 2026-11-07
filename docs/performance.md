@@ -15,5 +15,6 @@ probe on that runner proves the server, not a hand-built page, produced them.
 | a steady-state `/live` change < 5 KB: the changed part's data only (#269: `needs`), no Lanes or [chat] | `serve_on`'s `/live` stream and watcher; the board draws the same cards as from API v1 | `perf.rs` `a_steady_state_live_change_is_one_part_under_5kb` |
 | a chat opens with ≤ 64 KB: its last 10 turns (3.2 KB a turn) and the lines that fit in 32 KB; 10 turns more a scroll | `GET /lane` | `history.rs` `a_chat_opens_with_its_last_10_turns_within_64kb` |
 | Events opens with 100 rows a view, then 100 a page | `GET /frag?id=events&skip=` | `history.rs` `events_open_with_100_rows_then_page` |
+| 100 board requests on a 30,000-event store (20 lanes, a new event every 10th) < 2 s of CPU in release: a request reads only the events appended since the last (`events::shared`), the watcher renders only for a listening audience | `serve_on`'s socket | `perf.rs` `a_hundred_board_requests_on_a_30k_event_store_stay_under_the_cpu_budget` |
 
 The numbers go to the CI job summary (`$GITHUB_STEP_SUMMARY`). How each path works: [serve.md](serve.md).

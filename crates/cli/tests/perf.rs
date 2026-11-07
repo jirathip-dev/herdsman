@@ -390,10 +390,15 @@ fn a_steady_state_live_change_is_one_part_under_5kb() {
 /// #447: a 30,000-event log and 200 idle lanes, each with an answered ask, a review round and the step's chatter;
 /// ten asks still open.
 fn big() -> (herdsman::Ctx, Fake) {
+    big_with(200)
+}
+
+/// `big` with `lanes` lanes (#560: 20, a busy fleet's).
+fn big_with(lanes: u64) -> (herdsman::Ctx, Fake) {
     let c = ctx(&tmpdir("perf-big"), CONFIG);
     let ev = |ts, n, kind, d| serde_json::to_string(&Event::new(ts, "sendmeter", Some(n), kind, d)).unwrap();
     let (mut log, mut agents) = (vec![], vec![]);
-    for n in 1..=200u64 {
+    for n in 1..=lanes {
         let (agent, t) = (format!("sendmeter-impl-{n}"), NOW - 9_000 + n);
         let d = json!({"role": "impl", "agent": agent, "pane": format!("w{n}:p1"), "worktree": format!("/wt/{agent}")});
         log.push(ev(t, n, "spawn", d));
@@ -417,9 +422,9 @@ fn big() -> (herdsman::Ctx, Fake) {
     for i in 0..30_000 - log.len() as u64 {
         log.push(ev(
             NOW - 5_000 + i / 10,
-            1 + i % 200,
+            1 + i % lanes,
             "driven",
-            json!({"step": "review", "code": "EXIT"}),
+            json!({"step": "review", "code": "EXIT", "result": "exit 1: boom"}),
         ));
     }
     std::fs::create_dir_all(c.state.parent().unwrap()).unwrap();
@@ -480,4 +485,65 @@ fn waits_and_the_lanes_tab_stay_fast_on_a_30k_event_log() {
     }
     assert!(waits < 200, "snapshot::waits took {waits} ms (target < 200)");
     assert!(lanes < 300, "the lanes reads took {lanes} ms (target < 300)");
+}
+
+extern "C" {
+    fn getrusage(who: i32, usage: *mut [i64; 18]) -> i32;
+}
+
+/// #560: This process's user + system CPU time so far, in ms (`getrusage(RUSAGE_SELF)`: two `timeval`s first).
+fn cpu_ms() -> f64 {
+    let mut u = [0i64; 18];
+    assert_eq!(unsafe { getrusage(0, &mut u) }, 0);
+    let tv = |s: i64, us: i64| s as f64 * 1e3 + (us as u32) as f64 / 1e3;
+    tv(u[0], u[1]) + tv(u[2], u[3])
+}
+
+/// #560: the board's reads over a 30,000-event store (20 lanes) cost under 2 s of CPU per 100 requests (about 1 s on the mini, 3.4 s before #560), in a release
+/// build (a debug build reports only): each request reads only the events appended since the last, never the whole log.
+#[test]
+fn a_hundred_board_requests_on_a_30k_event_store_stay_under_the_cpu_budget() {
+    let (c, r) = big_with(20);
+    assert_eq!(run(&c, &r, &["drive", "--fast"]).0, 0);
+    let state = c.state.clone();
+    let (_, _, addr) = serve(c, Slow(r, Mutex::default(), AtomicUsize::new(0)));
+    let paths = [
+        "/api/v1/state",
+        "/api/v1/host",
+        "/api/v1/queue",
+        "/api/v1/needs",
+        "/api/v1/lanes",
+        "/api/v1/chat",
+        "/herd.json",
+        "/api/v1/events?since=29990",
+        "/",
+        "/api/v1/queue",
+    ];
+    paths.iter().for_each(|p| drop(fetch(addr, p)));
+    let t = cpu_ms();
+    for i in 0..100 {
+        // The fleet keeps logging: every tenth request has a new event to read.
+        if i % 10 == 0 {
+            append(
+                &state,
+                &Event::new(
+                    NOW,
+                    "sendmeter",
+                    Some(1),
+                    "driven",
+                    json!({"step": "review", "result": "ok"}),
+                ),
+            )
+            .unwrap();
+        }
+        fetch(addr, paths[i % paths.len()]);
+    }
+    let cpu = cpu_ms() - t;
+    report(&format!(
+        "#560 perf (30,000 events, 20 lanes): 100 board requests {cpu:.0} ms of CPU"
+    ));
+    if cfg!(debug_assertions) {
+        return eprintln!("debug build: budgets apply in release (cargo test --release --test perf)");
+    }
+    assert!(cpu < 2000.0, "100 requests took {cpu:.0} ms of CPU (budget 2000)");
 }

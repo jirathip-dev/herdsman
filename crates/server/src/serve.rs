@@ -7,7 +7,7 @@ use crate::api::{
     Paired, PrLine, QueueCard, QueueLane, QueueRow, QueueTab, RoleRow, Row, Stage, Sub,
 };
 use crate::config::{Config, Limits, Role};
-use crate::events::{age, append, fold, read, Event, IssueState, States};
+use crate::events::{age, append, fold, shared, Event, IssueState, States};
 use crate::gate::{gate, refused, Refusal};
 use crate::host::{self, Host};
 use crate::runner::{Out, Runner};
@@ -734,7 +734,7 @@ impl<'a> Server<'a> {
             let since = header(&req, "last-event-id").or(q.get("since").map(String::as_str));
             let mut top = 0;
             if let Some(n) = since.and_then(|n| n.parse::<u64>().ok()) {
-                let ev = read(&self.ctx.state).unwrap_or_default();
+                let ev = shared(&self.ctx.state).unwrap_or_default();
                 top = ev.last().map_or(n, |e| e.seq);
                 let after: Vec<_> = ev.iter().filter(|e| e.seq > n).collect();
                 msg += &match after.last() {
@@ -804,7 +804,7 @@ impl<'a> Server<'a> {
         }
         let driving = crate::drive::running(self.ctx, "");
         if log != w.log {
-            let ev = read(&self.ctx.state).unwrap_or_default();
+            let ev = shared(&self.ctx.state).unwrap_or_default();
             let top = ev.last().map_or(0, |e| e.seq);
             for e in ev.iter().filter(|e| e.seq > w.seen.unwrap_or(top)) {
                 lock(&self.clients).retain(|c| c.0.send(sse(e)).is_ok());
@@ -848,7 +848,10 @@ impl<'a> Server<'a> {
         {
             chat::deliver(at, self.r, &job);
         }
-        if !changed {
+        // #560: the parts are rendered only for an audience listening (a client that connects reads them afresh).
+        let heard = |p: bool| lock(&self.clients).iter().any(|c| c.1.is_some() == p);
+        let (anon, owner) = (heard(false), heard(true));
+        if !changed || !(anon || owner) {
             return;
         }
         w.rendered = now;
@@ -872,7 +875,7 @@ impl<'a> Server<'a> {
             lock(&self.clients).retain(|c| c.0.send(msg.clone()).is_ok());
         }
         // #269: the needs cards, Lanes and [chat] likewise, per audience (an unpaired device sees no pane text).
-        for paired in [false, true] {
+        for paired in [false, true].into_iter().filter(|p| [anon, owner][usize::from(*p)]) {
             for (id, j) in self.parts(at, paired) {
                 let h = hash(&j.replace(&format!("\"now\":{now},"), ""));
                 if w.frags.insert((paired, id), h).is_some_and(|o| o != h) {
@@ -1001,7 +1004,7 @@ impl<'a> Server<'a> {
             ("GET", p) if p.starts_with("/thread/") => {
                 let (t, name) = p[8..].split_once('/').unwrap_or_default();
                 let name = form(&format!("n={name}")).remove("n").unwrap_or_default();
-                let at = read(&ctx.state).ok().and_then(|ev| chat::file(ctx, &ev, t, &name, false));
+                let at = shared(&ctx.state).ok().and_then(|ev| chat::file(ctx, &ev, t, &name, false));
                 match at.and_then(|p| std::fs::read(p).ok()) {
                     Some(b) => ("200 OK", ctype(&name), b),
                     None => ("404 Not Found", "text/plain", text("no such file in the thread\n")),
@@ -1013,7 +1016,7 @@ impl<'a> Server<'a> {
                 let (f, n, i) = (it.next().unwrap_or_default(), it.next().unwrap_or_default(), it.next().unwrap_or_default());
                 let f = form(&format!("f={f}")).remove("f").unwrap_or_default();
                 let ask = |e: &&Event| crate::design::is_ask(e) && e.fleet == f && e.issue.map(|n| n.to_string()).as_deref() == Some(n);
-                let ev = read(&ctx.state).unwrap_or_default();
+                let ev = shared(&ctx.state).unwrap_or_default();
                 let at = ev.iter().rfind(ask).and_then(|a| chat::files_of(a).nth(i.parse().ok()?)?["path"].as_str().map(String::from));
                 match at.and_then(|p| std::fs::read(p).ok()) {
                     Some(b) => ("200 OK", PNG, b),
@@ -1025,7 +1028,7 @@ impl<'a> Server<'a> {
                 let mut it = p[6..].splitn(3, '/');
                 let (f, n, i) = (it.next().unwrap_or_default(), it.next().unwrap_or_default(), it.next().unwrap_or_default());
                 let f = form(&format!("f={f}")).remove("f").unwrap_or_default();
-                let ev = read(&ctx.state).unwrap_or_default();
+                let ev = shared(&ctx.state).unwrap_or_default();
                 let shots = n.parse().map(|n| crate::verify::served(&ev, (f.as_str(), n))).unwrap_or_default();
                 let at = i.parse().ok().and_then(|i: usize| shots.into_iter().nth(i));
                 match at.and_then(|(_, p)| std::fs::read(p).ok()) {
@@ -1193,7 +1196,7 @@ impl<'a> Server<'a> {
 
     /// The live fleet lane `agent` with its fleet and pane; refused PAUSED when its fleet is.
     fn lane(&self, ctx: &Ctx, agent: &str) -> Result<(lanes::Lane, String, String)> {
-        let (cfg, events) = (Config::load(&ctx.config)?, read(&ctx.state)?);
+        let (cfg, events) = (Config::load(&ctx.config)?, shared(&ctx.state)?);
         let all = self
             .lanes(ctx.now, &cfg, &events, &fold(&events))
             .context("herdr agent list failed")?;
@@ -1282,7 +1285,7 @@ impl<'a> Server<'a> {
     fn act(&self, ctx: &Ctx, dev: &devices::Device, f: &crate::api::Act) -> Result<String> {
         let (mut out, cfg) = (vec![], Config::load(&ctx.config)?);
         let (agent, yes, op) = (f.agent.as_str(), f.confirm == "1", f.op.as_str());
-        let sp = crate::events::last_spawn(&read(&ctx.state)?, agent).map(|e| (e.fleet.clone(), e.issue));
+        let sp = crate::events::last_spawn(&shared(&ctx.state)?, agent).map(|e| (e.fleet.clone(), e.issue));
         let Some((fleet, issue)) = sp.or_else(|| (op == "close").then(|| (String::new(), None))) else {
             return refused("NO_SUCH_AGENT", format!("no lane `{agent}` in the log"));
         };
@@ -1316,7 +1319,7 @@ impl<'a> Server<'a> {
         }
         let n = |k: &str, d: usize| q.get(k).and_then(|v| v.parse().ok()).unwrap_or(d);
         let (lines, before) = (n("lines", 200).min(200), n("before", 0));
-        let (cfg, events) = (Config::load(&ctx.config).ok()?, read(&ctx.state).ok()?);
+        let (cfg, events) = (Config::load(&ctx.config).ok()?, shared(&ctx.state).ok()?);
         let agent = q.get("agent")?;
         let ls = self.lanes(ctx.now, &cfg, &events, &fold(&events))?;
         let file = lanes::log(&ctx.state, agent).filter(|_| self.export.is_none());
@@ -1616,7 +1619,7 @@ impl<'a> Server<'a> {
     /// tab (web/src/needs.ts draws them): the open asks (options recommended first, a free-text box), each blocked
     /// lane's pending prompt, then the `needs-human` issues.
     fn needs_tab(&self, ctx: &Ctx, paired: bool) -> NeedsTab {
-        let events = read(&ctx.state).unwrap_or_default();
+        let events = shared(&ctx.state).unwrap_or_default();
         let (cfg, st) = (Config::load(&ctx.config).ok(), fold(&events));
         let (cfg, ev, st) = (cfg.as_ref(), &events, &st);
         let all = cfg.and_then(|c| self.lanes(ctx.now, c, ev, st)).unwrap_or_default();
@@ -1739,7 +1742,7 @@ impl<'a> Server<'a> {
             ..QueueTab::default()
         };
         // #483: the error's own text, config or log (e.g. `migrate --live`), not a fixed line.
-        let (cfg, events) = match (Config::load(&ctx.config), read(&ctx.state)) {
+        let (cfg, events) = match (Config::load(&ctx.config), shared(&ctx.state)) {
             (Ok(c), Ok(e)) => (c, e),
             (Err(e), _) | (_, Err(e)) => {
                 d.error = Some(format!("{e:#}"));
@@ -1992,14 +1995,24 @@ impl<'a> Server<'a> {
     }
 
     fn waits(&self, ctx: &Ctx, cfg: &Config, events: &[Event], all: &[lanes::Lane]) -> Vec<crate::waiting::Waiting> {
+        // #560: the waits for this log and these lanes are kept (30 s at most): a log that moved since the step's
+        // snapshot has them worked out once, not per request.
+        type Live = Option<(std::path::PathBuf, String, Vec<crate::waiting::Waiting>)>;
+        static LIVE: Mutex<Live> = Mutex::new(None);
         let snap = self.snapshot().1;
-        crate::snapshot::saved_waits(ctx, cfg, &self.cached(ctx.now, 30), &snap, (events, all))
+        let key = format!("{} {}", ctx.now / 30, crate::snapshot::wait_key(events, all));
+        if let Some((_, _, w)) = lock(&LIVE).as_ref().filter(|l| l.0 == ctx.state && l.1 == key) {
+            return w.clone();
+        }
+        let w = crate::snapshot::saved_waits(ctx, cfg, &self.cached(ctx.now, 30), &snap, (events, all));
+        *lock(&LIVE) = Some((ctx.state.clone(), key, w.clone()));
+        w
     }
 
     /// #37: Herd mode's data (`/herd.json`, the `herd` event; docs/serve.md).
     /// `weather` (loopback only) forces the host values.
     fn herd(&self, ctx: &Ctx, weather: Option<&str>) -> Result<Herd> {
-        let events = read(&ctx.state)?;
+        let events = shared(&ctx.state)?;
         let (cfg, st) = (Config::load(&ctx.config)?, fold(&events));
         let all = self.lanes(ctx.now, &cfg, &events, &st).unwrap_or_default();
         let waits = self.waits(ctx, &cfg, &events, &all);
@@ -2108,7 +2121,7 @@ impl<'a> Server<'a> {
             pair: !self.pairb().is_empty(),
             ..LanesTab::default()
         };
-        let events = read(&ctx.state).unwrap_or_default();
+        let events = shared(&ctx.state).unwrap_or_default();
         let (Ok(cfg), st) = (Config::load(&ctx.config), fold(&events)) else {
             t.error = Some("no fleet.toml".into());
             return t;
@@ -2238,7 +2251,7 @@ impl<'a> Server<'a> {
     /// #141: the Host tab as data (API v1's `host`; web/src/host.ts draws it): the host cards, then FLEET DISK, SERVICES,
     /// FLEETS and ALERTS rows with a status; serve.js ranks them.
     fn host_tab(&self, ctx: &Ctx) -> HostTab {
-        let (cfg, events) = (Config::load(&ctx.config).ok(), read(&ctx.state).unwrap_or_default());
+        let (cfg, events) = (Config::load(&ctx.config).ok(), shared(&ctx.state).unwrap_or_default());
         let (cfg, events) = (cfg.as_ref(), &events);
         let (hs, r, dl, dc) = (
             self.sample(),
@@ -3023,7 +3036,7 @@ pub fn export(ctx: &Ctx, r: &dyn Runner, dir: &std::path::Path, demo: bool) -> R
     };
     // #344: the demo's log goes into a scratch database, so `demo/` stays as committed.
     let _scratch = demo.then(crate::db::Scratch::start);
-    let (r, events): (&dyn Runner, _) = (if demo { &canned } else { r }, read(&ctx.state)?);
+    let (r, events): (&dyn Runner, _) = (if demo { &canned } else { r }, shared(&ctx.state)?);
     let ctx = &Ctx {
         now: if demo {
             events.iter().map(|e| e.ts).max().unwrap_or(0) + 60

@@ -58,17 +58,18 @@ fn the_chat_tab_is_linear_in_the_log_and_cached_by_its_last_seq() {
         "{scans} log scans for {THREADS} threads"
     );
 
-    // No new event: the second request reuses the fold. The live log is emptied behind serve's back (its last seq
-    // stays), so a re-read would show no threads.
-    let db = rusqlite::Connection::open(herdsman::db::file(&c.state)).unwrap();
-    db.execute("UPDATE events SET archived = 1", []).unwrap();
-    assert_eq!(api(&s, ADDR, "", NOW + 501, "chat"), first, "the log was read again");
+    // No new event: the second request reuses the fold, no thread walks the log. (#560: the log itself is
+    // `events::shared`, so the fold, not a re-read, is what this counts.)
+    let before = SCANS.load(Relaxed);
+    assert_eq!(api(&s, ADDR, "", NOW + 501, "chat"), first, "same answer");
+    assert_eq!(SCANS.load(Relaxed) - before, 0, "the log was folded again");
     // A new event moves the last seq: the next request folds the log again.
     herdsman::events::append(
         &c.state,
         &herdsman::events::Event::new(NOW, "sendmeter", Some(1), "note", json!({})),
     )
     .unwrap();
-    let third: serde_json::Value = serde_json::from_str(&api(&s, ADDR, "", NOW + 502, "chat")).unwrap();
-    assert_eq!(third["threads"], json!([]), "a new event folds the log again");
+    let before = SCANS.load(Relaxed);
+    api(&s, ADDR, "", NOW + 502, "chat");
+    assert!(SCANS.load(Relaxed) > before, "a new event folds the log again");
 }

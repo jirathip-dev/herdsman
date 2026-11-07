@@ -5,7 +5,7 @@
 //! board's code; every POST takes JSON (or the board's form) and answers `Reply`. #576: the queue rows' marks (`qset`
 //! sets one), an issue's verdicts and the lessons.
 use super::{act, board, busy, coat, gh, moment, words, Auth, BTreeMap, Event, JSON, PAIRED_OPS};
-use super::{fold, form, lanes, lock, read, refused, shown, view, Config, Ctx, Refusal, Result, Server};
+use super::{fold, form, lanes, lock, refused, shared, shown, view, Config, Ctx, Refusal, Result, Server};
 use crate::api::{Ask, ChatDefaults, Digest, Ev, Events, Fleet, Harness, IssueView, Lane, LessonFleet, LessonRun};
 use crate::api::{Lessons, Marks, QueueTab, Queued, Reply, Repro, Roles, Row, SetupScreen, State, Verdict};
 use crate::events::plain;
@@ -95,7 +95,7 @@ impl Server<'_> {
             ("GET", Some("lanes")) => out("200 OK", &self.lanes_tab(ctx, paired)),
             ("GET", Some("chat")) => out("200 OK", &self.chat_tab(ctx, paired && self.addr.is_some())),
             ("GET", Some(t)) if t.starts_with("thread/") => {
-                let ev = read(&ctx.state).unwrap_or_default();
+                let ev = shared(&ctx.state).unwrap_or_default();
                 super::chat::older(ctx, &ev, &t[7..], &f).map_or_else(
                     || reply("404 Not Found", "NOT_FOUND", "no such thread"),
                     |p| out("200 OK", &p),
@@ -221,7 +221,7 @@ impl Server<'_> {
     /// #555: a backlog row's [close]: `gh issue close` on an issue neither queued nor worked on, then the backlog read
     /// again (it drops out); logs `closed`.
     fn close(&self, ctx: &Ctx, f: &BTreeMap<String, String>) -> Result<String> {
-        let (cfg, events) = (Config::load(&ctx.config)?, read(&ctx.state)?);
+        let (cfg, events) = (Config::load(&ctx.config)?, shared(&ctx.state)?);
         let fleet = f.get("fleet").map_or("", String::as_str);
         let Some(fc) = cfg.fleet.get(fleet) else {
             return refused("BAD_VALUE", format!("no fleet `{fleet}`"));
@@ -252,7 +252,7 @@ impl Server<'_> {
     }
 
     pub(super) fn state(&self, ctx: &Ctx) -> Result<State> {
-        let (cfg, events) = (Config::load(&ctx.config)?, read(&ctx.state)?);
+        let (cfg, events) = (Config::load(&ctx.config)?, shared(&ctx.state)?);
         let (st, r) = (fold(&events), &self.cached(ctx.now, 60));
         let all = self.lanes(ctx.now, &cfg, &events, &st).unwrap_or_default();
         let waits = self.waits(ctx, &cfg, &events, &all);
@@ -336,7 +336,7 @@ impl Server<'_> {
 
 /// #576: `queue`'s cards with each queued row's marks, and the verify note its row shows.
 fn marked(ctx: &Ctx, mut d: QueueTab) -> QueueTab {
-    let ev = read(&ctx.state).unwrap_or_default();
+    let ev = shared(&ctx.state).unwrap_or_default();
     for c in &mut d.fleets {
         let q = crate::queue::replay(&ev, &c.name);
         for r in &c.rows {
@@ -376,7 +376,7 @@ fn qset(ctx: &Ctx, f: &BTreeMap<String, String>) -> Result<String> {
 
 /// #576: `issue/<fleet>/<n>`: its verdicts, newest first; the newest's screenshots as `/shot/` serves them.
 fn issue(ctx: &Ctx, fleet: &str, n: u64) -> IssueView {
-    let ev = read(&ctx.state).unwrap_or_default();
+    let ev = shared(&ctx.state).unwrap_or_default();
     let mut shots: Vec<String> = crate::verify::served(&ev, (fleet, n))
         .into_iter()
         .map(|x| x.0)
@@ -417,7 +417,7 @@ fn issue(ctx: &Ctx, fleet: &str, n: u64) -> IssueView {
 fn lessons(ctx: &Ctx) -> Lessons {
     let (cfg, ev) = (
         Config::load(&ctx.config).unwrap_or_default(),
-        read(&ctx.state).unwrap_or_default(),
+        shared(&ctx.state).unwrap_or_default(),
     );
     let st = fold(&ev);
     let fleet = |(name, fc): (&String, &crate::config::Fleet)| {
@@ -492,7 +492,7 @@ fn about(ctx: &Ctx, f: &BTreeMap<String, String>) -> BTreeMap<String, String> {
 
 /// #555: `roles?fleet=`: the fleet's [config] sheet and `[chat]`'s defaults.
 fn roles(ctx: &Ctx, fleet: &str) -> Result<Roles> {
-    let (cfg, events) = (Config::load(&ctx.config)?, read(&ctx.state)?);
+    let (cfg, events) = (Config::load(&ctx.config)?, shared(&ctx.state)?);
     let fc = cfg.fleet(fleet)?;
     let c = &cfg.chat;
     let harness = |h: &&str| Harness {
@@ -526,7 +526,7 @@ pub(super) fn ask(a: &Event) -> Ask {
 
 /// #259: the events with `since < seq <= until`; over `cap`, none and `refresh`. #266: each as the Events tab says it.
 pub(super) fn events(ctx: &Ctx, since: u64, until: u64, cap: usize) -> Events {
-    let (ev, cfg) = (read(&ctx.state).unwrap_or_default(), Config::load(&ctx.config).ok());
+    let (ev, cfg) = (shared(&ctx.state).unwrap_or_default(), Config::load(&ctx.config).ok());
     let after: Vec<_> = ev.iter().filter(|e| e.seq > since && e.seq <= until).collect();
     let (seq, refresh) = (ev.last().map_or(0, |e| e.seq), after.len() > cap);
     let mut prs = BTreeMap::new();
