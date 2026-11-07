@@ -8,10 +8,33 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::Write;
 
-/// Host `name`'s recipe (`<config>/recipes/<cloud>.toml`, else the built-in `boat`) and size.
-fn recipe(ctx: &Ctx, cfg: &Config, name: &str) -> Result<(toml::Table, String)> {
+/// Host `name`'s recipe (`<config>/recipes/<cloud>.toml`, else the built-in `boat`) and size: #635's old `medium` is
+/// `default` where the recipe prices no `medium`.
+pub fn recipe(ctx: &Ctx, cfg: &Config, name: &str) -> Result<(toml::Table, String)> {
     let (c, size) = (&cfg.hosts[name].cloud, cfg.hosts[name].size.clone().unwrap_or_default());
-    Ok((load(ctx, c.as_deref().unwrap_or(""))?, size))
+    let rc = load(ctx, c.as_deref().unwrap_or(""))?;
+    let rates = rc.get("rate_usd_hour").and_then(|t| t.as_table());
+    let old = size == "medium" && rates.is_some_and(|t| !t.contains_key("medium") && t.contains_key("default"));
+    Ok((rc, if old { "default".into() } else { size }))
+}
+
+/// #635: the one fleet that fits host `name` (its tags), whose store scope its cloud key is read from first.
+pub fn fleet<'a>(ctx: &Ctx, cfg: &'a Config, name: &str) -> Option<&'a str> {
+    let tags = crate::hosts::tags(&cfg.hosts[name], crate::hosts::cached(ctx).get(name));
+    let mut fits = cfg.fleet.iter().filter(|f| f.1.needs.iter().all(|t| tags.contains(t)));
+    fits.next().filter(|_| fits.next().is_none()).map(|f| f.0.as_str())
+}
+
+/// The provider key `var` and where it was found: the environment, else the store's `herdsman/<fleet>/<var>`, else
+/// `herdsman/all/<var>`.
+pub fn key(r: &dyn Runner, var: &str, fleet: Option<&str>) -> Option<(String, String)> {
+    let env = std::env::var(var).ok().map(|k| (k, "env".into()));
+    let stored = |f: &str| {
+        let svc = crate::secret::service(f, var);
+        r.secret(&svc).ok().flatten().map(|k| (k, svc))
+    };
+    let found = env.or_else(|| fleet.and_then(stored)).or_else(|| stored("all"));
+    found.filter(|k| !k.0.is_empty())
 }
 
 /// Recipe `c`: `<config>/recipes/<c>.toml`, else the built-in `boat`.
@@ -28,15 +51,17 @@ fn cmd(ctx: &Ctx, cfg: &Config, r: &dyn Runner, name: &str, verb: &str) -> Resul
     let (rc, size) = recipe(ctx, cfg, name)?;
     let line = rc.get(verb).and_then(|v| v.as_str()).unwrap_or_default();
     let line = line.replace("{name}", name).replace("{size}", &size);
-    run(r, &rc, &format!("{name} {verb}"), &line, None)
+    run(r, &rc, &format!("{name} {verb}"), &line, (None, fleet(ctx, cfg, name)))
 }
 
-/// Run recipe `rc`'s filled-in `line`: its provider key, then #537's `token` (as `RT`), exported from stdin.
-pub fn run(r: &dyn Runner, rc: &toml::Table, what: &str, line: &str, token: Option<&str>) -> Result<String> {
+/// Run recipe `rc`'s filled-in `line`: its provider key (#635: `fleet`'s first), then #537's `token` (as `RT`),
+/// exported from stdin.
+type Scope<'a> = (Option<&'a str>, Option<&'a str>);
+pub fn run(r: &dyn Runner, rc: &toml::Table, what: &str, line: &str, (token, fleet): Scope) -> Result<String> {
     let var = rc.get("key_env").and_then(|v| v.as_str()).unwrap_or_default();
-    let stored = || r.secret(&crate::secret::service("all", var)).ok().flatten();
-    let key = std::env::var(var).ok().or_else(stored).unwrap_or_default();
-    ensure!(!key.is_empty(), "{var} not set (env or the store's `all` secret {var})");
+    let f = fleet.map_or(String::new(), |f| format!("`{f}` or "));
+    let (key, _) =
+        key(r, var, fleet).with_context(|| format!("{var} not set (env or the store's {f}`all` secret {var})"))?;
     let rt = token.map_or("", |_| "IFS= read -r RT; export RT; ");
     let script = format!("IFS= read -r K; export {var}=\"$K\"; unset K; {rt}{line}");
     let o = r.run_in(
@@ -117,7 +142,18 @@ pub fn held(ctx: &Ctx, cfg: &Config, name: &str) -> Option<(&'static str, String
 /// Start host `name`, wait (5 min at most) for `status` to print `running`, then refresh its address; a failure stops it.
 pub fn start(ctx: &Ctx, cfg: &Config, r: &dyn Runner, name: &str) -> Result<()> {
     log(ctx, cfg, "cloud-start", name, json!({}))?;
-    let up = cmd(ctx, cfg, r, name, "start").and_then(|_| {
+    let made = |v: &str| {
+        // #635: a new sandbox has a new host key: its old pin goes.
+        let _ = std::fs::remove_file(pin(ctx, name));
+        cmd(ctx, cfg, r, name, v)
+    };
+    let snap = last(&read(&ctx.state)?, name, &["cloud-snapshot"]).is_some();
+    let up = cmd(ctx, cfg, r, name, "status").and_then(|s| match s.trim() {
+        "" if snap && recipe(ctx, cfg, name)?.0.contains_key("create_from") => made("create_from"),
+        "" => made("create"),
+        _ => cmd(ctx, cfg, r, name, "start"),
+    });
+    let up = up.and_then(|_| {
         for _ in 0..30 {
             if cmd(ctx, cfg, r, name, "status")?.trim() == "running" {
                 return refresh(ctx, cfg, r, name).map(|()| drop(crate::hosts::survey(ctx, cfg, r, true)));
@@ -135,7 +171,13 @@ pub fn start(ctx: &Ctx, cfg: &Config, r: &dyn Runner, name: &str) -> Result<()> 
     up
 }
 
-/// Rewrite host `name`'s block in `~/.ssh/config.d/herdsman` and its `known_hosts` from `address`; logs `cloud-up`.
+/// #635: host `name`'s pinned host key, outside `config.d` (an `Include config.d/*` would read it as config).
+fn pin(ctx: &Ctx, name: &str) -> std::path::PathBuf {
+    ctx.home.join(format!(".ssh/herdsman/{name}.known"))
+}
+
+/// Rewrite host `name`'s block in `~/.ssh/config.d/herdsman` and its `known_hosts` from `address` (a key other than
+/// the pinned one fails closed); logs `cloud-up`.
 fn refresh(ctx: &Ctx, cfg: &Config, r: &dyn Runner, name: &str) -> Result<()> {
     let out = cmd(ctx, cfg, r, name, "address")?;
     let bad = || format!("{name} address: not `user@host port` + key");
@@ -147,14 +189,21 @@ fn refresh(ctx: &Ctx, cfg: &Config, r: &dyn Runner, name: &str) -> Result<()> {
         port.parse::<u16>().is_ok() && !dest.contains(char::is_whitespace),
         bad()
     );
-    let dir = ctx.home.join(".ssh/config.d");
+    let (dir, known) = (ctx.home.join(".ssh/config.d"), pin(ctx, name));
     let at = [format!("[{host}]:{port}"), host.into()];
-    let known = dir.join(format!("herdsman-{name}.known"));
+    let was = std::fs::read_to_string(&known).unwrap_or_default();
+    let was = was.split_once(' ').map_or("", |w| w.1.trim());
+    let k = known.display();
+    ensure!(
+        was.is_empty() || was == key,
+        "{name}: host key changed from the one pinned in {k} (rm it to trust the new one)"
+    );
     std::fs::create_dir_all(&dir)?;
+    std::fs::create_dir_all(known.parent().context("pin dir")?)?;
     write_atomic(&known, &format!("{} {key}\n", at[usize::from(port == "22")]))?;
+    let _ = std::fs::remove_file(dir.join(format!("herdsman-{name}.known"))); // the pre-#635 place
     let (a, b) = (format!("# herdsman {name}\n"), format!("# end {name}\n"));
     let m = cfg.hosts[name].machine.as_deref().unwrap_or(name);
-    let k = known.display();
     let s = format!("{a}Host {m}\n  HostName {host}\n  User {user}\n  Port {port}\n  UserKnownHostsFile {k}\n{b}");
     let p = dir.join("herdsman");
     let old = std::fs::read_to_string(&p).unwrap_or_default();
@@ -352,4 +401,92 @@ pub fn snapshot(ctx: &Ctx, cfg: &Config, r: &dyn Runner, name: &str) -> Result<(
     ensure!(s.up && bad.is_empty(), "{name} is not healthy: {}", bad.join("; "));
     cmd(ctx, cfg, r, name, "snapshot")?;
     log(ctx, cfg, "cloud-snapshot", name, json!({}))
+}
+
+/// #635 doctor rows for cloud host `name`: an old size, where its provider key is, and each recipe subcommand of its
+/// CLI (the recipe's name, e.g. `boat`) in that CLI's `--help`.
+pub fn doctor(ctx: &Ctx, cfg: &Config, r: &dyn Runner, name: &str, rows: &mut Vec<String>) -> Result<()> {
+    let (rc, size) = recipe(ctx, cfg, name)?;
+    let c = cfg.hosts[name].cloud.clone().unwrap_or_default();
+    if cfg.hosts[name].size.as_deref() != Some(&size) {
+        let old = cfg.hosts[name].size.clone().unwrap_or_default();
+        rows.push(format!(
+            "! cloud {name} size — \"{old}\" is {c}'s \"{size}\" → set size = \"{size}\""
+        ));
+    }
+    let var = rc.get("key_env").and_then(|v| v.as_str()).unwrap_or_default();
+    let f = fleet(ctx, cfg, name);
+    rows.push(key(r, var, f).map_or_else(
+        || format!("✗ cloud {name} key — {var} not in env, herdsman/{}/{var} or herdsman/all/{var} → herdsman secret request <thread> {var}", f.unwrap_or("all")),
+        |k| format!("✓ cloud {name} key — {}", k.1),
+    ));
+    let mut uses = vec![];
+    for (verb, line) in rc
+        .iter()
+        .filter(|v| !v.0.starts_with("runner_"))
+        .filter_map(|(k, v)| Some((k, v.as_str()?)))
+    {
+        let w: Vec<_> = line
+            .split(|ch: char| !(ch.is_alphanumeric() || "-_".contains(ch)))
+            .filter(|w| !w.is_empty())
+            .collect();
+        uses.extend(
+            w.windows(2)
+                .filter(|p| p[0] == c && !p[1].starts_with('-'))
+                .map(|p| (p[1], verb, line)),
+        );
+    }
+    if uses.is_empty() {
+        return Ok(());
+    }
+    let help = r.run_in("sh", &argv(&["-c", &format!("{c} --help")]), "")?;
+    if help.code != 0 {
+        rows.push(format!("✗ cloud {name} cli — `{c} --help` fails → install the {c} CLI"));
+        return Ok(());
+    }
+    let has = |s: &str| {
+        help.stdout
+            .lines()
+            .any(|l| l.starts_with("  ") && l.split_whitespace().next() == Some(s))
+    };
+    let miss: Vec<_> = uses.iter().filter(|u| !has(u.0)).collect();
+    rows.extend(
+        miss.iter()
+            .map(|(s, v, l)| format!("✗ cloud {name} cli — {c} has no `{s}` (recipe {v} = \"{l}\")")),
+    );
+    let mut subs: Vec<_> = uses.iter().map(|u| u.0).collect();
+    subs.sort_unstable();
+    subs.dedup();
+    if miss.is_empty() {
+        rows.push(format!("✓ cloud {name} cli — {c} has {}", subs.join(", ")));
+    }
+    Ok(())
+}
+
+/// #635: an `Include` in `~/.ssh/config` that reads a host-key file under `config.d` (ssh parses it as config).
+pub fn includes(ctx: &Ctx, rows: &mut Vec<String>) {
+    let ssh = ctx.home.join(".ssh");
+    let conf = std::fs::read_to_string(ssh.join("config")).unwrap_or_default();
+    let files = std::fs::read_dir(ssh.join("config.d")).into_iter().flatten().flatten();
+    let known: Vec<_> = files
+        .map(|f| f.file_name().to_string_lossy().into_owned())
+        .filter(|f| std::path::Path::new(f).extension().is_some_and(|e| e == "known"))
+        .collect();
+    // `*` only: the text before the first and after the last.
+    let glob = |p: &str, s: &str| {
+        let ends = p.split_once('*').zip(p.rsplit_once('*'));
+        ends.map_or(p == s, |((a, _), (_, b))| s.starts_with(a) && s.ends_with(b))
+    };
+    for l in conf
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.to_lowercase().starts_with("include "))
+    {
+        for p in l[8..].split_whitespace() {
+            let p = p.trim_start_matches("~/.ssh/");
+            if let Some(f) = known.iter().find(|f| glob(p, &format!("config.d/{f}"))) {
+                rows.push(format!("✗ ssh include — `{l}` reads config.d/{f} as config → Include config.d/herdsman, and rm ~/.ssh/config.d/*.known (now under ~/.ssh/herdsman)"));
+            }
+        }
+    }
 }

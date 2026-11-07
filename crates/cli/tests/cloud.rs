@@ -150,14 +150,15 @@ fn a_lane_only_the_cloud_fits_starts_it_refreshes_its_address_then_spawns() {
     let (code, out) = run(&c, &r, &["spawn", "sendmeter", "12", "impl"]);
     assert_eq!(code, 0, "{out} {:?}", r.calls.borrow());
     let i = |p: &str| r.index(p).unwrap_or_else(|| panic!("no {p}: {:?}", r.calls.borrow()));
-    assert!(i(&rc("start")) < i(&rc("status")) && i(&rc("status")) < i(&rc("address")));
+    // #635: `status` first (an empty one would `create`), then `start`, then `address`.
+    assert!(i(&rc("status")) < i(&rc("start")) && i(&rc("start")) < i(&rc("address")));
     assert!(i(&rc("address")) < i("herdr --machine cloud1 worktree create"));
     let inc = std::fs::read_to_string(c.home.join(".ssh/config.d/herdsman")).unwrap();
     assert!(
         inc.contains("Host cloud1\n  HostName 10.0.0.7\n  User ubuntu\n  Port 2222\n"),
         "{inc}"
     );
-    let known = std::fs::read_to_string(c.home.join(".ssh/config.d/herdsman-cloud1.known")).unwrap();
+    let known = std::fs::read_to_string(c.home.join(".ssh/herdsman/cloud1.known")).unwrap();
     assert_eq!(known, "[10.0.0.7]:2222 ssh-ed25519 AAAAC3fakekey\n");
     let events = read(&c.state).unwrap();
     let kinds: Vec<_> = events
@@ -432,13 +433,13 @@ fn the_ssh_include_rewrite_is_idempotent_and_keeps_other_blocks() {
         once.starts_with(other) && once.matches("Host cloud1").count() == 1,
         "{once}"
     );
-    // A new address replaces the block.
-    let r = fake(0.1).once(&rc("address"), 0, "ubuntu@10.0.0.9 22\nssh-ed25519 BBBB\n");
+    // A new address replaces the block (#635: the pinned host key stays the same).
+    let r = fake(0.1).once(&rc("address"), 0, "ubuntu@10.0.0.9 22\nssh-ed25519 AAAAC3fakekey\n");
     herdsman::cloud::start(&c, &cfg, &r, "cloud1").unwrap();
     let now = std::fs::read_to_string(dir.join("herdsman")).unwrap();
     assert!(now.contains("HostName 10.0.0.9") && !now.contains("10.0.0.7"), "{now}");
-    let known = std::fs::read_to_string(dir.join("herdsman-cloud1.known")).unwrap();
-    assert_eq!(known, "10.0.0.9 ssh-ed25519 BBBB\n");
+    let known = std::fs::read_to_string(c.home.join(".ssh/herdsman/cloud1.known")).unwrap();
+    assert_eq!(known, "10.0.0.9 ssh-ed25519 AAAAC3fakekey\n");
 }
 
 #[test]

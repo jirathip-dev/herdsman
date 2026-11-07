@@ -220,6 +220,8 @@ never edits the account list itself: that change is a `config propose` card.
 - [save] stores the value in the main host's OS store (#441, docs/providers.md) as `herdsman/<fleet>/<NAME>`
   (`<fleet>` is the thread's, or `all`), never in argv. Events, the chat and lanes never see it. The thread records
   only `secret <NAME> set ✓ (by owner)`.
+- A cloud host's provider key (docs/hosts.md, e.g. `BOAT_API_KEY`) works saved either way: from the fleet's thread
+  (`herdsman/<fleet>/<NAME>`, for a host only that fleet fits) or as `all`.
 - A fleet's `env` refers to it as `KEY = "secret:<NAME>"`. At spawn herdsman delivers it (the fleet's item, else
   `all`'s) through a 0600 file the pane's shell sources, deleted after the start (docs/providers.md).
 - `herdsman secret ls` and `herdsman secret rm <fleet|all> <NAME>` are owner-only.

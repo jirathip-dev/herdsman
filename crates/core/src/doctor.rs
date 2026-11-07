@@ -244,6 +244,13 @@ fn checks(ctx: &Ctx, cfg: &Config, r: &dyn Runner, rows: &mut Vec<String>) {
         let line = format!("timer — {label} {state} → herdsman timer install (the owner or a conductor)");
         row(rows, state == "loaded", '✗', &line);
     }
+    // #635: each cloud host's size, key and CLI; an ssh `Include` that reads a host-key file.
+    for name in cfg.hosts.iter().filter(|h| h.1.cloud.is_some()).map(|h| h.0) {
+        if let Err(e) = crate::cloud::doctor(ctx, cfg, r, name, rows) {
+            rows.push(format!("✗ cloud {name} — {e:#}"));
+        }
+    }
+    crate::cloud::includes(ctx, rows);
     // #235: each enabled remote host's health, its failures as rows `host <name> <check>`.
     for (name, h) in cfg.hosts.iter().filter(|h| h.1.enabled) {
         let Some(m) = h.machine.as_deref() else { continue };

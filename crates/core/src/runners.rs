@@ -119,7 +119,7 @@ fn rc(ctx: &Ctx, r: &dyn Runner, c: &CiRunners, key: &str, vm: &str, token: Opti
             fill(s("runner_exec")?)
         ),
     };
-    crate::cloud::run(r, &rc, &format!("{vm} {key}"), &line, token)
+    crate::cloud::run(r, &rc, &format!("{vm} {key}"), &line, (token, None))
 }
 
 /// One VM's cost a day: the recipe's `rate_usd_hour` for `size`, × 24.

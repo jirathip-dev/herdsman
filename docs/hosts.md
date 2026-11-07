@@ -204,7 +204,7 @@ A cloud host is a `[hosts.<name>]` with a `cloud` recipe. herdsman starts it whe
 [hosts.boat1]
 machine = "boat1"          # the ssh alias herdsman writes, and the herdr machine label
 cloud = "boat"             # the built-in recipe; or <config>/recipes/<name>.toml
-size = "small"             # a key of the recipe's [rate_usd_hour]
+size = "small"             # a key of the recipe's [rate_usd_hour]: boat's small|default|large|xlarge
 budget_usd_month = 50      # hard: none set means 0, so it never starts
 max_hours_day = 6          # optional
 idle_stop_minutes = 20     # the default
@@ -214,12 +214,20 @@ tags = ["docker"]
 overflow_after_minutes = 10  # the default
 ```
 
-- **The recipe** is a TOML file of `sh -c` templates: `create`, `start`, `stop`, `status` (prints `running` when up),
-  `address` (prints `user@host port`, then the host key line), `destroy`. It also sets `key_env`, the provider key's
+- **The recipe** is a TOML file of `sh -c` templates: `create`, `start`, `stop`, `status` (prints `running` when up,
+  nothing when there is no such sandbox), `address` (prints `user@host port`, then the host key line), `destroy`.
+  A start whose `status` is empty runs `create` (`create_from` once the host was snapshotted) instead of `start`. It also sets `key_env`, the provider key's
   variable, and `[rate_usd_hour]` per size. `{name}` is the host's name and `{size}` its size. The built-in `boat`
   recipe is assets/recipes/boat.toml. Check its commands and rates against docs.boat.dev, and copy it to
-  `<config>/recipes/boat.toml` to change them.
-- **The provider key** is read on the main host from the environment, else from the store's `herdsman/all/<key_env>`. Each
+  `<config>/recipes/boat.toml` to change them. #635: it targets the current boat CLI (`boat new --type --name`,
+  `list --all --json`, `resume`, `stop`, `delete`, `snapshot <id> <name>`, `new --from`; it needs `jq`) and finds the
+  sandbox by name. `user@host port` is the sandbox's `sshEndpoint`, the host key comes from `ssh-keyscan` at the first
+  start and stays pinned: a later start that sees another key fails closed (remove the pin to trust a new one). Sizes
+  are `small|default|large|xlarge`; an old `size = "medium"` is run as `default` and `herdsman doctor` shows a `!`
+  row for it. doctor also checks each `boat` subcommand the recipe uses against `boat --help` (✗ with the recipe line).
+- **The provider key** is read on the main host from the environment, else from the store's `herdsman/<fleet>/<key_env>`
+  (#635: when only that fleet fits the host, e.g. saved by a secret card in that fleet's thread), else
+  `herdsman/all/<key_env>`. `herdsman doctor` names the one it found (`✓ cloud boat1 key — herdsman/app/BOAT_API_KEY`). Each
   command gets it on stdin and exports it. It never appears in argv, fleet.toml or the event log.
 - **Start on demand.** Placement uses a cloud host, stopped or running, in two cases only: every local host has been
   refused (busy, low memory or disk) for `overflow_after_minutes`, or the lane needs a tag only the cloud host has (#256:
@@ -227,8 +235,10 @@ overflow_after_minutes = 10  # the default
   busy 12 min`, `needs docker: no local host has it`), and `herdsman status` shows it as `on <host>: <why>`. A respawn on a lane's
   own host, `--host`, or a role `host` pin starts it too. `spawn` runs `start`, then polls `status` for up to 5 min.
   It then rewrites the host's block in `~/.ssh/config.d/herdsman` and its own known_hosts file
-  (`~/.ssh/config.d/herdsman-<name>.known`) from `address`, and then spawns. A dry run never starts a host. Add
-  `Include config.d/*` at the top of `~/.ssh/config` once.
+  (`~/.ssh/herdsman/<name>.known`, outside `config.d`) from `address`, and then spawns. A dry run never starts a host.
+  Add `Include config.d/herdsman` at the top of `~/.ssh/config` once: name only that file, since ssh reads every
+  included file as config. doctor flags an `Include` that reads a `.known` file (the pre-#635 place); start
+  removes those.
 - **Idle stop.** `check` stops a running cloud host after `idle_stop_minutes` with no live agent on it. First, each
   lane worktree there with unpushed or dirty work is pushed to `wip/<host>-<lane>`, after the secret scan. A secret
   or a failed push aborts the stop (logged `cloud-abort`). The disk is kept. Lanes there show `paused: cloud host

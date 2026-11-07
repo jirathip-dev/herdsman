@@ -1,17 +1,22 @@
 # #254: the built-in `boat` cloud recipe (boat.dev, docs.boat.dev). A file `<config>/recipes/boat.toml` replaces it.
 # Each command is a `sh -c` template: `{name}` is the `[hosts.<name>]` key (the sandbox name), `{size}` its `size`.
 # The provider key (`key_env`) is exported from stdin, never in argv or the event log.
-# `status` prints `running` when up; `address` prints `user@host port`, then the host key (`ssh-ed25519 AAAA…`).
+# `status` prints `running` when up, nothing when there is no such sandbox (then `create`, or `create_from` once
+# snapshotted, makes it); `address` prints `user@host port`, then the host key (`ssh-ed25519 AAAA…`).
+# #635: checked against `boat <cmd> --help` (new, list, resume, stop, delete, snapshot) on 2026-11-07. Sandboxes are
+# found by `--name` in `boat list --all --json` (jq); `user@host port` is its `sshEndpoint`, the host key from
+# ssh-keyscan, pinned at the first start.
 key_env = "BOAT_API_KEY"
-create = "boat create {name} --size {size}"
-start = "boat resume {name}"
-stop = "boat stop {name}"
-status = "boat status {name} --format '{{.State}}'"
-address = "boat ssh-info {name}"
-destroy = "boat destroy {name} --yes"
+create = "boat new --type {size} --name {name} --no-auto-stop --no-update >/dev/null"
+start = '''boat resume "$(boat list --all --json --no-update | jq -r 'first(.sandboxes[]|select(.name=="{name}"))|.id')" --no-update >/dev/null'''
+stop = '''boat stop "$(boat list --all --json --no-update | jq -r 'first(.sandboxes[]|select(.name=="{name}"))|.id')" --no-update >/dev/null'''
+status = '''boat list --all --json --no-update | jq -r 'first(.sandboxes[]|select(.name=="{name}"))|if (.state=="idle" or .state=="running" or .state=="ready") then "running" else .state end' '''
+address = '''e=$(boat list --all --json --no-update | jq -r 'first(.sandboxes[]|select(.name=="{name}"))|.sshEndpoint'); \
+h=${e%:*}; p=${e##*:}; echo "user@$h $p"; ssh-keyscan -t ed25519 -p "$p" "$h" 2>/dev/null | grep -m1 ' ssh-ed25519 ' | cut -d' ' -f2-'''
+destroy = '''boat delete "$(boat list --all --json --no-update | jq -r 'first(.sandboxes[]|select(.name=="{name}"))|.id')" --yes --no-update'''
 # #255: `hosts snapshot` saves a bootstrapped host; `create_from` makes a new one from that snapshot, ready to use.
-snapshot = "boat snapshot create {name} --name herdsman-{name}"
-create_from = "boat create {name} --size {size} --from herdsman-{name}"
+snapshot = '''boat snapshot "$(boat list --all --json --no-update | jq -r 'first(.sandboxes[]|select(.name=="{name}"))|.id')" herdsman-{name} --no-update'''
+create_from = "boat new --type {size} --name {name} --from herdsman-{name} --no-auto-stop --no-update >/dev/null"
 
 # #537: `[ci_runners]` VMs (boat.dev's HTTP API, docs.boat.dev; check them there). `{vm}` is a VM id; `{size}`,
 # `{ttl}` (seconds, 0 = none), `{snapshots}` and `{service}` (the runner unit) come from `[ci_runners]`.
@@ -32,9 +37,10 @@ runner_token = "echo {rt} | sudo tee /run/rt >/dev/null && sudo chmod 600 /run/r
 runner_drain = "sudo touch /run/stop-runners"
 runner_names = "echo boat-$(cut -c1-6 /etc/machine-id)-"
 
-# USD per running hour by size; check docs.boat.dev pricing and override in your own recipe file.
+# USD per running hour by size (boat's published rates, 2026-11-07); check docs.boat.dev pricing and override in your
+# own recipe file. #635: a host's old `medium` size is boat's `default`.
 [rate_usd_hour]
-small = 0.05
-medium = 0.10
-large = 0.20
-xlarge = 0.40
+small = 0.018
+default = 0.036
+large = 0.072
+xlarge = 0.20

@@ -317,5 +317,5 @@ fn the_built_in_boat_recipe_has_every_runner_command() {
         assert!(t.get(k).and_then(|v| v.as_str()).is_some(), "{k}");
     }
     assert!(t["runner_drain"].is_str() && t["runner_names"].is_str());
-    assert_eq!(t["rate_usd_hour"]["large"].as_float(), Some(0.2));
+    assert_eq!(t["rate_usd_hour"]["large"].as_float(), Some(0.072));
 }
