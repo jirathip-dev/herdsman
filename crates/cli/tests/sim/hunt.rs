@@ -77,7 +77,10 @@ impl Plan {
         for (r, s) in &self.scripts {
             let b = |x: bool| u8::from(x);
             out.push(match s {
-                Script::Push { secs, green } => format!("{r} P {secs} {}", b(*green)),
+                Script::Push { secs, green, ci } => {
+                    let ci = ci.map(|c| format!(" {c}")).unwrap_or_default();
+                    format!("{r} P {secs} {}{ci}", b(*green))
+                }
                 Script::Review {
                     secs,
                     pass,
@@ -135,6 +138,7 @@ impl Plan {
                     "P" => Script::Push {
                         secs: n(2)?,
                         green: f(3)?,
+                        ci: n(4),
                     },
                     "V" => Script::Review {
                         secs: n(2)?,

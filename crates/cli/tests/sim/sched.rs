@@ -76,6 +76,13 @@ pub struct World {
     pub root: PathBuf,
     pub step: u64,
     next_pid: u32,
+    /// #686: a replay records each violation (once per invariant and subject) with its step and runs on.
+    pub keep_going: bool,
+    pub violations: Vec<String>,
+    /// Every `(agent, pane)` a spawn event logged (I5's index).
+    pub spawned: std::collections::BTreeSet<(String, String)>,
+    /// `(wrote, merges)` at the last full check of I4's merged sha and I6 (both read only those).
+    pub checked: (usize, usize),
 }
 
 pub struct Sim {
@@ -112,6 +119,10 @@ impl Sim {
                 root,
                 step: 0,
                 next_pid: 40_000,
+                keep_going: false,
+                violations: vec![],
+                spawned: Default::default(),
+                checked: (usize::MAX, 0),
             }),
             cv: Condvar::new(),
             threads: Mutex::new(vec![]),
@@ -264,6 +275,9 @@ impl Sim {
                     ));
                     if ev.kind == "spawn" {
                         w.procs[me].starting = None;
+                        let (a, p) = (ev.str("agent"), ev.str("pane"));
+                        w.spawned
+                            .insert((a.unwrap_or_default().into(), p.unwrap_or_default().into()));
                     }
                     let busy = w.model.load >= 25;
                     w.wrote.push(Wrote {
@@ -362,6 +376,15 @@ impl World {
         self.trace.push(line);
     }
     pub fn fail(&mut self, why: String) {
+        if self.keep_going {
+            let key: Vec<&str> = why.split_whitespace().take(4).collect();
+            if !(self.violations.iter()).any(|v| v.split_whitespace().skip(3).take(4).eq(key.iter().copied())) {
+                self.log(format!("FAIL {why}"));
+                let at = format!("step {} t+{}:", self.step, self.now - crate::scenario::T0);
+                self.violations.push(format!("{at} {why}"));
+            }
+            return;
+        }
         if self.failure.is_none() {
             self.log(format!("FAIL {why}"));
             self.failure = Some(why);

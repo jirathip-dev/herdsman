@@ -75,7 +75,11 @@ pub fn incident() -> (Model, (u64, u64)) {
     let mut rev = vec![first];
     rev.extend(std::iter::repeat_n(again, 40));
     m.scripts.insert("rev".into(), rev);
-    let push = Script::Push { secs: 200, green: true };
+    let push = Script::Push {
+        secs: 200,
+        green: true,
+        ci: None,
+    };
     m.scripts.insert("impl".into(), vec![push; 6]);
     (m, (4, 3))
 }
@@ -90,7 +94,11 @@ pub fn known() -> (Model, String) {
     m.ci_secs = Some(300);
     timers(&mut m, &mut rng, T0 + 1);
     m.at(T0, Ev::Run(args(&["queue", FLEET, "add", "201", "202"])));
-    let push = Script::Push { secs: 600, green: true };
+    let push = Script::Push {
+        secs: 600,
+        green: true,
+        ci: None,
+    };
     m.scripts.insert("impl".into(), vec![push; 6]);
     let bad = Script::Review {
         secs: 300,

@@ -31,10 +31,27 @@ html-lint:
 # (a seeds.rs line, `DROVER_SIM_PLAN=…` replays it) go to target/sim-corpus.
 # #685: `just sim --metrics [N] [--json]` prints the fleet metrics over N seeds (default 50) as a table, or JSON;
 # DROVER_SIM_BASELINE=<metrics.json> adds a baseline column and a warning per metric over 20% worse.
+# #686: `just sim --replay <state.db|scenario.json> [--days 7] [--fleet herdsman] [--save scenario.json]` replays a real
+# window of a fleet's log (read-only) in the sim: the invariants' result and the real-vs-sim metrics table.
 sim *args:
     #!/usr/bin/env bash
     set -euo pipefail
     set -- {{args}}
+    abs() { echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; }
+    if [ "${1:-}" = --replay ]; then
+        export DROVER_SIM_REPLAY; DROVER_SIM_REPLAY=$(abs "$2"); shift 2
+        while [ $# -gt 1 ]; do
+            case $1 in
+                --days) export DROVER_SIM_DAYS="$2" ;;
+                --fleet) export DROVER_SIM_FLEET="$2" ;;
+                --save) export DROVER_SIM_SAVE; DROVER_SIM_SAVE=$(abs "$2") ;;
+                *) echo "just sim --replay: unknown $1" >&2; exit 2 ;;
+            esac
+            shift 2
+        done
+        test $# -eq 0 || { echo "just sim --replay: $1 needs a value" >&2; exit 2; }
+        exec cargo test --release --locked -p drover --test sim replay_db -- --ignored --nocapture
+    fi
     if [ "${1:-}" = --hunt ]; then
         DROVER_SIM_HUNT_MINUTES="${2:-10}" DROVER_SIM_CORPUS="${DROVER_SIM_CORPUS:-{{justfile_directory()}}/target/sim-corpus}" \
             exec cargo test --release --locked -p drover --test sim hunt -- --ignored --exact --nocapture

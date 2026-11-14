@@ -8,11 +8,13 @@ pub const FLEET: &str = "drover";
 pub const REPO: &str = "jirathip-dev/herdsman";
 
 /// What a lane's agent does once its prompt lands.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Script {
     Push {
         secs: u64,
         green: bool,
+        #[serde(default)]
+        ci: Option<u64>,
     },
     Review {
         secs: u64,
@@ -83,7 +85,7 @@ pub struct Model {
     pub agenda: BTreeMap<(u64, u64), Ev>,
     seq: u64,
     shas: u64,
-    /// Scripts queued per role: the next lane of that role takes the first (else `default`).
+    /// Scripts queued per role (or `<role>#<issue>`): the next lane takes the first, the last is kept.
     pub scripts: BTreeMap<String, Vec<Script>>,
     pub merges: Vec<Merge>,
     pub closed: Vec<u64>,
@@ -107,11 +109,11 @@ impl Model {
         self.seq += 1;
         self.agenda.insert((t, self.seq), e);
     }
-    /// A new head's CI starts at `now`; its end is drawn from `rng` unless `ci_secs` fixes it.
-    pub fn ci_start(&mut self, sha: &str, now: u64, rng: &mut crate::sched::Rng) -> u64 {
+    /// A new head's CI starts at `now`; its end is `secs`, `ci_secs` or drawn from `rng`.
+    pub fn ci_start(&mut self, sha: &str, now: u64, secs: Option<u64>, rng: &mut crate::sched::Rng) -> u64 {
         self.ci.insert(sha.into(), None);
         self.ci_since.insert(sha.into(), now);
-        now + self.ci_secs.unwrap_or_else(|| 60 * rng.range(1, 15))
+        now + secs.or(self.ci_secs).unwrap_or_else(|| 60 * rng.range(1, 15))
     }
     pub fn sha(&mut self) -> String {
         self.shas += 1;
@@ -304,7 +306,12 @@ fn herdr(sim: &Arc<Sim>, w: &mut World, a: &[&str]) -> Out {
         },
         ["agent", "start", agent, "--kind", _, "--pane", pane, ..] => {
             let role = agent.split('-').nth(1).unwrap_or("impl").to_string();
-            let queued = m.scripts.get_mut(&role).filter(|v| !v.is_empty()).map(|v| v.remove(0));
+            let own = format!("{role}#{}", agent.split('-').nth(2).unwrap_or_default());
+            let queued = match m.scripts.get_mut(&own) {
+                Some(v) if v.len() > 1 => Some(v.remove(0)),
+                Some(v) => v.first().cloned(),
+                None => m.scripts.get_mut(&role).filter(|v| !v.is_empty()).map(|v| v.remove(0)),
+            };
             let script = queued.unwrap_or_else(|| crate::scenario::default_script(&mut w.rng, &role));
             w.log(format!("model: {agent} runs {script:?}"));
             let m = &mut w.model;
@@ -491,7 +498,7 @@ fn git(w: &mut World, a: &[&str]) -> Out {
                 p.head = head.clone();
             }
             m.version += 1;
-            let t = w.model.ci_start(&head, w.now, &mut w.rng);
+            let t = w.model.ci_start(&head, w.now, None, &mut w.rng);
             let green = w.rng.chance(90);
             w.model.at(t, Ev::Ci { sha: head, green });
             ok("")
