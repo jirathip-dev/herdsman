@@ -5,25 +5,21 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
-/// #859: where a read goes: herdr here, shed, another host (ssh, `herdr --machine`), the rest (git, gh, date).
+/// #859: where a read goes: shed, another host (ssh), the rest (git, gh, date).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Source {
-    Herdr,
     Shed,
     Remote,
     Other,
 }
 
 impl Source {
-    pub const ALL: [Source; 4] = [Source::Herdr, Source::Shed, Source::Remote, Source::Other];
+    pub const ALL: [Source; 3] = [Source::Shed, Source::Remote, Source::Other];
 
-    fn of(prog: &str, args: &[String]) -> Source {
-        let machine = args.first().is_some_and(|a| a == "--machine");
+    fn of(prog: &str) -> Source {
         match prog {
             "ssh" => Source::Remote,
             "shed" => Source::Shed,
-            p if p == crate::herdr::BIN && machine => Source::Remote,
-            p if p == crate::herdr::BIN => Source::Herdr,
             _ => Source::Other,
         }
     }
@@ -31,7 +27,6 @@ impl Source {
     /// Its refresh interval in seconds (the rest: 30 s, the board's old cache age).
     pub fn every(self, l: &Limits) -> u64 {
         match self {
-            Source::Herdr => l.serve_herdr_secs,
             Source::Shed => l.serve_shed_secs,
             Source::Remote => l.serve_remote_secs,
             Source::Other => 30,
@@ -40,7 +35,6 @@ impl Source {
 
     fn name(self) -> Option<&'static str> {
         match self {
-            Source::Herdr => Some(crate::herdr::BIN),
             Source::Shed => Some("shed"),
             Source::Remote => Some("remote"),
             Source::Other => None,
@@ -101,7 +95,7 @@ impl<'a> Fresh<'a> {
     pub fn refresh(&self, src: Source, every: u64, now: u64) -> usize {
         let due: Vec<Key> = lock(&self.reads)
             .iter()
-            .filter(|(k, r)| Source::of(&k.0, &k.1) == src && (r.out.is_none() || r.at + every <= now))
+            .filter(|(k, r)| Source::of(&k.0) == src && (r.out.is_none() || r.at + every <= now))
             .map(|(k, _)| k.clone())
             .collect();
         for k in &due {
@@ -131,7 +125,7 @@ impl<'a> Fresh<'a> {
     pub fn refreshed(&self) -> BTreeMap<String, u64> {
         let mut m = BTreeMap::new();
         for (k, r) in lock(&self.reads).iter().filter(|r| r.1.out.is_some()) {
-            if let Some(n) = Source::of(&k.0, &k.1).name() {
+            if let Some(n) = Source::of(&k.0).name() {
                 let at = m.entry(n.to_string()).or_insert(r.at);
                 *at = (*at).min(r.at);
             }
@@ -171,9 +165,6 @@ impl Runner for Fresh<'_> {
     }
     fn shed(&self) -> Option<crate::shed::Shed> {
         self.r.shed()
-    }
-    fn local(&self) -> bool {
-        self.r.local()
     }
     fn secret(&self, svc: &str) -> Result<Option<String>> {
         self.r.secret(svc)

@@ -1,23 +1,24 @@
-# Terminal runtimes: herdr or shed (#298)
+# Terminal runtimes: shed (#298, #721)
 
 A lane is a coding agent running in a terminal. drover starts that terminal, types into it, reads its screen and
-closes it through one adapter, `crates/core/src/herdr.rs`. There are two runtimes behind it:
-
-- **herdr** (the default): panes in herdr workspaces, as always.
-- **shed** (a separate project): a per-user server that keeps
-  terminals alive, reads their screens and reports their state.
+closes it through one adapter, `crates/core/src/term.rs`, on **shed** (a separate project): a per-user server that
+keeps terminals alive, reads their screens and reports their state. shed is the only runtime (#721).
 
 ```toml
 [runtime]
-kind = "shed"               # "herdr" (default), "shed" or "shed-acp" (ACP lanes, below)
+kind = "shed"               # "shed" (a shed terminal per lane) or "shed-acp" (ACP lanes, below)
 # socket = "~/x/shed.sock"    # default: shed's per-user socket
 # acp = "claude-acp"          # ACP mode: run this installed ACP agent instead of the harness's terminal UI
 # acp_policy = "ask"          # ACP permission requests: ask (default), allow or deny
 ```
 
-With no `[runtime]` nothing changes. The kind decides where **new** lanes start. Lanes already running stay where
-they are and are still reached: a herdr pane id always has a colon (`w4:p1`) and a shed terminal name never does.
-An agent named in a call (`agent prompt`, `agent wait`) goes to shed only if shed runs a terminal of that name.
+The kind decides where **new** lanes start. With no `[runtime]` (and no fleet or host runtime) there is none: spawn
+and the orchestrator refuse with "no shed runtime".
+
+**Migrating from herdr (#721).** `kind = "herdr"` (in `[runtime]`, a `[fleet.<n>.runtime]` or a host's `runtime`)
+no longer loads: fleet.toml fails with a message naming `shed-acp`. Set `kind = "shed-acp"` (or `"shed"`) there, or
+`runtime = "shed-acp"` on a `[hosts.<name>]`; let live herdr lanes finish (or merge) first, since drover no longer
+reaches them.
 
 ## How drover talks to shed
 
@@ -29,26 +30,25 @@ call is one connection to shed's Unix socket: a `hello` line (product and versio
 On another host (`[hosts.<name>]` with a `machine`, docs/hosts.md) the same lines go through
 `ssh <machine> shed connect --autostart`, one ssh call per request, over the host's shared ssh connection.
 
-drover keeps speaking in herdr's commands. The shed runtime answers each one the way herdr would, with herdr's
-JSON shapes and error codes (`pane_not_found`, `timeout`), so the rest of drover needs no change:
+drover speaks in pane words (`term.rs`); shed answers each with JSON shapes and error codes (`pane_not_found`,
+`timeout`):
 
-| drover does          | herdr                        | shed                                                   |
-| ---------------------- | ---------------------------- | ------------------------------------------------------- |
-| start a lane           | worktree, pane, `agent start` | `git worktree add`, `run` (name = the lane's agent)    |
-| read the screen        | `pane read`                  | `read` (`history` + `lines` for the recent window)      |
-| type a prompt          | `agent prompt` + Enter       | `send` + `keys enter`                                   |
-| press a key            | `pane send-keys`             | `keys` (`Escape` becomes `esc`)                         |
-| wait for the agent     | `agent wait --until`         | `wait --until` (reported states)                        |
-| wait for screen output | `pane wait-output`           | `wait --output`                                         |
-| close a lane           | `pane close`                 | `kill`, then `rm` (so the next lane can use the name)   |
-| list lanes             | `agent list`                 | `ls`, keeping running terminals labelled `fleet`        |
+| drover does            | shed                                                   |
+| ---------------------- | ------------------------------------------------------- |
+| start a lane           | `git worktree add`, `run` (name = the lane's agent)    |
+| read the screen        | `read` (`history` + `lines` for the recent window)      |
+| type a prompt          | `send` + `keys enter`                                   |
+| press a key            | `keys` (`Escape` becomes `esc`)                         |
+| wait for the agent     | `wait --until` (reported states)                        |
+| wait for screen output | `wait --output`                                         |
+| close a lane           | `kill`, then `rm` (so the next lane can use the name)   |
+| list lanes             | `ls`, keeping running terminals labelled `fleet`        |
 
 A shed lane's terminal is labelled `fleet`, `issue`, `role` and `harness`, kept (`keep`) across a shed server
 restart, and runs the user's login shell (`$SHELL -l`, in shed's environment). drover then types the lane's
-exports and the harness command (`exec <harness> <args>`) into that shell, as it types them into a herdr pane. So no
+exports and the harness command (`exec <harness> <args>`) into that shell. So no
 token is ever in the terminal's command line, in `ps` or in shed's state file. `exec` makes the harness the
-terminal's program, so the terminal ends when the harness exits, and the lane drops out of the agent list (lane-dead,
-as with herdr).
+terminal's program, so the terminal ends when the harness exits, and the lane drops out of the agent list (lane-dead).
 
 `drover spawn --dry-run` shows the shed requests it would send (`shed <method> <params>`).
 
@@ -81,7 +81,7 @@ the older ones, and the poll still sees the current state.
 
 With `acp = "<agent id>"` a lane runs that ACP agent (install it with `shed agents add <id>` on this host) as a
 structured session, not a terminal UI. `kind = "shed-acp"` (#565) is the same with `acp = "claude-acp"` and
-`acp_policy = "allow"` as defaults. It may be set for one fleet only, so a pilot leaves every other fleet on herdr:
+`acp_policy = "allow"` as defaults. It may be set for one fleet only:
 
 ```toml
 [fleet.drover.runtime]
@@ -163,9 +163,9 @@ itself, so a role it adds is guarded (and a Hermes profile's hook approved) befo
 first prompt; every later line (an owner message, a `DECISION`, a handoff, a system line) goes in through `shed send`,
 multi-line as it is. The guard is a lane's: `DROVER_LANE=<fleet>:-:orchestrator` and `DROVER_THREAD` reach the
 profile's hook, so owner-only verbs stay refused. An unguardable setup refuses `ACP_UNGUARDED`, posts the reason in the
-thread as a `system` line, and never falls back to herdr. The idle sleep kills and removes the session, and a session
+thread as a `system` line, and never falls back to a shed terminal. The idle sleep kills and removes the session, and a session
 shed no longer runs is asleep on the next `check`. shed's bridge loads no saved session yet (`session/load`), so the
-next message starts a fresh one pointed at `.thread.md`. A fleet on herdr keeps herdr orchestrators.
+next message starts a fresh one pointed at `.thread.md`. A `shed` fleet's orchestrator is a shed terminal (#721).
 
 **shed on the timer's PATH (#600).** drive spawns with the timer jobs' PATH, not your shell's. `drover timer
 install` puts the folder of the `shed` your shell resolves on it, `drover doctor` checks `shed` and each ACP

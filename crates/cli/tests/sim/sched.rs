@@ -86,7 +86,7 @@ pub struct Sim {
 
 fn cost(prog: &str, args: &[String]) -> u64 {
     match (prog, args.first().map(String::as_str), args.get(1).map(String::as_str)) {
-        ("herdr", Some("agent"), Some("start")) => 3,
+        ("shed", Some("send"), Some(p)) if p.contains("\"text\":\"exec ") => 3,
         ("gh", ..) | ("ssh", ..) => 1,
         _ => 0,
     }
@@ -381,6 +381,48 @@ pub struct SimRunner {
 impl Runner for SimRunner {
     fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<Out> {
         Ok(self.sim.call(self.me, prog, args))
+    }
+    fn run_in(&self, prog: &str, args: &[String], input: &str) -> anyhow::Result<Out> {
+        use drover::shed::proto::{ErrorCode, Hello, Response, RpcError};
+        if prog != "shed" {
+            return self.run(prog, args);
+        }
+        let mut stdout = String::new();
+        for q in input
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        {
+            let (id, m) = (q["id"].clone(), q["method"].as_str().unwrap_or_default().to_string());
+            let o = match m.as_str() {
+                "hello" => Out {
+                    stdout: serde_json::json!(Hello::ours()).to_string(),
+                    ..Out::default()
+                },
+                _ => self.sim.call(self.me, "shed", &[m, q["params"].to_string()]),
+            };
+            let code = if o.stderr == "NAME_TAKEN" {
+                ErrorCode::NameTaken
+            } else {
+                ErrorCode::NoSuchTerminal
+            };
+            let r = match serde_json::from_str(&o.stdout) {
+                Ok(v) if o.code == 0 => Response::ok(id, v),
+                _ => Response::err(id, RpcError::new(code, &o.stderr)),
+            };
+            stdout += &(serde_json::to_string(&r)? + "\n");
+        }
+        Ok(Out {
+            stdout,
+            ..Out::default()
+        })
+    }
+    fn shed(&self) -> Option<drover::shed::Shed> {
+        let wire = drover::shed::Wire::Connect;
+        Some(drover::shed::Shed {
+            wire,
+            acp: None,
+            policy: "ask".into(),
+        })
     }
     fn sleep(&self, secs: u64) {
         {

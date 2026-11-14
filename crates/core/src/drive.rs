@@ -1126,7 +1126,7 @@ fn pass(
         let (dsh, n) = (sp.and_then(|e| e.str("harness")) == Some("dsh"), s.issue.to_string());
         let c = ["spawn", fleet, &n, role, "--supersede"];
         let woke = match pane {
-            Some(p) => crate::herdr::tell(&crate::hosts::On::of(r, sp), dsh, lane, p, &text).is_ok(),
+            Some(p) => crate::term::tell(&crate::hosts::On::of(r, sp), dsh, lane, p, &text).is_ok(),
             None => act(ctx, cfg, r, out, &ev, (fleet, None, "respawn"), &c)?.is_none(),
         };
         let d = json!({"agent": lane, "on": on, "respawn": !live});
@@ -1452,7 +1452,7 @@ fn no_proof(
         act(ctx, cfg, r, out, ev, (fleet, Some(n), "verdict"), args)?;
         let text = format!("drover verdict refused your verdict.md: REFUSED NO_PROOF: {why}. Add the Proof blocks.");
         let tell =
-            |p| crate::herdr::reply(&on, false, lane, p, &text).is_ok() && crate::herdr::landed(&on, lane, p, &text);
+            |p| crate::term::reply(&on, false, lane, p, &text).is_ok() && crate::term::landed(&on, lane, p, &text);
         let prompted = open.filter(|_| !told).is_some_and(tell);
         let d = json!({"sha": args[5], "hash": hash, "agent": lane, "prompted": prompted});
         emit(&ctx.state, cfg, Event::new(ctx.now, fleet, Some(n), "proof-refused", d))?;
@@ -1507,7 +1507,7 @@ fn repro_refused(
         .and_then(|e| e.str("pane"))
         .filter(|_| !told && agents.iter().any(|a| a["name"] == lane));
     let text = format!("drover verdict refused your verdict.md: REFUSED NO_REPRO: {why}. Fix the Repro block.");
-    let tell = |p| crate::herdr::reply(&on, false, lane, p, &text).is_ok() && crate::herdr::landed(&on, lane, p, &text);
+    let tell = |p| crate::term::reply(&on, false, lane, p, &text).is_ok() && crate::term::landed(&on, lane, p, &text);
     let prompted = pane.is_some_and(tell);
     let d = json!({"sha": args[5], "hash": hash, "agent": lane, "why": why, "prompted": prompted});
     emit(&ctx.state, cfg, Event::new(ctx.now, fleet, Some(n), "repro-refused", d))
@@ -1518,8 +1518,8 @@ fn tell(r: &dyn Runner, events: &[Event], lane: &str, text: &str) -> Option<bool
     let dsh = sp.and_then(|e| e.str("harness")) == Some("dsh");
     let pane = sp.and_then(|e| e.str("pane")).unwrap_or_default();
     let on = crate::hosts::On::of(r, sp);
-    crate::herdr::awake(&on, lane).ok()?;
-    Some(crate::herdr::reply(&on, dsh, lane, pane, text).is_ok())
+    crate::term::awake(&on, lane).ok()?;
+    Some(crate::term::reply(&on, dsh, lane, pane, text).is_ok())
 }
 
 pub(crate) const OLD: &str = "is in the way: replacing it";
@@ -1598,7 +1598,7 @@ fn serial(
         let sp = crate::events::last_spawn(&ev, lane);
         let pane = sp.and_then(|e| e.str("pane")).unwrap_or_default();
         let dsh = sp.and_then(|e| e.str("harness")) == Some("dsh");
-        crate::herdr::tell(&crate::hosts::On::of(r, sp), dsh, lane, pane, &text).ok();
+        crate::term::tell(&crate::hosts::On::of(r, sp), dsh, lane, pane, &text).ok();
     }
     if !wait || fast || !new.is_empty() {
         return Ok(wait);

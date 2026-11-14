@@ -28,32 +28,6 @@ const CM: [&str; 3] = [
     "-oControlPersist=10m",
 ];
 
-/// #641: the ids of herdr's saved machine profiles labelled `m` (`herdr machine list` here).
-pub fn profiles(r: &dyn Runner, m: &str) -> Result<Vec<String>> {
-    let v = crate::runner::json(r, crate::herdr::BIN, &["machine", "list", "--json"])?;
-    let mine = v.as_array().into_iter().flatten().filter(|p| p["label"] == m);
-    Ok(mine.filter_map(|p| p["id"].as_str().map(String::from)).collect())
-}
-
-/// #641: label `m` names exactly one herdr machine profile, else `HOST_AMBIGUOUS` (listing them) or `HOST_UNKNOWN` (none; `none_ok` lets bootstrap add the first), each with its fix; nothing runs on a host it can't pin down.
-pub fn resolve(r: &dyn Runner, m: &str, none_ok: bool) -> Result<()> {
-    match &profiles(r, m)?[..] {
-        [_] => Ok(()),
-        [] if none_ok => Ok(()),
-        [] => refused(
-            "HOST_UNKNOWN",
-            format!("no herdr machine labelled {m}: `herdr machine add {m} --label {m}` (or hosts bootstrap)"),
-        ),
-        ids => refused(
-            "HOST_AMBIGUOUS",
-            format!(
-                "herdr machine label {m} names {}: keep one, `herdr machine remove <id>` the rest",
-                ids.join(", ")
-            ),
-        ),
-    }
-}
-
 /// #880: `On::existing`'s script: the paths on stdin, a line each.
 pub const EXISTS: &str = "while IFS= read -r p; do test -e \"$p\" && echo y || echo n; done";
 
@@ -82,7 +56,6 @@ pub struct On<'a> {
     pub r: &'a dyn Runner,
     pub machine: Option<&'a str>,
     connect: u64,
-    no_herdr: bool,
 }
 
 impl<'a> On<'a> {
@@ -91,13 +64,7 @@ impl<'a> On<'a> {
             r,
             machine,
             connect: crate::config::limits().ssh_connect_secs,
-            no_herdr: false,
         }
-    }
-    /// #637: this host runs `shed-acp` (`yes`): herdr is never asked there.
-    #[must_use]
-    pub fn shed_only(self, yes: bool) -> Self {
-        On { no_herdr: yes, ..self }
     }
     /// #485: a maintenance call that must not hold up a pass: a 5 s connect timeout.
     pub fn quick(r: &'a dyn Runner, machine: Option<&'a str>) -> Self {
@@ -115,9 +82,6 @@ impl<'a> On<'a> {
         let Some(m) = self.machine else {
             return (prog.into(), args.to_vec());
         };
-        if prog == crate::herdr::BIN {
-            return (prog.into(), [argv(&["--machine", m]), args.to_vec()].concat());
-        }
         let line = quote(prog, args);
         let connect = format!("-oConnectTimeout={}", self.connect);
         let ssh = argv(&["-oBatchMode=yes", &connect, CM[0], CM[1], CM[2], m, "--", &line]);
@@ -202,13 +166,6 @@ impl<'a> On<'a> {
 
 impl Runner for On<'_> {
     fn run(&self, prog: &str, args: &[String]) -> Result<Out> {
-        if self.no_herdr && prog == crate::herdr::BIN {
-            return Ok(Out {
-                code: 1,
-                stdout: String::new(),
-                stderr: "no herdr on a shed-acp host".into(),
-            });
-        }
         let (p, a) = self.wrap(prog, args);
         if p == "ssh" {
             return self.r.run_for(&p, &a, "", crate::runner::limit(prog, args));
@@ -237,9 +194,6 @@ impl Runner for On<'_> {
             b.wire
         };
         Some(crate::shed::Shed { wire, ..b })
-    }
-    fn local(&self) -> bool {
-        self.machine.is_none() && self.r.local()
     }
 }
 
@@ -309,9 +263,6 @@ impl<'a> Pass<'a> {
         }
     }
     fn host<'b>(prog: &str, args: &'b [String]) -> Option<&'b str> {
-        if prog == crate::herdr::BIN {
-            return args.get(1).filter(|_| args[0] == "--machine").map(String::as_str);
-        }
         let end = args.iter().position(|a| a == "--").filter(|_| prog == "ssh")?;
         args[..end].last().filter(|m| !m.starts_with('-')).map(String::as_str)
     }
@@ -441,9 +392,6 @@ impl Runner for Pass<'_> {
     fn shed(&self) -> Option<crate::shed::Shed> {
         self.r.shed()
     }
-    fn local(&self) -> bool {
-        self.r.local()
-    }
 }
 
 /// What the last look at a host saw (`<state dir>/hosts.json`): detected tags and `$HOME` (probed hourly), reachability, load/cpu, free memory and disk in GB.
@@ -519,7 +467,7 @@ pub fn survey(ctx: &Ctx, cfg: &Config, r: &dyn Runner, refresh: bool) -> BTreeMa
         if let Some(Err(e)) = (h.cloud.is_some() && !stopped).then(|| crate::cloud::moved(ctx, cfg, r, name, false)) {
             eprintln!("cloud {name}: {e:#}");
         }
-        let a = (!stopped).then(|| agents_of(cfg, name, &on).ok()).flatten();
+        let a = (!stopped).then(|| host::agents(&on).ok()).flatten();
         s.up = a.is_some();
         let live = a.as_ref().is_some_and(|a| !a.is_empty());
         s.busy = if live { ctx.now } else { s.busy };
@@ -668,7 +616,7 @@ pub fn slot_before(ctx: &Ctx, cfg: &Config, r: &dyn Runner, ev: &[Event], me: La
     for (name, h) in cfg.hosts.iter().filter(fit) {
         let caps = [h.max_working, h.max_simulators.filter(|_| sims)];
         (caps != [None; 2]).then_some(())?;
-        let agents = agents_of(cfg, name, &On::new(r, h.machine.as_deref())).unwrap_or_default();
+        let agents = host::agents(&On::new(r, h.machine.as_deref())).unwrap_or_default();
         let held = held_slots(
             cfg,
             &crate::events::working(&ctx.state).unwrap_or_default(),
@@ -704,7 +652,7 @@ pub fn slots_line(cfg: &Config, events: &[Event], agents: &[Value]) -> String {
 pub fn remote_agents(cfg: &Config, r: &dyn Runner) -> Vec<Value> {
     let mut all = vec![];
     for (name, m) in cfg.hosts.iter().filter_map(|(n, h)| Some((n, h.machine.as_deref()?))) {
-        for mut a in agents_of(cfg, name, &On::new(r, Some(m))).unwrap_or_default() {
+        for mut a in host::agents(&On::new(r, Some(m))).unwrap_or_default() {
             (a["host"], a["machine"]) = (json!(name), json!(m));
             all.push(a);
         }
@@ -719,14 +667,6 @@ pub fn sick(ctx: &Ctx, name: &str, row: &str) {
     if !s.health.iter().any(|w| w == row) {
         s.health.push(row.into());
         let _ = std::fs::write(file(ctx), serde_json::to_string(&all).unwrap_or_default());
-    }
-}
-
-/// #637: host `name`'s live agents: on a `shed-acp` host its shed's lanes alone (no herdr there; a herdr answering proves nothing), else `host::agents` (herdr's, and shed's when it runs).
-pub fn agents_of(cfg: &Config, name: &str, on: &On) -> Result<Vec<Value>> {
-    match on.shed().filter(|_| cfg.host_acp(name).is_some()) {
-        Some(b) => crate::herdr::Runtime::agents(&crate::herdr::Shed(b), on),
-        None => host::agents(on),
     }
 }
 
@@ -846,7 +786,7 @@ fn at(ctx: &Ctx, cfg: &Config, f: &Fleet, r: &dyn Runner, (name, machine): (&str
     };
     let reach = format!("can't reach {}:", f.repo);
     let sick = (seen.health.iter()).find(|w| w.starts_with('✗') && (!w.starts_with("✗ git ") || w.contains(&reach)));
-    let (hs, refusal) = match cloud.map_or_else(|| agents_of(cfg, name, &on).map_err(|_| None), |c| Err(Some(c))) {
+    let (hs, refusal) = match cloud.map_or_else(|| host::agents(&on).map_err(|_| None), |c| Err(Some(c))) {
         Err(Some(c)) => (Host::default(), Some(c)),
         Err(None) => (Host::default(), Some(("HOST_OFFLINE", "unreachable".to_string()))),
         Ok(_) if sick.is_some() => (Host::default(), sick.map(|w| ("NO_HOST", format!("unhealthy: {w}")))),
@@ -876,10 +816,6 @@ pub fn under(p: &str, home: Option<&str>) -> PathBuf {
     }
 }
 
-const LOGIN: &str = "p=$(pgrep -f 'herdr server$' | head -1); [ -n \"$p\" ] || exit 1; \
-command -v launchctl >/dev/null || exit 0; launchctl print gui/$(id -u) | awk -v p=\"$p\" '$1 == p { f = 1 } END { exit !f }'";
-
-/// #235: what is wrong with a reachable remote host, a `✗|! <check> — <detail> → <fix>` row each (none: healthy): its herdr server's version and session, git over SSH for each fleet its `tags` fit, gh and each harness's login (`Harness::health_check`) in a herdr pane, and its drover's version against this one's.
 pub fn health(ctx: &Ctx, cfg: &Config, on: &On, tags: &[String], home: &str) -> Vec<String> {
     let at = |h: &(&String, &HostCfg)| h.1.machine.is_some() && h.1.machine.as_deref() == on.machine;
     if let Some(name) = cfg
@@ -893,14 +829,6 @@ pub fn health(ctx: &Ctx, cfg: &Config, on: &On, tags: &[String], home: &str) -> 
     }
     let mut bad = vec![];
     let mut fail = |pass: bool, row: String| bad.extend((!pass).then_some(row));
-    let status = ok(on, "sh", &["-c", "PATH=\"$HOME/.local/bin:$PATH\" herdr status"]).unwrap_or_default();
-    let (client, server) = crate::timer::versions(&status).map_or(("?".into(), "none".into()), |v| (v.0, v.1));
-    let line =
-        format!("✗ herdr — server {server}, client {client} → herdr update on the host, then restart its server");
-    fail(client == server, line);
-    let fix = "restart the herdr server from its launchd job: `launchctl kickstart -k gui/<uid>/<label>`";
-    let line = format!("✗ herdr session — the server runs outside the login session (keychain locked) → {fix}");
-    fail(ok(on, "sh", &["-c", LOGIN]).is_ok(), line);
     for (name, f) in cfg.fleet.iter().filter(|f| f.1.needs.iter().all(|t| tags.contains(t))) {
         let url = format!("https://github.com/{}.git", f.repo);
         let fix = "add the host's SSH key to GitHub and set `git config --global url.git@github.com:.insteadOf https://github.com/`";
@@ -912,22 +840,18 @@ pub fn health(ctx: &Ctx, cfg: &Config, on: &On, tags: &[String], home: &str) -> 
     let gh = format!("ssh {} gh auth login", on.machine.unwrap_or_default());
     let mut logins = vec![("gh", "gh auth status", gh.as_str())];
     logins.extend(providers::lanes().filter_map(|h| h.health_check()));
-    let probe = |(t, c, _): &(&str, &str, &str)| format!("{c} >/dev/null 2>&1; echo \"{t}:$?\"; ");
-    let pane = logins.iter().map(probe).collect::<String>() + "echo \"hs:\"done";
-    let text = crate::herdr::in_pane(on, home, &pane, "hs:done").unwrap_or_default();
-    for (tool, _, fix) in logins {
-        let line = format!("✗ {tool} — logged out in a herdr pane → {fix} (else: herdr session)");
-        fail(text.lines().any(|l| l.trim() == format!("{tool}:0")), line);
+    for (tool, c, fix) in logins {
+        fail(
+            ok(on, "sh", &["-lc", c]).is_ok(),
+            format!("✗ {tool} — logged out → {fix}"),
+        );
     }
     let exe = real_exe(ctx, home);
     let theirs = ok(on, &exe, &["--version"]).map_or("missing".into(), |v| v.trim().to_string());
     let mine = format!("drover {}", crate::VERSION);
     let line = format!("! drover — {theirs} there, {mine} here → the next `check` updates it (docs/hosts.md)");
     fail(theirs == mine, line);
-    if let Some(Err(e)) = on
-        .shed()
-        .map(|b| crate::herdr::Runtime::agents(&crate::herdr::Shed(b), on))
-    {
+    if let Err(e) = host::agents(on) {
         bad.push(format!("! shed: {e:#}"));
     }
     bad

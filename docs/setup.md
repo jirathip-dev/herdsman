@@ -6,13 +6,13 @@ Placeholders: `<owner>`, `<repo>`, `<home>` (your home directory), `<machine>`, 
 
 ## 1. Install
 
-You need `git`, `gh` (logged in), [herdr](https://herdr.dev) 0.9.0 or newer, a Rust toolchain, and at
-least one harness: Claude Code and/or Hermes. Every herdr call goes through `crates/core/src/herdr.rs`, the one
-adapter: a herdr CLI change touches that file only.
+You need `git`, `gh` (logged in), shed (its server job running, [runtimes](runtimes.md)), a Rust toolchain, and
+at least one harness: Claude Code and/or Hermes. Every lane terminal call goes through `crates/core/src/term.rs`, the
+one adapter.
 
 ```sh
 gh auth status
-herdr --version
+shed --version
 cargo build --release --locked -p drover
 # macOS (#781): sign with one local identity, so a Keychain item's access list trusts every build, not one.
 sh scripts/signing-identity.sh   # once: creates "drover-local", lets codesign use it (asks the login password)
@@ -127,10 +127,10 @@ no Hermes needed.
   `StartInterval 300`, `RunAtLoad`, loaded with `launchctl bootstrap gui/$(id -u) <plist>`.
 - Linux: `~/.config/systemd/user/dev.drover.tick.{service,timer}`, loaded with
   `systemctl --user enable --now dev.drover.tick.timer`.
-- Its PATH is explicit: the directories of the harness binaries, `gh`, `herdr` and drover, then
+- Its PATH is explicit: the directories of the harness binaries, `gh`, `shed` and drover, then
   `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` (`sysctl` and `vm_stat` live in `/usr/sbin`).
 - Both streams go to `~/.local/state/drover/tick.log`; the tick empties it past 1 MB.
-- A refusal (`HOST_BUSY`, …) is logged and the tick exits 0. A real error (config, herdr missing)
+- A refusal (`HOST_BUSY`, …) is logged and the tick exits 0. A real error (config, shed missing)
   logs `tick-failed`, which notifiers send at most once an hour. A red row in the Host tab's SERVICES
   group sends one `service-red` an hour too.
 
@@ -158,8 +158,7 @@ drover needs no Hermes: `drover setup` (or `timer install`) also writes two jobs
   `staging_addr` (default `127.0.0.1:7787`) against the live config and state, every write refused, to try a change
   before promoting it.
 - `dev.drover.clean` runs `drover clean --scheduled` daily at 03:30: worktrees of merged or closed issues idle
-  3 days or more, at most 10 a run, never a live one; unsaved work goes to `wip/` first, as `clean --yes`. Then it
-  closes each herdr workspace whose checkout folder is gone. A refusal or failure alerts `clean-failed` once; a clean
+  3 days or more, at most 10 a run, never a live one; unsaved work goes to `wip/` first, as `clean --yes`. A refusal or failure alerts `clean-failed` once; a clean
   no-op is silent.
 
 Moving off Hermes: once both jobs have run (`self-updated` in the log after a staging merge),
@@ -167,7 +166,7 @@ remove the old Hermes fleet jobs, once:
 
 ```sh
 hermes -p orchestrator cron remove d8bbecd490d7   # fleet-check (auto-install)
-hermes -p orchestrator cron remove 064cdd00dc56   # herdr-worktree-prune
+hermes -p orchestrator cron remove 064cdd00dc56   # the old worktree-prune job
 ```
 
 Other Hermes cron jobs (a one-off reminder) stay. `scripts/install-gate.sh` stays for a manual install.
@@ -211,7 +210,7 @@ Undo: `launchctl bootout gui/$(id -u)/dev.drover.serve` and delete the plist (Li
 `systemctl --user disable --now dev.drover.serve.service` and delete the unit).
 
 By hand: run `drover serve` as a service on `127.0.0.1:7777`. Its PATH must include the
-directory that holds `herdr`; without it the Lanes tab says `herdr agent list failed`.
+directory that holds `shed`; without it the Lanes tab shows no lanes.
 
 macOS, `~/Library/LaunchAgents/dev.drover.serve.plist`:
 
@@ -230,7 +229,7 @@ macOS, `~/Library/LaunchAgents/dev.drover.serve.plist`:
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key><string><home>/.local/share/drover/bin:<herdr-dir>:/usr/bin:/bin</string>
+    <key>PATH</key><string><home>/.local/share/drover/bin:<shed-dir>:/usr/bin:/bin</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -250,7 +249,7 @@ Linux, `~/.config/systemd/user/drover-serve.service`:
 Description=drover board
 
 [Service]
-Environment=PATH=%h/.local/share/drover/bin:<herdr-dir>:/usr/bin:/bin
+Environment=PATH=%h/.local/share/drover/bin:<shed-dir>:/usr/bin:/bin
 ExecStart=%h/.local/share/drover/bin/drover serve --addr 127.0.0.1:7777
 Restart=always
 
@@ -317,7 +316,7 @@ lands, you turn it on from the installed app.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `herdr agent list failed` | the service's PATH has no `herdr` | add `<herdr-dir>` to PATH in the plist or unit, restart it |
+| the Lanes tab shows no lanes | the service's PATH has no `shed` | add `<shed-dir>` to PATH in the plist or unit, restart it |
 | `forbidden: foreign Host or Origin` | the tailnet name is not allowed | add it to `[serve] allowed_hosts` |
 | `STALE` on a button | fleet.toml changed after the page loaded | reload the page |
 | HTTPS times out | serve is bound to the tailnet IP | bind `127.0.0.1:7777` and point `tailscale serve` there |

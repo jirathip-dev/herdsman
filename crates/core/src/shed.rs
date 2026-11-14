@@ -337,9 +337,6 @@ impl Runner for With<'_> {
     fn shed(&self) -> Option<Shed> {
         Some(self.1.clone())
     }
-    fn local(&self) -> bool {
-        self.0.local()
-    }
 }
 
 /// #611: each enabled host's shed sessions that are no lane or conductor, or `{host, error}` for a host whose shed fails.

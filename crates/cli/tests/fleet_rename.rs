@@ -11,12 +11,13 @@ const FILES: [&str; 4] = [
     "turn-sendmeter-12-impl",
 ];
 
-fn fixture(name: &str, paused: bool) -> drover::Ctx {
+fn fixture(name: &str, paused: bool) -> (drover::Ctx, FakeShed) {
     let cfg = format!(
         "{}\n[orchestrator.ops]\nfleets = [\"sendmeter\"]\n",
         CONFIG.replace("# never main", &format!("# never main\npaused = {paused}"))
     );
     let c = ctx(&tmpdir(name), &cfg);
+    let sh = FakeShed::attached(&c);
     let d =
         json!({"role": "impl", "agent": "sendmeter-impl-12", "harness": "claude", "pane": "w1:1", "worktree": "/wt/a"});
     for (kind, d) in [
@@ -43,11 +44,7 @@ fn fixture(name: &str, paused: bool) -> drover::Ctx {
     for f in FILES {
         std::fs::write(c.state.with_file_name(f), f).unwrap();
     }
-    c
-}
-
-fn agents() -> Fake {
-    Fake::default().reply("herdr agent list", NO_AGENTS)
+    (c, sh)
 }
 
 fn fleets(c: &drover::Ctx) -> Vec<String> {
@@ -56,9 +53,9 @@ fn fleets(c: &drover::Ctx) -> Vec<String> {
 
 #[test]
 fn rename_moves_everything_and_the_old_name_resolves() {
-    let c = fixture("rename-ok", true);
+    let (c, _sh) = fixture("rename-ok", true);
     let before = std::fs::read_to_string(&c.config).unwrap();
-    let (code, out) = run(&c, &agents(), &["fleet", "rename", "sendmeter", "meter"]);
+    let (code, out) = run(&c, &Fake::default(), &["fleet", "rename", "sendmeter", "meter"]);
     assert_eq!(code, 0, "{out}");
     for l in [
         "fleet.toml: [fleet.sendmeter] → [fleet.meter]",
@@ -77,7 +74,11 @@ fn rename_moves_everything_and_the_old_name_resolves() {
     );
     assert!(fleets(&c).iter().all(|f| f == "sendmeter"));
 
-    let (code, out) = run(&c, &agents(), &["fleet", "rename", "sendmeter", "meter", "--yes"]);
+    let (code, out) = run(
+        &c,
+        &Fake::default(),
+        &["fleet", "rename", "sendmeter", "meter", "--yes"],
+    );
     assert_eq!(code, 0, "{out}");
     let after = std::fs::read_to_string(&c.config).unwrap();
     assert!(after.contains("[fleet.meter]\nrepo = \"jirathip-dev/sendmeter\"") && !after.contains("fleet.sendmeter"));
@@ -104,24 +105,28 @@ fn rename_moves_everything_and_the_old_name_resolves() {
     let bak = c.state.with_file_name(format!("rename-sendmeter-{T}"));
     assert!(bak.join("state.db").exists() && bak.join("fleet.toml").exists() && bak.join(FILES[0]).exists());
 
-    let (_, ls) = run(&c, &agents(), &["queue", "sendmeter", "ls"]);
+    let (_, ls) = run(&c, &Fake::default(), &["queue", "sendmeter", "ls"]);
     assert!(ls.contains("#13"), "{ls}");
-    let (_, asks) = run(&c, &agents(), &["asks", "sendmeter", "--all", "--json"]);
+    let (_, asks) = run(&c, &Fake::default(), &["asks", "sendmeter", "--all", "--json"]);
     assert!(asks.contains("\"q1\"") && asks.contains("\"meter\""), "{asks}");
-    let (_, status) = run(&c, &agents(), &["status", "sendmeter"]);
+    let (_, status) = run(&c, &Fake::default(), &["status", "sendmeter"]);
     assert!(status.contains("meter") && status.contains("12"), "{status}");
-    let (_, board) = run(&c, &agents(), &["board", "sendmeter"]);
+    let (_, board) = run(&c, &Fake::default(), &["board", "sendmeter"]);
     assert!(board.contains("meter") && board.contains("13"), "{board}");
-    let (_, secrets) = run(&c, &agents(), &["secret", "ls"]);
+    let (_, secrets) = run(&c, &Fake::default(), &["secret", "ls"]);
     assert_eq!(secrets, "meter API_KEY\n");
 }
 
 #[test]
 fn a_failure_mid_move_leaves_the_original_state() {
-    let c = fixture("rename-fail", true);
+    let (c, _sh) = fixture("rename-fail", true);
     let before = std::fs::read_to_string(&c.config).unwrap();
     std::fs::create_dir_all(c.state.with_file_name("turn-meter-12-impl").join("x")).unwrap();
-    let (code, out) = run(&c, &agents(), &["fleet", "rename", "sendmeter", "meter", "--yes"]);
+    let (code, out) = run(
+        &c,
+        &Fake::default(),
+        &["fleet", "rename", "sendmeter", "meter", "--yes"],
+    );
     assert_ne!(code, 0, "{out}");
     assert_eq!(std::fs::read_to_string(&c.config).unwrap(), before);
     assert!(fleets(&c).iter().all(|f| f == "sendmeter"), "the database rolled back");
@@ -129,18 +134,22 @@ fn a_failure_mid_move_leaves_the_original_state() {
         assert_eq!(std::fs::read_to_string(c.state.with_file_name(f)).unwrap(), f);
     }
     assert!(!c.state.with_file_name("ci-meter-12.md").exists() && !c.state.with_file_name("drive-meter.last").exists());
-    let (_, ls) = run(&c, &agents(), &["queue", "sendmeter", "ls"]);
+    let (_, ls) = run(&c, &Fake::default(), &["queue", "sendmeter", "ls"]);
     assert!(ls.contains("#13"), "{ls}");
 }
 
 #[test]
 fn rename_refuses_unpaused_live_or_taken() {
-    let c = fixture("rename-refuse", false);
-    let (code, out) = run(&c, &agents(), &["fleet", "rename", "sendmeter", "meter", "--yes"]);
+    let (c, _sh) = fixture("rename-refuse", false);
+    let (code, out) = run(
+        &c,
+        &Fake::default(),
+        &["fleet", "rename", "sendmeter", "meter", "--yes"],
+    );
     assert_eq!(code, 3);
     assert!(out.contains("NOT_PAUSED"), "{out}");
 
-    let c = fixture("rename-live", true);
+    let (c, sh) = fixture("rename-live", true);
     append(
         &c.state,
         &Event::new(
@@ -152,14 +161,15 @@ fn rename_refuses_unpaused_live_or_taken() {
         ),
     )
     .unwrap();
-    let live = Fake::default().reply(
-        "herdr agent list",
-        r#"{"result":{"agents":[{"name":"sendmeter-impl-13"}]}}"#,
+    sh.lane("sendmeter-impl-13", "working", "/wt/b");
+    let (code, out) = run(
+        &c,
+        &Fake::default(),
+        &["fleet", "rename", "sendmeter", "meter", "--yes"],
     );
-    let (code, out) = run(&c, &live, &["fleet", "rename", "sendmeter", "meter", "--yes"]);
     assert!(code == 3 && out.contains("LANE_LIVE"), "{out}");
     for bad in ["Meter", "_x", "a b", "sendmeter"] {
-        let (code, out) = run(&c, &agents(), &["fleet", "rename", "sendmeter", bad]);
+        let (code, out) = run(&c, &Fake::default(), &["fleet", "rename", "sendmeter", bad]);
         assert!(code == 3 && out.contains("BAD_NAME"), "{bad}: {out}");
     }
     assert!(fleets(&c).iter().all(|f| f == "sendmeter"));

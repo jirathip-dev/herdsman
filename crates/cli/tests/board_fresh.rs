@@ -16,17 +16,33 @@ fn get(s: &Server, now: u64, path: &str) -> Value {
     serde_json::from_str(&res[res.find("\r\n\r\n").unwrap() + 4..]).unwrap()
 }
 
-fn fake() -> Fake {
-    Fake::default()
-        .reply("herdr agent list", NO_AGENTS)
-        .reply("herdr workspace list", r#"{"result":{"workspaces":[]}}"#)
+struct Connect(Fake, FakeShed);
+impl Runner for Connect {
+    fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<Out> {
+        self.0.run(prog, args)
+    }
+    fn run_in(&self, prog: &str, args: &[String], input: &str) -> anyhow::Result<Out> {
+        if prog != "shed" {
+            return self.0.run_in(prog, args, input);
+        }
+        self.0.calls.borrow_mut().push(format!("{prog} {}", args.join(" ")));
+        Ok(Out {
+            stdout: self.1.connect(input),
+            ..Out::default()
+        })
+    }
+    fn sleep(&self, _: u64) {}
+    fn shed(&self) -> Option<drover::shed::Shed> {
+        let wire = drover::shed::Wire::Connect;
+        Some(drover::shed::Shed { wire, ..self.1.shed() })
+    }
 }
 
 #[test]
 fn drover_shows_the_data_age_once_the_background_read_is_over_10s_old() {
     let c = ctx(&tmpdir("fresh-age"), CONFIG);
     std::fs::create_dir_all(c.state.parent().unwrap()).unwrap();
-    let r = fake();
+    let r = Connect(Fake::default(), FakeShed::new());
     let s = Server::new(&c, &r, Some(ADDR.into())).deferring();
     let age = |now| {
         let v = get(&s, now, "/screens/queue");
@@ -34,14 +50,14 @@ fn drover_shows_the_data_age_once_the_background_read_is_over_10s_old() {
         b.map(|b| b["markdown"].clone())
     };
     get(&s, NOW, "/api/v1/state");
-    assert!(!r.called("herdr agent list"), "the request ran herdr");
+    assert!(r.1.methods().is_empty(), "the request ran shed: {:?}", r.1.methods());
     assert_eq!(age(NOW), None, "nothing read yet: no age to show");
     s.refresh(NOW);
     assert!(
-        r.called("herdr agent list"),
+        r.0.called("shed connect --autostart") && r.1.methods().contains(&"ls".to_string()),
         "the background read what the request asked for"
     );
-    assert_eq!(get(&s, NOW + 5, "/api/v1/state")["sources"]["herdr"], NOW);
+    assert_eq!(get(&s, NOW + 5, "/api/v1/state")["sources"]["shed"], NOW);
     assert_eq!(age(NOW + 5), None);
     assert_eq!(age(NOW + 11), Some(json!("data 11s old")));
     s.refresh(NOW + 11);

@@ -1,6 +1,6 @@
-use crate::herdr;
 use crate::runner::Runner;
 use crate::spawn::Plan;
+use crate::term;
 use crate::Ctx;
 use anyhow::Result;
 use serde_json::Value;
@@ -245,7 +245,7 @@ pub trait Provider: Sync {
         Ok(())
     }
     fn start_cmd(&self, _ctx: &Ctx, p: &Plan, pane: &str) -> Vec<String> {
-        herdr::run_argv(pane, &[&p.harness])
+        term::run_argv(pane, &[&p.harness])
     }
     fn resumes(&self) -> bool {
         false
@@ -254,13 +254,13 @@ pub trait Provider: Sync {
         false
     }
     fn kick_cmds(&self, p: &Plan, pane: &str) -> Vec<Vec<String>> {
-        vec![herdr::send_text_argv(pane, &p.kick), herdr::keys_argv(pane, "enter")]
+        vec![term::send_text_argv(pane, &p.kick), term::keys_argv(pane, "enter")]
     }
     fn kick(&self, r: &dyn Runner, p: &Plan, pane: &str) -> Result<bool> {
         Ok(self
             .kick_cmds(p, pane)
             .iter()
-            .all(|c| herdr::exec(r, c).is_ok_and(|o| o.code == 0)))
+            .all(|c| term::exec(r, c).is_ok_and(|o| o.code == 0)))
     }
     fn env(&self) -> &'static [&'static str] {
         &[]
@@ -310,9 +310,6 @@ pub trait Provider: Sync {
     fn pending_menu(&self, _screen: &str) -> Option<(String, Vec<String>)> {
         None
     }
-    fn startup_prompt(&self, _screen: &str) -> Option<(&'static str, Vec<String>)> {
-        None
-    }
     fn answer_keys(&self, n: usize) -> String {
         n.to_string()
     }
@@ -320,9 +317,6 @@ pub trait Provider: Sync {
         None
     }
     fn health_check(&self) -> Option<(&'static str, &'static str, &'static str)> {
-        None
-    }
-    fn startup_title(&self) -> Option<&'static str> {
         None
     }
     fn process_names(&self) -> &'static [&'static str] {

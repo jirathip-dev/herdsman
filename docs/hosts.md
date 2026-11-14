@@ -1,21 +1,19 @@
 # Hosts: lanes on more than one machine (#157)
 
-One **main host** runs drover, the board (`drover serve`) and the event log. It starts lanes on any host through
-herdr's `--machine`, picks the least-busy host that fits, and shows every host on the board. With no `[hosts]` in
+One **main host** runs drover, the board (`drover serve`) and the event log. It starts lanes on any host over ssh
+(shed there through `shed connect`), picks the least-busy host that fits, and shows every host on the board. With no `[hosts]` in
 fleet.toml nothing changes: every lane runs on the main host, as before.
 
 ## Add a host
 
-1. On the main host, save the machine in herdr: `herdr machine add` (an SSH target), then check it with
-   `herdr machine status`. drover reaches the host two ways under that one name: `herdr --machine <name> …` for
-   herdr commands, and `ssh <name> …` for everything else (git, probes, file reads and writes). So the machine's label
-   must also work as an SSH host name, e.g. an entry in `~/.ssh/config`. Key-based login only, because drover runs
+1. Make the machine an SSH host name, e.g. an entry in `~/.ssh/config`. drover reaches the host as `ssh <name> …`
+   for everything (git, probes, file reads and writes, and shed through `shed connect`). Key-based login only, because drover runs
    ssh with `BatchMode=yes` (#337: and `ControlMaster=auto`, one connection kept 10 minutes). The board's reads of a
-   host (#337) are one ssh call per step, its herdr run as `~/.local/bin/herdr` there. A pass checks all of a host's
+   host (#337) are one ssh call per step. A pass checks all of a host's
    lane worktrees with one ssh call (#880); a host whose call runs past its limit shows in the tick's log as
    `tick: <host>: over budget; skipped for the rest of this pass`, and the pass goes on for the other hosts.
 2. On the new host, install and log in to:
-   - herdr (its server running);
+   - shed (its server job running; `hosts bootstrap` installs it);
    - git;
    - `gh` (`gh auth login`): lanes there open their PRs with it;
    - git access to each fleet repo: the host clones each repo itself the first time a lane goes there, with plain
@@ -33,7 +31,7 @@ fleet.toml nothing changes: every lane runs on the main host, as before.
 tags = ["fast"]
 
 [hosts.bazzite]
-machine = "bazzite"     # the herdr machine label (also its SSH name)
+machine = "bazzite"     # its SSH name
 tags = ["gpu"]          # hand tags, added to the detected ones
 root = "~/lanes"        # workspace root on that host (default ~/.local/share/drover/work)
 enabled = true          # false: no new lanes go there (see below)
@@ -43,8 +41,7 @@ enabled = true          # false: no new lanes go there (see below)
 
 Everything drover makes on a host lives under its workspace root: worktrees at `<root>/<repo>/<lane>`, the
 each lane's Cargo build at `<root>/.build/<agent>` (cloned from its fleet's warmest one on the same root) and its
-scratch under `<root>/.build/.scratch`. `drover migrate` moves the worktrees from the old
-`~/.herdr/worktrees` (a live lane's on a later run, once it has ended), then drops `~/.cache/drover/target`.
+scratch under `<root>/.build/.scratch`.
 
 `roots = ["/Volumes/NVMe/drover", "~/.local/share/drover/work"]` lists several in order (an external drive
 first): a new lane takes the first that is mounted, writable and has `min_free_gb`; its spawn logs that `root`, and
@@ -83,7 +80,7 @@ A lane needs the union of three lists:
 
 1. `--host <name>` forces that host.
 2. Otherwise, a role pinned with `[fleet.<n>.role.<r>] host = "main"` (or a host name) goes there. `main` is the host
-   without `machine`. A `design` lane always runs on the main host, in the owner's herdr: it defaults to `main`,
+   without `machine`. A `design` lane always runs on the main host: it defaults to `main`,
    and `--host` or a pin naming another host is refused `DESIGN_MAIN_ONLY`.
 3. Otherwise, an issue that already had a lane stays on that lane's host, because its worktree is there. This holds
    even when the host has been turned off.
@@ -114,12 +111,12 @@ spawns still starting, and starts it in queue order once a slot frees; a hand-ty
 simulators N/1` for each capped host. Once its verdict is in, a reviewer's idle pane closes on the next `check`.
 Likewise, a builder's idle pane closes once a review started after it. Their worktrees stay until merge.
 
-The `spawn` event records the lane's `host` and `machine`. From then on, every herdr call for that lane carries
-`--machine` (pane reads, prompts, stop, kill, close), and its worktree work runs over ssh on that host:
+The `spawn` event records the lane's `host` and `machine`. From then on, every shed call for that lane goes to
+that host's shed (pane reads, prompts, stop, kill, close), and its worktree work runs over ssh on that host:
 `git worktree`, the brief and MCP files, the reviewer's `verdict.md`, the dirty and unpushed checks, and `clean`.
 
 `spawn --dry-run` places the lane first and prints the commands exactly as they are sent: `--machine`, that host's
-paths and home, and no account token. If the agent fails to start on another host, its new workspace is closed.
+paths and home, and no account token.
 
 ## A remote lane's hook rules (#592)
 
@@ -132,7 +129,7 @@ value. The rules are frozen at spawn: after a config change that alters them, th
 until a respawn. A fleet.toml left on a remote host is no longer read: `drover doctor` shows
 `! stale fleet.toml on <host>: no longer read`; remove it by hand. #647: bootstrap removes one an old bootstrap wrote
 (only `[fleet.*]` and `[hosts.<host>]`); doctor's host row names the failed check (`unreachable (ssh: …)`,
-`herdr agent list: …`, `! shed: …`).
+`! shed: …`).
 
 ## Asks, answers and verdicts from another host (#275, #389)
 
@@ -150,12 +147,7 @@ That host's own log (#344: its own `state.db`) is never written by a lane. Each
 #345: with `[service] url` set, a remote lane gets `DROVER_SERVICE` and its own token instead of the outbox, and reports over
 HTTP to `drover service` (docs/service.md); no ssh back to the main host.
 
-An answer reaches a remote lane with `herdr --machine <m> agent prompt`, then Enter. When `agent start` gives up
-(`timeout`, `agent_name_not_found`, `agent_launch_pending`; on any host, the main one under load too), drover
-confirms the pane over 120 s (#359): the harness's process runs there and its startup title (Claude: `✳`) or a
-reported state has been seen; any change restarts the window. A confirmed pane is named (`agent_launch_pending` on
-the rename waits and retries) and adopted (`spawn-adopted`); one that never confirms is closed and started once more
-on a fresh pane, and closed again if that fails too. It never closes the pane or workspace of a harness that came up.
+An answer reaches a remote lane through that host's shed (`send`, then Enter).
 
 ## Turn a host off
 
@@ -193,7 +185,7 @@ logs `host-key-changed <host>` once (again only after the host was back online) 
   without a push within `runtime_down_minutes` (30) make drive log one `runtime-down` (host, count, a sample reason;
   one alert). While it is open a spawn there is refused `RUNTIME_DOWN`, those lanes show `runtime down on <host> since
   <HH:MM> UTC` in `status` and `waiting`, and drive neither respawns them nor parks them needs-human. Each slow pass
-  runs one canary there (shed: a throwaway session echoing a computed word; herdr: the same line in a throwaway pane);
+  runs one canary there (a throwaway shed session echoing a computed word);
   once it passes drive logs `runtime-up`, the held issues' earlier respawns stop counting, and spawns resume paced by
   `max_parallel_spawns`.
 - History (#234): `<state dir>/host-history.jsonl` keeps 24 h of `{ts, host, load_cpu, pressure, swap_out, mem_free_gb,
@@ -214,23 +206,17 @@ logs `host-key-changed <host>` once (again only after the host was back online) 
 failure turns the host red on the Host tab (`unhealthy · <reason>`) and keeps new lanes off it: placement refuses it
 with `NO_HOST: <host>: unhealthy: <reason>`. The checks, each with its fix:
 
-- **herdr**: the server's version equals the installed client's (`herdr status` on the host). An old server keeps
-  running after an update, and `herdr machine add` then fails with "remote server is not ready": update herdr on the
-  host and restart its server.
-- **herdr session**: on macOS the server must run under the user's launchd job (the login session). A server
-  restarted from an SSH shell runs outside it, with the keychain locked: `gh` says "token invalid", private clones
-  fail and Claude can't read its login. Fix: `launchctl kickstart -k gui/<uid>/<label>` (the label of the job that
-  starts `herdr server`).
 - **git**: `ssh <host> git ls-remote https://github.com/<repo>.git` works for each fleet whose needs the host fits.
   drover's own git over SSH never has the keychain, so HTTPS fails with `could not read Username for
   'https://github.com'`. A failure reads `✗ git <fleet> — can't reach <repo>: <first error line>` and keeps only
   that fleet's lanes off the host; placement moves them to the next host. Fix: add the host's SSH key to GitHub
   and run `git config --global url.git@github.com:.insteadOf https://github.com/` there.
-- **gh** and **claude**: `gh auth status` and `claude auth status` succeed inside a herdr pane on the host (a
-  throwaway `drover-health` workspace, closed again). Lanes there need `gh` for their PRs, so `gh` logged out is
-  a red host problem. Fix: `ssh <host> gh auth login` for gh; for claude, log in from a pane there.
+- **gh** and **claude**: `gh auth status` and `claude auth status` succeed in a login shell on the host
+  (`sh -lc`). Lanes there need `gh` for their PRs, so `gh` logged out is
+  a red host problem. Fix: `ssh <host> gh auth login` for gh; for claude, log in from a terminal there.
 - **drover**: `drover --version` there prints the same version and git sha as on the main host. A mismatch is
   a warning (amber), not a failure.
+- **shed**: its lanes list answers there; a failure is a `! shed: …` warning.
 
 ## Auto-update
 
@@ -246,7 +232,7 @@ install there succeeds, and the tick after retries it. Until the versions match,
 
 ## When the main host is down
 
-Nothing new starts. Lanes on other hosts keep running in their own herdr servers. When the main host comes back,
+Nothing new starts. Lanes on other hosts keep running in their own shed servers. When the main host comes back,
 `check` finds those lanes again from the log. To move the main host, follow docs/move.md.
 
 ## Cloud hosts (#254)
@@ -255,7 +241,7 @@ A cloud host is a `[hosts.<name>]` with a `cloud` recipe. drover starts it when 
 
 ```toml
 [hosts.boat1]
-machine = "boat1"          # the ssh alias drover writes, and the herdr machine label
+machine = "boat1"          # the ssh alias drover writes
 cloud = "boat"             # the built-in recipe; or <config>/recipes/<name>.toml
 size = "small"             # a key of the recipe's [rate_usd_hour]: boat's small|default|large|xlarge
 budget_usd_month = 50      # hard: none set means 0, so it never starts
@@ -315,16 +301,13 @@ overflow_after_minutes = 10  # the default
 Each step checks first and is skipped when already done, then is read back after its install, so it is safe to run
 again. In order:
 
-0. #641: before any step, the host's `machine` label must name at most one herdr machine profile
-   (`herdr machine list`); several are refused `HOST_AMBIGUOUS`, listed, and nothing runs. A setup pane (a login,
-   from bootstrap or the board) needs exactly one, else `HOST_UNKNOWN`; it never opens on this host instead.
-1. **herdr** at this host's version (`herdr machine add <machine>` from here; a recreated box's old profile under
-   that label is removed first, logged `host-machine-replaced`), then git, gh, Claude Code and Rust with
-   a C linker (apt and the official install scripts). Other toolchains a fleet needs go in your own snapshot.
+1. git, gh, Claude Code, Rust with a C linker (apt and the official install scripts), then shed at drover's pin
+   and its job (on a `shed-acp` host also node and the ACP adapter, below). Other toolchains a fleet needs go in your
+   own snapshot.
 2. **drover** at this host's exact sha: `cargo install --git <drover repo> --rev <sha>` into the same root as
    here (e.g. `~/.local`).
-3. **Logins**, once and by you: for each of Claude and gh that is logged out, bootstrap opens a herdr pane on the
-   host (visible in herdr and as a sign-in on the board) and stops. In the Claude pane run the login; in the gh pane
+3. **Logins**, once and by you: for each of Claude and gh that is logged out, bootstrap opens a shed terminal on the
+   host (a sign-in on the board) and stops. In the Claude terminal run the login; in the gh terminal
    paste the host's fine-grained token and press Enter (read without echo, never on a command line or in a log). Then
    run bootstrap again. drover never copies a token from this host.
 4. **git over HTTPS** with that token (`gh auth setup-git`): never your SSH key.
@@ -346,12 +329,12 @@ above (and the token look) before placement uses it, so an unhealthy host never 
 ✗, the recipe's `snapshot` command (logged `cloud-snapshot`). The recipe's `create_from` template makes a new
 sandbox from it that starts ready. Check both against docs.boat.dev.
 
-## Hosts without herdr: `runtime = "shed-acp"` (#637)
+## ACP hosts: `runtime = "shed-acp"` (#637)
 
 ```toml
 [hosts.boat1]
 machine = "boat1"
-runtime = "shed-acp"   # "herdr" or "shed-acp"; unset: the fleet's runtime, as before
+runtime = "shed-acp"   # unset: the fleet's runtime, as before
 
 [proxy]                # all optional
 # port = 41990         # the token proxy, here and (through a tunnel) on each shed-acp host
@@ -360,13 +343,12 @@ runtime = "shed-acp"   # "herdr" or "shed-acp"; unset: the fleet's runtime, as b
 ```
 
 A `shed-acp` host runs every lane as an ACP session in its own shed (`shed run --acp claude-acp … -- <adapter>`
-over ssh). The brief is the first prompt, and every later prompt goes through the same remote shed. herdr is never
-asked there.
+over ssh). The brief is the first prompt, and every later prompt goes through the same remote shed.
 
-- **Survey.** The host is up when its shed answers (`ls` through `shed connect`). A herdr answering there proves
-  nothing, and a host whose shed is down is offline (#601's rule, reversed). Load, memory and disk come from the
+- **Survey.** The host is up when its shed answers (`ls` through `shed connect`); a host whose shed is down is
+  offline. Load, memory and disk come from the
   same ssh look as on any host.
-- **Health.** Instead of herdr's rows: git for each fleet it fits, `gh auth status` over ssh, and for each Claude
+- **Health.** git for each fleet it fits, `gh auth status` over ssh, and for each Claude
   role's profile the ACP guard below. A failed guard is a `✗ acp guard <profile>` row, which keeps new lanes off.
 - **The guard, proven there (hard gate, as #565).** Before a lane starts, spawn syncs the lane's profile there
   (`drover profiles sync --profile …`) and checks three things: that drover there is this build's version (#573),
@@ -386,7 +368,7 @@ asked there.
   spawned again, the last of which revokes the older key at once). `drover hosts keys` lists them with their state.
   `drover hosts keys revoke <id>` (owner only) ends one at once and logs `proxy-key-revoked`. A refused key gets a
   401 and nothing goes upstream.
-- **Bootstrap.** `hosts bootstrap <name>` on a `shed-acp` host installs no herdr. Its steps are git, gh, Claude Code,
+- **Bootstrap.** `hosts bootstrap <name>` on a `shed-acp` host: git, gh, Claude Code,
   rust, shed at drover's pin (`cargo install --git …/shed --rev <shed::REV>`, read back as `shed <proto version>`),
   shed's job (`shed install`, then systemd `enable --now` or launchd `bootstrap`; `shed doctor` is the read-back),
   node and npx, `shed agents add claude-acp`, and drover. No Claude login is opened there. gh is the only login,

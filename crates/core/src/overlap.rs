@@ -104,7 +104,7 @@ pub fn preview(ctx: &Ctx, cfg: &Config, r: &dyn Runner, fleet: &str, events: &[E
         let sp = crate::events::last_spawn(events, lane);
         let pane = sp.and_then(|e| e.str("pane")).unwrap_or_default();
         let on = crate::hosts::On::of(r, sp);
-        if crate::herdr::tell(&on, sp.and_then(|e| e.str("harness")) == Some("dsh"), lane, pane, &text).is_ok() {
+        if crate::term::tell(&on, sp.and_then(|e| e.str("harness")) == Some("dsh"), lane, pane, &text).is_ok() {
             ev(s.issue, "heads-up", json!({"key": key, "reason": text}))?;
         }
     }

@@ -76,9 +76,6 @@ export type NeedIssue = { fleet: string, issue: number, pending: boolean, who: s
  */
 shots_at?: string | null, };
 
-/**
- * #269: API v1's `lanes`, the Lanes tab as this device sees it: state sections, repo groups inside (`error`: no fleet.toml, `failed`: herdr unread). `rw`, `live`, `paired`, `pair` as `NeedsTab`'s.
- */
 export type LanesTab = { now: number, rw: boolean, live: boolean, paired: boolean, pair: boolean, error?: string | null, failed: boolean, sections: Array<LaneSection>, 
 /**
  * #630: each lane's workspace root and unsaved work.
@@ -100,9 +97,6 @@ export type LaneSection = { name: string, tone: string, repos: Array<LaneRepo>, 
 
 export type LaneRepo = { name: string, lanes: Array<LaneRow>, };
 
-/**
- * A Lanes row: its avatar (`avatar`, herdr's `state` with `act`, #423 `grow`, `atone` and `coat`), name, `state` in `tone` for `ago`, the `why` line (`why_tone`), the activity (`activity`, or the `now` parts), `gone` (no pane), the conductor `thread` it opens; the hidden card: `head`, `shown`, `facts`, the PR line (`issue` and `pr`, `repo` none when its fleet is not configured), `dead` and the blocked card.
- */
 export type LaneRow = { name: string, role: string, state: string, act: string, grow: string, atone: string, coat: string, tone: string, ago: string, why?: string | null, why_tone: string, activity: string, now?: LaneNow | null, gone: boolean, thread?: string | null, head: string, shown: string, facts: string, issue?: number | null, pr?: PrLine | null, repo?: string | null, dead: boolean, blocked?: Blocked | null, 
 /**
  * #712: its issue is parked: the fleet its [unpark] posts to.
@@ -235,7 +229,7 @@ export type Setup = { host: string, name: string, };
  */
 export type State = { seq: number, now: number, tz: number, age?: number | null, mtime: string, theme: string, fleets: Array<Fleet>, queue: Array<Queued>, lanes: Array<Lane>, asks: Array<Ask>, hosts: Array<Row>, services: Array<Row>, alerts: Array<Row>, 
 /**
- * #859: when the background last read each source the lanes come from (herdr, shed, remote, host).
+ * #859: when the background last read each source the lanes come from (shed, remote, host).
  */
 sources: { [key in string]: number }, };
 
@@ -257,7 +251,7 @@ pending?: PendingStart | null, status?: string | null, };
 export type PendingStart = { action: string, since: number, reason?: string | null, };
 
 /**
- * `state` is herdr's (or `dead`, `parked`); `shown` and `tone` (g, a, r, m) are the Lanes row's words.
+ * `state` is the runtime's (or `dead`, `parked`); `shown` and `tone` (g, a, r, m) are the Lanes row's words.
  */
 export type Lane = { name: string, fleet?: string | null, issue?: number | null, title?: string | null, role: string, harness: string, model?: string | null, state: string, shown: string, tone: string, since: number, runtime: string, host: string, where: string, };
 
@@ -365,9 +359,6 @@ export type Drive = { tone: string, line: string, meta: Array<string>, pass: boo
  */
 export type DriveAct = { who: string, words: string, code: string, };
 
-/**
- * A Queue row: `#issue` in its shown `state` (`tone`) for `age`, counting from `t`; its row sprite's `act`, #423 `grow` (the growth stage) and `coat`; `queued` (with `check`: from the backlog), its serial `groups`, `blocked_by`; titles; the open card: the pipeline `stage`, the current `lane` (`live`: herdr lists it), the PR line, `dead`, red `notes` (a land note, an answer not delivered), the decision taken by default (and its ask to change it), #517 its `open` ask (answerable here), [▲]/[▼] (`up`, `down`: the rows to move before or after) and the lanes list.
- */
 export type QueueRow = { issue: number, state: string, tone: string, age: string, t: number, act: string, grow: string, coat: string, queued: boolean, check: boolean, groups: Array<string>, blocked_by?: number | null, title?: string | null, stage: Array<Stage>, lane: string, live: boolean, pr: PrLine, dead: boolean, notes: Array<string>, decided?: string | null, ask?: Ask | null, open?: NeedAsk | null, mv: boolean, up?: number | null, down?: number | null, lanes: Array<QueueLane>, runtime: string, host: string, where: string, };
 
 /**
@@ -380,9 +371,6 @@ export type Stage = { name: string, k: string, g: string, at: number, ok: boolea
  */
 export type PrLine = { pr?: number | null, run?: string | null, ci?: string | null, verdict?: string | null, vtone: string, rounds: number, form?: string | null, };
 
-/**
- * #205: a lane the issue had, newest first: herdr's `state` (`gone`) in `tone`, its spawn's age; `link`: `live` opens its Lanes sheet, `gone` its stored transcript, empty none.
- */
 export type QueueLane = { name: string, state: string, tone: string, ago: string, link: string, };
 
 /**

@@ -1,5 +1,5 @@
 use super::{Accounts, Credential, Provider};
-use crate::herdr;
+use crate::term;
 use crate::spawn::Plan;
 use crate::Ctx;
 
@@ -11,7 +11,7 @@ impl Provider for Fake {
         Some("fake")
     }
     fn start_cmd(&self, _ctx: &Ctx, _p: &Plan, pane: &str) -> Vec<String> {
-        herdr::run_argv(pane, &["fake-cli", "--go"])
+        term::run_argv(pane, &["fake-cli", "--go"])
     }
     fn env(&self) -> &'static [&'static str] {
         &["FAKE_QUIET=1"]
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn a_lane_launches_with_its_command_and_env() {
         let p = plan();
-        assert_eq!(p.start_cmd(&ctx(), "w1:p1"), crate::herdr::run_argv("w1:p1", &["fake-cli", "--go"]));
+        assert_eq!(p.start_cmd(&ctx(), "w1:p1"), crate::term::run_argv("w1:p1", &["fake-cli", "--go"]));
         let shell = p.lane_cmd("w1:p1").join(" ");
         assert!(shell.contains("FAKE_QUIET=1") && shell.contains("&& unset FAKE_TOKEN"), "{shell}");
     }

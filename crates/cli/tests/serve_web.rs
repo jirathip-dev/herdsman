@@ -472,11 +472,10 @@ fn lanes_group_by_fleet_with_others() {
     let agents = json!([
         {"name": "sendmeter-impl-12", "agent_status": "working", "pane_id": "w1:p2", "cwd": "/x"},
         {"name": "synergy-design-5", "agent_status": "done", "pane_id": "w2:p1", "cwd": "/x"},
-        {"agent": "claude", "agent_status": "working", "pane_id": "w3:p1", "cwd": wt, "workspace_id": "w3"},
-        {"agent": "codex", "agent_status": "idle", "pane_id": "w4:p1", "cwd": "/Users/me/Projects/side", "workspace_id": "w4"},
-        {"agent": "dsh-tui", "agent_status": "blocked", "pane_id": "w5:p1", "cwd": "/p/synergy-apps", "workspace_id": "w5"},
+        {"name": "w3", "agent": "claude", "agent_status": "working", "pane_id": "w3", "cwd": wt},
+        {"name": "side-project", "agent": "codex", "agent_status": "idle", "pane_id": "side-project", "cwd": "/Users/me/Projects/side"},
+        {"agent": "dsh-tui", "agent_status": "blocked", "pane_id": "w5:p1", "cwd": "/p/synergy-apps"},
     ]);
-    let ws = [("w4".to_string(), "side-project".to_string())].into();
     let lanes = drover::lanes::join(
         &cfg,
         &Fake::default(),
@@ -484,7 +483,6 @@ fn lanes_group_by_fleet_with_others() {
         &events,
         &st,
         agents.as_array().unwrap(),
-        &ws,
     );
     let got: Vec<(Option<&str>, &str, &str, &str, bool)> = lanes
         .iter()
@@ -513,11 +511,25 @@ fn lanes_group_by_fleet_with_others() {
         (lanes[0].model.as_deref(), lanes[0].effort.as_deref(), lanes[0].issue),
         (Some("opus"), Some("high"), Some(12))
     );
-    let list = json!({"result": {"agents": agents}}).to_string();
-    let r = Fake::default().reply("herdr agent list", &list).reply(
-        "herdr pane read w1:p2",
+    let sh = FakeShed::attached(&c);
+    sh.lane("sendmeter-impl-12", "working", "/x");
+    sh.screen(
+        "sendmeter-impl-12",
         "⏺ Bash(cd ~/w; cargo test 2>&1 | tail -5)\n\n✻ Herding… (4m 2s · ↓ 1k tokens)\n────────────────────\n> \n────────────────────\n",
     );
+    sh.lane("synergy-design-5", "done", "/x");
+    for (name, harness, cwd, state) in [
+        ("w3", "claude", wt.as_str(), "working"),
+        ("side-project", "codex", "/Users/me/Projects/side", "idle"),
+    ] {
+        sh.add(name, json!({"fleet": "", "harness": harness}));
+        sh.set(name, |t| {
+            (t["cwd"], t["reported"]) = (json!(cwd), json!({"state": state}))
+        });
+    }
+    sh.lane("synergy-impl-7", "blocked", "/p/synergy-apps");
+    let f = Fake::default();
+    let r = sh.on(&f);
     let page = get(&Server::new(&c, &r, None), "/?all=1");
     let at = |s: &str| page.find(s).unwrap_or_else(|| panic!("{s} missing"));
     let working = &page[at("<h2><span class=g>working (2)</span></h2><h3>sendmeter (1)</h3>")..];
@@ -533,15 +545,6 @@ fn lanes_group_by_fleet_with_others() {
                 "<span class=el>✻ Herding…</span><i> · </i><span class=el>running cargo test</span><i> · </i><span class=t>4m</span></span>"
             ))
     );
-    let s = Server::new(&c, &r, None);
-    for t in [0, 5, 29] {
-        assert!(
-            String::from_utf8_lossy(&s.respond("GET /api/v1/lanes HTTP/1.1\r\n\r\n", 1_000_000 + t))
-                .starts_with("HTTP/1.1 200")
-        );
-    }
-    assert_eq!(r.count("herdr agent list"), 1 + 2);
-    assert_eq!(r.count("herdr pane read w1:p2"), 1 + 1);
 }
 
 #[test]
@@ -558,8 +561,8 @@ fn one_lane_per_agent_name() {
         {"name": "sendmeter-impl-3061", "agent_status": "idle", "pane_id": "w9:p1", "cwd": "/x", "host": "mini"},
     ]);
     let st = drover::events::fold(&events);
-    let (fake, ws) = (Fake::default(), Default::default());
-    let lanes = drover::lanes::join(&cfg, &fake, &c.worktrees, &events, &st, agents.as_array().unwrap(), &ws);
+    let fake = Fake::default();
+    let lanes = drover::lanes::join(&cfg, &fake, &c.worktrees, &events, &st, agents.as_array().unwrap());
     let got: Vec<_> = lanes
         .iter()
         .map(|l| (l.name.as_str(), l.state.as_str(), l.pane.as_deref()))

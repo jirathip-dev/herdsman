@@ -104,23 +104,19 @@ next tool call is not refused.
 
 ## 5. Shed on remote hosts
 
-**Symptom.** With a shed runtime configured, a remote host shows offline and takes no lanes, though ssh and herdr work
-there.
+**Symptom.** A remote host shows offline and takes no lanes, though ssh works there.
 
-**Cause.** Until #601 lands, a shed runtime makes drover look for shed on every host; a remote host with no shed fails
-that look and counts as offline.
+**Cause.** A host is up only when its shed answers (`shed connect` over ssh); a host with no shed, or its shed
+server down, counts as offline.
 
 **How to tell.**
 
 ```sh
-drover hosts                    # the host: offline
-ssh <host> herdr agent list       # works
+drover hosts                       # the host: offline
+ssh <host> shed ls                 # fails
 ```
 
-Offline in `drover hosts` while `herdr agent list` over ssh is OK is this case, not a network fault.
-
-**Fix.** Until #601, run remote lanes with the herdr runtime (`kind = "herdr"`, see [runtimes](runtimes.md)), or
-install shed on that host.
+**Fix.** `drover hosts bootstrap <host>` (installs shed and its job), or start shed's job there.
 
 **Confirm.** `drover hosts` shows the host reachable, and a lane placed there starts.
 

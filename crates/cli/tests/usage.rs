@@ -253,10 +253,11 @@ fn a_deepseek_env_file_others_can_read_is_refused() {
 fn spawn_prefers_the_lowest_fresh_weekly_usage() {
     let d = tmpdir("usage-pick");
     let c = ctx(&d, &config(&d));
+    let _sh = FakeShed::attached(&c);
     let dry = || {
         let (code, out) = run(
             &c,
-            &Fake::default(),
+            &Fake::default().reply("which shed", "/opt/shed/bin/shed\n"),
             &["spawn", "sendmeter", "7", "impl", "--dry-run", "--json"],
         );
         assert_eq!(code, 0, "{out}");
@@ -348,9 +349,10 @@ fn headroom_picking_takes_the_most_headroom() {
     let order = config(&d);
     let dry = |cfg: &str| {
         let c = ctx(&d, cfg);
+        let _sh = FakeShed::attached(&c);
         let (code, out) = run(
             &c,
-            &Fake::default(),
+            &Fake::default().reply("which shed", "/opt/shed/bin/shed\n"),
             &["spawn", "sendmeter", "7", "impl", "--dry-run", "--json"],
         );
         assert_eq!(code, 0, "{out}");

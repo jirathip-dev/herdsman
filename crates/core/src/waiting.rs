@@ -552,7 +552,6 @@ fn waits(
     }
 }
 
-/// One row per lane herdr does not show `working`: the latest lane's reason (`s.lane == w.lane`), shared by the issue's older lanes, which wait on the latest one while it works. `live` refreshes the PR read, else the cache only.
 pub fn scan(
     ctx: &Ctx,
     cfg: &Config,

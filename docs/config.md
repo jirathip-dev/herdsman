@@ -180,7 +180,6 @@ Every timing and cap drover core uses is a `[limits]` key; a fleet.toml without 
 | `outbox_stale_minutes` | `5` | a remote lane's outbox line undelivered this long alerts `outbox-stale` |
 | `host_offline_minutes` | `15` | a remote host unreachable this long has its open lanes restarted on the main host |
 | `promise_passes` | `{}` | drive passes a promise of each kind may stay open before `promise-missed` (default 2) |
-| `serve_herdr_secs` | `2` | serve re-reads herdr's agents in the background this often |
 | `serve_shed_secs` | `5` | serve re-reads shed's lanes in the background this often |
 | `serve_remote_secs` | `10` | serve re-reads the remote hosts (ssh) in the background this often |
 | `serve_host_secs` | `10` | serve re-samples this host's load in the background this often |

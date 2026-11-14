@@ -3,7 +3,7 @@ use crate::events::{append, emit, fold, last_spawn, Event};
 use crate::hosts::On;
 use crate::runner::Runner;
 use crate::waiting::Waiting;
-use crate::{herdr, Ctx};
+use crate::{term, Ctx};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::io::Write;
@@ -27,7 +27,7 @@ pub fn refused(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write, ev:
             continue;
         };
         if let Some(p) = sp.str("pane") {
-            let _ = herdr::close(&On::of(r, Some(sp)), p);
+            let _ = term::close(&On::of(r, Some(sp)), p);
             let d = json!({"agent": lane, "pane": p, "reason": "hook-refused"});
             append(&ctx.state, &Event::new(ctx.now, fleet, Some(s.issue), "lane-closed", d))?;
         }
@@ -71,7 +71,7 @@ pub fn stalled(ctx: &Ctx, cfg: &Config, r: &dyn Runner, ev: &[Event], agents: &[
     if ctx.now < start.min(stall) {
         return None;
     }
-    let screen = herdr::read(&on, pane).ok();
+    let screen = term::read(&on, pane).ok();
     let (n, _) = crate::waiting::respawns(ev, &w.fleet, w.issue);
     let ago = |t: u64| crate::events::age(ctx.now.saturating_sub(t));
     if screen.as_deref().is_some_and(|t| t.trim().is_empty()) {
@@ -83,7 +83,7 @@ pub fn stalled(ctx: &Ctx, cfg: &Config, r: &dyn Runner, ev: &[Event], agents: &[
             .str("worktree")
             .and_then(|wt| on.read(&std::path::Path::new(wt).join(".brief.md")));
         if let Some(text) = brief.filter(|_| acp && resent.is_none()) {
-            let sent = herdr::prompt(&on, lane, &text).is_ok();
+            let sent = term::prompt(&on, lane, &text).is_ok();
             let d = json!({"agent": lane, "sent": sent});
             let _ = append(
                 &ctx.state,
@@ -141,7 +141,7 @@ pub fn stale_check(
     if !agents.iter().any(|a| a["name"] == lane) || ev[i + 1..].iter().any(|e| e.is("verdict", fleet, n)) {
         return None;
     }
-    let screen = herdr::read(&On::of(r, Some(sp)), sp.str("pane")?).ok()?;
+    let screen = term::read(&On::of(r, Some(sp)), sp.str("pane")?).ok()?;
     let tools = crate::shed::session(ctx, lane)["tools"]
         .as_object()
         .is_some_and(|m| !m.is_empty());
@@ -232,11 +232,11 @@ pub fn nudge(
     why: &str,
 ) -> Result<()> {
     let on = On::of(r, last_spawn(ev, lane));
-    if let Err(e) = herdr::awake(&on, lane) {
+    if let Err(e) = term::awake(&on, lane) {
         return Ok(writeln!(out, "{fleet} #{n} nudge of {lane} waits: {e:#}")?);
     }
     let cancelled = crate::shed::cli(&on, &["cancel", lane]).is_ok();
-    let sent = herdr::prompt(&on, lane, NUDGE).is_ok();
+    let sent = term::prompt(&on, lane, NUDGE).is_ok();
     writeln!(out, "{fleet} #{n} nudged {lane}: {why}")?;
     let d = json!({"agent": lane, "why": why, "cancelled": cancelled, "sent": sent});
     append(&ctx.state, &Event::new(ctx.now, fleet, Some(n), "nudged", d))

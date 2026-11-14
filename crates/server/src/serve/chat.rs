@@ -429,7 +429,7 @@ impl super::Server<'_> {
     /// #701: one per `rw` (a paired and an unpaired device no longer evict each other's every tick), keyed by each
     /// agent's name and status only (all a thread's state reads).
     pub(super) fn chat_tab(&self, ctx: &Ctx, rw: bool) -> Value {
-        let agents = self.herdr_json(ctx.now, "agent");
+        let agents = self.agents_json(ctx.now);
         let agents = agents
             .and_then(|j| j["result"]["agents"].as_array().cloned())
             .unwrap_or_default();
@@ -612,7 +612,7 @@ fn stop(r: &dyn Runner, events: &[Event], id: &str) {
         .filter(|e| e.kind == "orchestrator-start")
         .and_then(|e| e.str("pane"))
     {
-        drop(crate::herdr::keys(r, p, "Escape"));
+        drop(crate::term::keys(r, p, "Escape"));
     }
 }
 

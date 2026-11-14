@@ -57,15 +57,9 @@ fn ev(c: &drover::Ctx, ts: u64, kind: &str) {
 
 fn healthy(f: Fake) -> Fake {
     let gh = "HTTP/2.0 200 OK\nGitHub-Authentication-Token-Expiration: 2099-01-01 00:00:00 UTC\n\n[]";
-    f.reply(&format!("{SSH}'sh' '-c' 'PATH="), "version: 0.9.5\nversion: 0.9.5\n")
-        .reply(&format!("{SSH}'gh' 'api' '-i'"), gh)
-        .reply(&format!("{SSH}'sh' '-c' 'p=$(pgrep"), "")
+    f.reply(&format!("{SSH}'gh' 'api' '-i'"), gh)
         .reply(&format!("{SSH}'git' 'ls-remote'"), "abc\tHEAD\n")
-        .reply(
-            "herdr --machine cloud1 workspace create",
-            r#"{"result":{"root_pane":{"pane_id":"w5:p1"}}}"#,
-        )
-        .reply("herdr --machine cloud1 pane read w5:p1", "gh:0\nclaude:0\nhs:done\n")
+        .reply(&format!("{SSH}'sh' '-lc'"), "")
         .reply(
             &format!("{SSH}'/opt/drover/bin/drover' '--version'"),
             &format!("drover {}\n", drover::VERSION),
@@ -554,16 +548,14 @@ fn step(cmd: &str) -> String {
 }
 
 fn boot_fake(gh_in: bool) -> Fake {
-    let ws = r#"{"result":{"root_pane":{"pane_id":"w7:p1"}}}"#;
     let mine = format!(
         "[ \"$('/opt/drover/bin/drover' --version)\" = 'drover {}' ]",
         drover::VERSION
     );
     let f = Fake::default()
-        .reply("herdr status", "version: 0.9.5\nversion: 0.9.5\n")
-        .reply("herdr machine list --json", r#"[{"id": "c1", "label": "cloud1"}]"#)
         .reply(&format!("{SSH}'sh' '-c' 'uname -s"), "Linux\nx86_64\n/home/me\n")
-        .reply(&step("herdr --version | grep -qx 'herdr 0.9.5'"), "")
+        .reply(&step("[ \"$(shed --version)\""), "")
+        .reply(&step("shed doctor"), "")
         .once(&step("command -v gh"), 1, "")
         .once(&step(&mine), 1, "")
         .reply(&step("command -v"), "")
@@ -574,8 +566,6 @@ fn boot_fake(gh_in: bool) -> Fake {
         )
         .reply(&step(&mine), "")
         .reply(&step("claude auth status"), "")
-        .reply("herdr --machine cloud1 workspace create", ws)
-        .reply("herdr --machine cloud1 pane run w7:p1", "{}")
         .reply(&step("git config --global --get credential"), "")
         .reply(&format!("{SSH}'sh' '-c' 'mkdir"), "")
         .reply(&step("git clone"), "")
@@ -588,12 +578,16 @@ fn boot_fake(gh_in: bool) -> Fake {
 }
 
 #[test]
-fn bootstrap_installs_what_is_missing_step_by_step_and_opens_the_logins_in_a_pane() {
+fn bootstrap_installs_what_is_missing_step_by_step_and_opens_the_logins_in_a_terminal() {
     let (c, cfg) = running("cloud-boot");
-    let r = boot_fake(false);
+    let (r, here, cloud) = (boot_fake(false), FakeShed::new(), FakeShed::new());
     let mut out = vec![];
-    let e = drover::cloud::bootstrap(&c, &cfg, &r, "cloud1", &mut out).unwrap_err();
-    assert!(format!("{e:#}").contains("log in in pane w7:p1"), "{e:#}");
+    let there = on_cloud(&r, &cloud);
+    let e = drover::cloud::bootstrap(&c, &cfg, &here.on(&there), "cloud1", &mut out).unwrap_err();
+    assert!(
+        format!("{e:#}").contains("log in in terminal drover-setup-gh-token"),
+        "{e:#}"
+    );
     let out = String::from_utf8(out).unwrap();
     assert!(
         out.contains("✓ git — there") && out.contains("✓ gh — installed"),
@@ -601,26 +595,26 @@ fn bootstrap_installs_what_is_missing_step_by_step_and_opens_the_logins_in_a_pan
     );
     assert!(out.contains("✓ drover — installed"), "{out}");
     let order = [
-        "herdr --version",
         "command -v git",
         "apt_ gh",
         "command -v claude",
         "command -v cargo",
+        "[ \"$(shed --version)\"",
+        "shed doctor",
     ];
     let at: Vec<_> = order.iter().map(|s| r.index(&step(s)).unwrap()).collect();
     assert!(at.windows(2).all(|w| w[0] < w[1]), "{at:?}");
-    assert!(!r.called(&step("apt_ git")) && !r.called("herdr machine add"));
+    assert!(!r.called(&step("apt_ git")));
     let sha = env!("DROVER_SHA");
     let build = format!(
         "cargo install --git https://github.com/jirathip-dev/herdsman --rev {sha} --locked --root '/opt/drover'"
     );
     assert!(r.called(&step(&build)), "{:?}", r.calls.borrow());
-    let runs: Vec<_> = r
-        .calls
-        .borrow()
+    assert!(here.methods().is_empty(), "nothing on this host: {:?}", here.methods());
+    let runs: Vec<String> = cloud
+        .all("send")
         .iter()
-        .filter(|c| c.contains("pane run"))
-        .cloned()
+        .map(|p| p["text"].as_str().unwrap().into())
         .collect();
     assert_eq!(runs.len(), 1, "{runs:?}");
     assert!(
@@ -830,105 +824,4 @@ fn a_snapshot_needs_a_green_health_check_first() {
         drover::hosts::cached(&c)["cloud1"].github.starts_with("github:"),
         "the look reads the token too"
     );
-}
-
-struct Machines(Fake, Shared<Vec<(String, String)>>);
-
-impl Runner for Machines {
-    fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<Out> {
-        let a: Vec<&str> = args.iter().map(String::as_str).collect();
-        let mut list = self.1.borrow_mut();
-        let ok = |s: String| {
-            Ok(Out {
-                code: 0,
-                stdout: s,
-                stderr: String::new(),
-            })
-        };
-        match (prog, &a[..]) {
-            ("herdr", ["machine", "list", "--json"]) => {
-                let v: Vec<_> = list
-                    .iter()
-                    .map(|(id, l)| json!({"id": id, "label": l, "target": l}))
-                    .collect();
-                ok(json!(v).to_string())
-            }
-            ("herdr", ["machine", "add", _, "--label", l]) => {
-                let id = format!("new{}", list.len());
-                list.push((id, (*l).into()));
-                drop(list);
-                self.0.run(prog, args)
-            }
-            ("herdr", ["machine", "remove", id]) => {
-                list.retain(|p| p.0 != *id);
-                drop(list);
-                ok(String::new())
-            }
-            _ => {
-                drop(list);
-                self.0.run(prog, args)
-            }
-        }
-    }
-    fn secret(&self, svc: &str) -> anyhow::Result<Option<String>> {
-        self.0.secret(svc)
-    }
-}
-
-fn machines(f: Fake, ids: &[&str]) -> Machines {
-    let list = ids.iter().map(|id| ((*id).into(), "cloud1".into())).collect();
-    let s = Shared::default();
-    *s.borrow_mut() = list;
-    Machines(f, s)
-}
-
-#[test]
-fn bootstrap_refuses_an_ambiguous_machine_label_and_opens_no_pane_anywhere() {
-    let (c, _) = running("cloud-ambiguous");
-    let r = machines(boot_fake(false), &["aaa1", "bbb2"]);
-    let (code, out) = run(&c, &r, &["hosts", "bootstrap", "cloud1"]);
-    assert_eq!(code, 3, "{out}");
-    assert!(
-        out.contains("REFUSED HOST_AMBIGUOUS") && out.contains("aaa1") && out.contains("bbb2"),
-        "{out}"
-    );
-    let calls = r.0.calls.borrow();
-    assert!(
-        !calls
-            .iter()
-            .any(|c| c.contains("workspace create") || c.contains("pane run")),
-        "{calls:?}"
-    );
-    assert!(
-        !calls.iter().any(|c| c.starts_with("ssh") || c.contains("machine add")),
-        "no step ran: {calls:?}"
-    );
-}
-
-#[test]
-fn a_setup_pane_for_a_host_with_no_machine_profile_is_refused_never_opened_here() {
-    let (c, _) = running("cloud-unknown");
-    let r = machines(boot_fake(false), &[]);
-    let (code, out) = run(&c, &r, &["setup", "cloud1", "gh"]);
-    assert_eq!(code, 3, "{out}");
-    assert!(out.contains("REFUSED HOST_UNKNOWN"), "{out}");
-    assert!(
-        !r.0.calls.borrow().iter().any(|c| c.contains("workspace create")),
-        "{:?}",
-        r.0.calls.borrow()
-    );
-}
-
-#[test]
-fn recreating_a_cloud_host_replaces_its_machine_profile() {
-    let (c, cfg) = running("cloud-recreate");
-    let f = boot_fake(false).once(&step("herdr --version | grep -qx 'herdr 0.9.5'"), 1, "");
-    let r = machines(f.reply("herdr machine add cloud1 --label cloud1", ""), &["old1"]);
-    let e = drover::cloud::bootstrap(&c, &cfg, &r, "cloud1", &mut vec![]).unwrap_err();
-    assert!(format!("{e:#}").contains("log in in pane w7:p1"), "{e:#}");
-    let list = r.1.borrow();
-    assert_eq!(list.len(), 1, "exactly one profile for cloud1: {list:?}");
-    assert_ne!(list[0].0, "old1", "the old profile is gone");
-    let log = drover::events::jsonl(&c.state).unwrap();
-    assert!(log.contains("host-machine-replaced") && log.contains("old1"), "{log}");
 }

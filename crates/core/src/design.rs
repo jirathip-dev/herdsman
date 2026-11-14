@@ -337,7 +337,7 @@ pub fn decide(ctx: &Ctx, cfg: &Config, r: &dyn Runner, ask: &Event, text: &str, 
         .and_then(|e| Some((e.str("agent")?, e.str("pane")?)))
         .filter(|_| kind != "design-revise")
     {
-        let _ = crate::herdr::close(r, pane);
+        let _ = crate::term::close(r, pane);
         let c = json!({"agent": agent, "pane": pane, "reason": kind});
         emit(&ctx.state, cfg, Event::new(ctx.now, f, Some(n), "lane-closed", c))?;
     }

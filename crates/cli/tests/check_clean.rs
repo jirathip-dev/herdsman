@@ -637,7 +637,7 @@ fn orphan_lane_fires_once_per_agent() {
     let r = Fake::default();
     let out = check(&c, &r);
     assert!(
-        out.contains("sendmeter #93 orphan-lane: herdr agent sendmeter-rev-93-r1 has no spawn event"),
+        out.contains("sendmeter #93 orphan-lane: agent sendmeter-rev-93-r1 has no spawn event"),
         "{out}"
     );
     assert_eq!(

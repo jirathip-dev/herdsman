@@ -7,16 +7,30 @@ use std::path::PathBuf;
 struct Fake(std::sync::Mutex<Vec<String>>);
 
 impl Runner for Fake {
-    fn run(&self, _: &str, args: &[String]) -> Result<Out> {
+    fn run(&self, prog: &str, args: &[String]) -> Result<Out> {
+        self.run_in(prog, args, "")
+    }
+    fn run_in(&self, _: &str, _: &[String], input: &str) -> Result<Out> {
+        use drover::shed::proto::{Hello, Request, Response};
         let mut calls = self.0.lock().unwrap();
-        calls.push(args.join(" "));
-        let gets = calls.iter().filter(|c| c.starts_with("pane get")).count();
-        let status = if gets == 1 { "idle" } else { "working" };
-        let stdout = if args[1] == "get" {
-            format!(r#"{{"result":{{"pane":{{"agent":"dsh-tui","agent_status":"{status}"}}}}}}"#)
-        } else {
-            String::new()
-        };
+        let mut stdout = String::new();
+        for q in input.lines().filter_map(|l| serde_json::from_str::<Request>(l).ok()) {
+            let id = q.id.clone().unwrap_or_default();
+            if q.method != "hello" {
+                calls.push(format!("{} {}", q.method, q.params));
+            }
+            let gets = calls.iter().filter(|c| c.starts_with("get")).count();
+            let status = if gets == 1 { "idle" } else { "working" };
+            let name = q.params["name"].clone();
+            let v = match q.method.as_str() {
+                "hello" => serde_json::json!(Hello::ours()),
+                "get" => serde_json::json!({"name": name, "labels": {"harness": "dsh-tui"}, "cwd": "/w", "cmd": ["sh"],
+                    "keep": true, "state": "running", "exit": null, "pid": 7, "reported": {"state": status}}),
+                "read" => serde_json::json!({"text": ""}),
+                _ => serde_json::json!({}),
+            };
+            stdout += &(serde_json::to_string(&Response::ok(id, v))? + "\n");
+        }
         Ok(Out {
             code: 0,
             stdout,
@@ -24,6 +38,14 @@ impl Runner for Fake {
         })
     }
     fn sleep(&self, _: u64) {}
+    fn shed(&self) -> Option<drover::shed::Shed> {
+        let wire = drover::shed::Wire::Connect;
+        Some(drover::shed::Shed {
+            wire,
+            acp: None,
+            policy: "ask".into(),
+        })
+    }
 }
 
 #[test]
@@ -59,11 +81,11 @@ fn kick_with_non_ascii_path_does_not_panic() {
     };
     assert!(!p.kick.is_char_boundary(20));
     let r = Fake(Default::default());
-    assert!(providers::get("dsh").kick(&r, &p, "w9:p1").unwrap());
-    assert!(r
-        .0
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|c| c.starts_with("pane send-text w9:p1 Read /Users/日本語")));
+    assert!(providers::get("dsh").kick(&r, &p, "a").unwrap());
+    let sent =
+        r.0.lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.starts_with("send") && c.contains("Read /Users/日本語"));
+    assert!(sent, "{:?}", r.0.lock().unwrap());
 }

@@ -4,7 +4,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 const TOKEN: &str = concat!("sk", "-ant-oat01-FAKEtokenFAKEtokenFAKEtoken0123456789");
-const HERDR: &str = "client:\n  version: 0.9.5\n\nserver:\n  status: running\n  version: 0.9.5\n";
 const PLIST: &str = "<plist><dict><key>ProgramArguments</key><array><string>/x/drover</string>\
 <string>serve</string><string>--addr</string><string>127.0.0.1:7777</string></array></dict></plist>";
 const SUB: &str = r#"[{"endpoint":"https://push.example/x","p256dh":"k","auth":"a","label":"phone","created":1}]"#;
@@ -79,7 +78,6 @@ fn setup(name: &str, harness: &str) -> (drover::Ctx, PathBuf) {
 
 fn good() -> Fake {
     Fake::default()
-        .reply("herdr status", HERDR)
         .reply("sysctl -n kern.memorystatus_vm_pressure_level", "1")
         .reply("vm_stat", "Swapouts: 5.\n")
         .reply("sysctl -n vm.loadavg", "{ 1.00 1.00 1.00 }")
@@ -109,7 +107,7 @@ fn all_good_exits_zero_and_never_writes() {
     let (code, out) = run(&c, &r, &["doctor"]);
     assert_eq!(code, 0, "{out}");
     assert!(!out.contains('✗') && !out.contains('!'), "{out}");
-    for check in ["herdr", "host", "gh", "config", "worktrees", "gh demo", "local demo"] {
+    for check in ["host", "gh", "config", "worktrees", "gh demo", "local demo"] {
         assert!(line(&out, check).starts_with('✓'), "{out}");
     }
     for check in [
@@ -234,7 +232,6 @@ fn secrets_never_echo() {
 fn each_check_fails_with_its_fix_and_exit_one() {
     type Break = fn(&drover::Ctx, &Path, Fake) -> Fake;
     let cases: Vec<(Break, &str, &str)> = vec![
-        (|_, _, r| r.once("herdr status", 1, ""), "herdr", "→ herdr"),
         (|_, _, r| r.once("vm_stat", 1, ""), "host", "→ put /usr/sbin"),
         (|_, _, r| r.once("gh auth status", 1, ""), "gh", "→ gh auth login"),
         (|_, _, r| r.once("gh repo view", 1, ""), "gh demo", "→ gh auth refresh"),
@@ -346,14 +343,8 @@ fn warnings_do_not_fail() {
     for t in ["devices", "push"] {
         drover::db::store::<serde_json::Value>(&c.state, t, &[]).unwrap();
     }
-    let old = HERDR.replacen("version: 0.9.5\n\n", "version: 0.9.6\n\n", 1);
-    let r = good().once("herdr status", 0, &old);
-    let (code, out) = run(&c, &r, &["doctor"]);
+    let (code, out) = run(&c, &good(), &["doctor"]);
     assert_eq!(code, 0, "{out}");
-    assert!(
-        line(&out, "herdr").starts_with("! herdr — client 0.9.6, server 0.9.5 → herdr update --handoff"),
-        "{out}"
-    );
     for check in ["phone", "push"] {
         assert!(line(&out, check).starts_with('!'), "{out}");
     }
@@ -385,7 +376,7 @@ fn bad_config_and_hermes_profiles() {
     let (code, out) = run(&c, &good(), &["doctor"]);
     assert_eq!(code, 1, "{out}");
     assert!(line(&out, "config").starts_with('✗'), "{out}");
-    assert!(line(&out, "herdr").starts_with('✓'), "{out}");
+    assert!(line(&out, "gh").starts_with('✓'), "{out}");
 
     let (c, _) = setup("doc-hermes", "hermes");
     let (code, out) = run(&c, &good(), &["doctor"]);

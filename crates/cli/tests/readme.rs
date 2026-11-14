@@ -122,7 +122,17 @@ fn quick_start_runs_as_written() {
     let block = text.split("```sh\n").nth(1).unwrap().split("```").next().unwrap();
     let home = common::tmpdir("readme-quick-start");
     let bindir = Path::new(BIN).parent().unwrap();
-    let path = format!("{}:{}", bindir.display(), std::env::var("PATH").unwrap());
+    let shed = home.join("bin/shed");
+    std::fs::create_dir_all(shed.parent().unwrap()).unwrap();
+    std::fs::write(&shed, "#!/bin/sh\n").unwrap();
+    let mode = std::os::unix::fs::PermissionsExt::from_mode(0o755);
+    std::fs::set_permissions(&shed, mode).unwrap();
+    let path = format!(
+        "{}:{}/bin:{}",
+        bindir.display(),
+        home.display(),
+        std::env::var("PATH").unwrap()
+    );
     let cmd = |prog: &str| {
         let mut c = Command::new(prog);
         c.env("HOME", &home).env("DROVER_HOME", &home).env("PATH", &path);

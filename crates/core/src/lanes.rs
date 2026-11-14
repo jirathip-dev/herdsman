@@ -21,14 +21,14 @@ pub struct Lane {
     pub effort: Option<String>,
     pub account: Option<String>,
     pub port: Option<String>,
-    /// herdr's live state (idle | working | done | blocked | unknown), or `dead` | `parked` (log only, no pane).
+    /// The runtime's live state (idle | working | done | blocked | unknown), or `dead` | `parked` (log only, no pane).
     pub state: String,
     /// When drover spawned it (0: unknown).
     pub since: u64,
     pub pane: Option<String>,
     /// #83: a log-only lane whose worktree is clean and pushed: its short head sha.
     pub parked: Option<String>,
-    /// #157: the `[hosts]` host it runs on, when fleet.toml has hosts, and its herdr machine (none: this one).
+    /// #157: the `[hosts]` host it runs on, when fleet.toml has hosts, and its ssh machine (none: this one).
     pub host: Option<String>,
     pub machine: Option<String>,
     /// #248: why `check` keeps this done lane's session open (its newest `lane-kept-dirty`, none once closed).
@@ -41,13 +41,13 @@ pub struct Lane {
     pub resting: Option<String>,
     /// #422: an orchestrator's chat thread (`t6`); with no pane it is `asleep`.
     pub thread: Option<String>,
-    /// #609: the runtime it was spawned in (`herdr` | `shed` | `shed-acp`), from its spawn: never the config's now.
+    /// #609: the runtime it was spawned in (`shed` | `shed-acp`), from its spawn: never the config's now.
     pub runtime: String,
-    /// #609: where it runs, as every surface shows it: its host while 2+ hosts are enabled, then `herdr` or `shed` while live lanes span both, joined with ` · ` (`mini · shed`, `air`, `shed`, or empty).
+    /// #609: where it runs, as every surface shows it: its host while 2+ hosts are enabled (`air`, or empty).
     pub place: String,
 }
 
-/// Join `herdr agent list` rows with the log. `ws` maps workspace id -> label.
+/// Join the live agent rows with the log.
 pub fn join(
     cfg: &Config,
     r: &dyn Runner,
@@ -55,7 +55,6 @@ pub fn join(
     events: &[Event],
     st: &States,
     agents: &[Value],
-    ws: &BTreeMap<String, String>,
 ) -> Vec<Lane> {
     let (mut by_name, mut by_pane) = (BTreeMap::new(), BTreeMap::new());
     for e in events.iter().filter(|e| e.kind == "spawn") {
@@ -79,7 +78,7 @@ pub fn join(
             pane: pane.map(String::from),
             host: s("host").map(String::from),
             machine: s("machine").map(String::from),
-            runtime: s("runtime").unwrap_or(crate::herdr::BIN).into(),
+            runtime: s("runtime").unwrap_or("shed").into(),
             ..Lane::default()
         };
         if let Some(e) = sp {
@@ -112,8 +111,7 @@ pub fn join(
             l.fleet = fleet.map(|f| f.0.clone());
             l.role = "other".into();
             l.harness = s("agent").unwrap_or("shell").trim_end_matches("-tui").into();
-            let label = s("workspace_id").map(|w| ws.get(w).cloned().unwrap_or_else(|| w.into()));
-            l.name = name.map(String::from).or(label).unwrap_or_else(|| "?".into());
+            l.name = name.map_or_else(|| "?".into(), String::from);
         }
         out.push(l);
     }
@@ -153,17 +151,11 @@ pub fn join(
 }
 
 fn place(cfg: &Config, all: &mut [Lane]) {
-    let herdr = crate::herdr::BIN;
-    let word = |l: &Lane| if l.runtime == herdr { herdr } else { "shed" };
-    let live = all.iter().filter(|l| l.pane.is_some() && l.role != "other");
-    let both = live.map(word).collect::<BTreeSet<_>>().len() > 1;
     let hosts = cfg.hosts.values().filter(|h| h.enabled).count() > 1;
     let main = cfg.hosts.iter().find(|h| h.1.machine.is_none()).map(|h| h.0.clone());
     for l in all {
         l.host = l.host.take().or_else(|| main.clone());
-        let host = hosts.then(|| l.at());
-        let parts: Vec<String> = host.into_iter().chain(both.then(|| word(l).into())).collect();
-        l.place = parts.join(" · ");
+        l.place = if hosts { l.at() } else { String::new() };
     }
 }
 
@@ -210,7 +202,7 @@ fn from_spawn(e: &Event, l: Lane) -> Lane {
         worktree: s("worktree"),
         root: s("root"),
         resting: s("resting"),
-        runtime: s("runtime").unwrap_or_else(|| crate::herdr::BIN.into()),
+        runtime: s("runtime").unwrap_or_else(|| "shed".into()),
         ..l
     }
 }
@@ -224,7 +216,7 @@ fn orchestrator(events: &[Event], e: &Event, l: Lane) -> Lane {
     l
 }
 
-/// Section order on the page; any other herdr state (unknown) counts as idle.
+/// Section order on the page; any other state (unknown) counts as idle.
 pub const SECTIONS: &[&str] = &["blocked", "working", "idle", "done", "parked", "dead"];
 
 pub type Groups<'a> = Vec<(&'static str, Vec<(String, Vec<&'a Lane>)>)>;

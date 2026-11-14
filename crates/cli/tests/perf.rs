@@ -11,22 +11,41 @@ use std::time::{Duration, Instant};
 const NOW: u64 = 1_000_000;
 const ADDR: &str = "127.0.0.1:7777";
 
-struct Slow(Fake, Mutex<Vec<String>>, AtomicUsize);
+struct Slow(
+    Fake,
+    Mutex<Vec<String>>,
+    AtomicUsize,
+    Option<&'static FakeShed>,
+    &'static FakeShed,
+);
+impl Slow {
+    fn remote(&self, prog: &str, args: &[String]) {
+        self.2.fetch_add(1, Relaxed);
+        if let Some(h) = args.iter().rev().nth(2).filter(|_| prog == "ssh") {
+            std::thread::sleep(Duration::from_millis(300));
+            self.1.lock().unwrap().push(h.clone());
+        }
+    }
+}
 impl Runner for Slow {
     fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<Out> {
-        self.2.fetch_add(1, Relaxed);
-        let host = match prog {
-            "ssh" => args.iter().rev().nth(2).cloned(),
-            "herdr" if args.first().is_some_and(|a| a == "--machine") => args.get(1).cloned(),
-            _ => None,
-        };
-        if let Some(h) = host {
-            std::thread::sleep(Duration::from_millis(300));
-            self.1.lock().unwrap().push(h);
-        }
+        self.remote(prog, args);
         self.0.run(prog, args)
     }
+    fn run_in(&self, prog: &str, args: &[String], input: &str) -> anyhow::Result<Out> {
+        if prog != "ssh" || !args.iter().any(|a| a.contains("'shed' 'connect'")) {
+            return self.run(prog, args);
+        }
+        self.remote(prog, args);
+        Ok(Out {
+            stdout: self.4.connect(input),
+            ..Out::default()
+        })
+    }
     fn sleep(&self, _: u64) {}
+    fn shed(&self) -> Option<drover::shed::Shed> {
+        self.3.map(FakeShed::shed)
+    }
 }
 
 fn shed() -> &'static FakeShed {
@@ -42,7 +61,7 @@ fn fixture() -> (drover::Ctx, Slow) {
     let seen = json!({"mini": {"home": "/Users/me", "probed": NOW, "seen": NOW, "up": true},
                       "bazzite": {"home": "/home/me", "probed": NOW, "seen": NOW, "up": true}});
     std::fs::write(st.join("hosts.json"), seen.to_string()).unwrap();
-    let (mut mini, mut bazzite) = (vec![], vec![]);
+    let (mini, bazzite) = (shed(), shed());
     for n in 1..=30u64 {
         let remote = n > 15;
         let wt = if remote {
@@ -54,26 +73,21 @@ fn fixture() -> (drover::Ctx, Slow) {
                 .into()
         };
         let agent = format!("sendmeter-impl-{n}");
-        let mut d = json!({"role": "impl", "agent": agent, "harness": "claude", "pane": format!("w{n}:p1"),
-                           "workspace": format!("w{n}"), "worktree": wt, "branch": format!("issue-{n}")});
+        let mut d = json!({"role": "impl", "agent": agent, "harness": "claude", "pane": agent, "runtime": "shed",
+                           "worktree": wt, "branch": format!("issue-{n}")});
         if remote {
             (d["host"], d["machine"]) = (json!("bazzite"), json!("bazzite"));
         }
         append(&c.state, &Event::new(NOW - 900, "sendmeter", Some(n), "spawn", d)).unwrap();
-        let a = json!({"name": agent, "agent_status": "idle", "pane_id": format!("w{n}:p1"), "cwd": wt});
-        if remote { &mut bazzite } else { &mut mini }.push(a);
+        let sh = if remote { bazzite } else { mini };
+        sh.lane(&agent, "idle", &wt);
+        sh.screen(&agent, "⏺ Working on it\n\n❯ \n");
     }
-    let list = |a: &[serde_json::Value]| json!({"result": {"agents": a}}).to_string();
     let f = Fake::default()
-        .reply("herdr agent list", &list(&mini))
-        .reply("herdr --machine bazzite agent list", &list(&bazzite))
-        .reply("herdr workspace list", r#"{"result":{"workspaces":[]}}"#)
-        .reply("herdr pane read", "⏺ Working on it\n\n❯ \n")
-        .reply("herdr --machine bazzite pane read", "⏺ Working on it\n\n❯ \n")
         .reply("git -C", &format!("{} {}\n", "a".repeat(40), NOW - 600))
         .reply("ssh -oBatchMode=yes -oConnectTimeout=10 -oControlMaster=auto -oControlPath=/tmp/drover-ssh-%C -oControlPersist=10m bazzite -- 'sh' '-c' 'd=", "")
         .reply("ssh", &format!("{} {}\n", "a".repeat(40), NOW - 600));
-    (c, Slow(f, Mutex::default(), AtomicUsize::new(0)))
+    (c, Slow(f, Mutex::default(), AtomicUsize::new(0), Some(mini), bazzite))
 }
 
 fn ms(t: Instant) -> u128 {
@@ -171,7 +185,7 @@ fn a_step_makes_one_remote_call_per_host_and_requests_make_none() {
 fn a_recorded_verdict_and_a_merged_lane_are_never_read() {
     let (c, r) = fixture();
     let rev = "/home/me/.herdr/worktrees/sendmeter/rev-16-r1";
-    let d = json!({"role": "rev", "agent": "sendmeter-rev-16-r1", "harness": "claude", "pane": "w40:p1", "workspace": "w40",
+    let d = json!({"role": "rev", "agent": "sendmeter-rev-16-r1", "harness": "claude", "pane": "sendmeter-rev-16-r1",
                    "worktree": rev, "branch": "rev-16-r1", "sha": "b".repeat(40), "host": "bazzite", "machine": "bazzite"});
     append(&c.state, &Event::new(NOW - 800, "sendmeter", Some(16), "spawn", d)).unwrap();
     let v = json!({"verdict": "FAIL", "sha": "b".repeat(40), "branch": "issue-16"});
@@ -416,7 +430,7 @@ fn waits_and_the_lanes_tab_stay_fast_on_a_30k_event_log() {
     let events = drover::events::read(&c.state).unwrap();
     assert_eq!(events.len(), 30_000);
     let on = sh.on(&r);
-    let list = drover::herdr::list(&on, "agent").unwrap();
+    let list = drover::term::list(&on).unwrap();
     let st = drover::events::fold(&events);
     let all = drover::snapshot::lanes(&cfg, &on, &c, (&events, &st), &list);
     assert_eq!(all.len(), 200);
@@ -435,7 +449,7 @@ fn waits_and_the_lanes_tab_stay_fast_on_a_30k_event_log() {
         w.what = format!("snaphit {}", w.what);
     }
     drover::db::put(&c.state, "board", snap.ts, &snap).unwrap();
-    let (_, _, addr) = serve(c, Slow(r, Mutex::default(), AtomicUsize::new(0)));
+    let (_, _, addr) = serve(c, Slow(r, Mutex::default(), AtomicUsize::new(0), None, shed()));
     let mut lanes = 0;
     for path in ["/api/v1/lanes", "/herd.json"] {
         fetch(addr, path);
@@ -472,7 +486,7 @@ fn a_hundred_board_requests_on_a_30k_event_store_stay_under_the_cpu_budget() {
     let (c, r, _sh) = big_with(20);
     assert_eq!(run(&c, &r, &["drive", "--fast"]).0, 0);
     let state = c.state.clone();
-    let (_, _, addr) = serve(c, Slow(r, Mutex::default(), AtomicUsize::new(0)));
+    let (_, _, addr) = serve(c, Slow(r, Mutex::default(), AtomicUsize::new(0), None, shed()));
     let paths = [
         "/api/v1/state",
         "/api/v1/host",
@@ -668,7 +682,7 @@ fn the_state_read_stays_under_300ms_on_a_150k_event_log() {
         }
         Err(_) => huge(),
     };
-    let (c, _, addr) = serve(c, Slow(r, Mutex::default(), AtomicUsize::new(0)));
+    let (c, _, addr) = serve(c, Slow(r, Mutex::default(), AtomicUsize::new(0), None, shed()));
     let first = fetch(addr, "/api/v1/state").0;
     let rebuilt = drover::events::REBUILDS.load(Relaxed);
     let mut t: Vec<u128> = (0..5).map(|_| fetch(addr, "/api/v1/state").0).collect();
@@ -735,7 +749,18 @@ impl Runner for NoSpawn {
         }
         self.0.run(prog, args)
     }
+    fn run_in(&self, prog: &str, args: &[String], input: &str) -> anyhow::Result<Out> {
+        if drover::runner::in_request() {
+            let line = format!("{prog} {}", args.join(" "));
+            self.1.lock().unwrap().push(line.clone());
+            panic!("#859: `{line}` started on a board request");
+        }
+        self.0.run_in(prog, args, input)
+    }
     fn sleep(&self, _: u64) {}
+    fn shed(&self) -> Option<drover::shed::Shed> {
+        self.0.shed()
+    }
 }
 
 #[test]
@@ -781,11 +806,7 @@ fn no_board_request_starts_a_process() {
     );
     let v: serde_json::Value = serde_json::from_str(&api_body(&fetch(addr, "/api/v1/state").1)).unwrap();
     assert_eq!(v["lanes"].as_array().unwrap().len(), 30, "{}", v["lanes"]);
-    assert!(
-        v["sources"]["herdr"].is_u64() && v["sources"]["remote"].is_u64(),
-        "{}",
-        v["sources"]
-    );
+    assert!(v["sources"]["remote"].is_u64(), "{}", v["sources"]);
 }
 
 fn api_body(res: &str) -> String {

@@ -353,7 +353,7 @@ fn pause_and_resume_are_logged_and_pause_stops_the_job() {
 }
 
 #[test]
-fn scheduled_clean_keeps_its_age_cap_and_live_dirty_rules_and_closes_orphan_workspaces() {
+fn scheduled_clean_keeps_its_age_cap_and_live_dirty_rules_and_alerts_a_failure_once() {
     let d = tmpdir("clean-sched");
     let c = ctx(&d, CONFIG);
     let sh = FakeShed::new();
@@ -374,21 +374,15 @@ fn scheduled_clean_keeps_its_age_cap_and_live_dirty_rules_and_closes_orphan_work
     let fresh = lane(20, c.now - day);
     let live = lane(21, old);
     let dirty = lane(22, old);
-    let gone = d.join("no-such-checkout").to_string_lossy().into_owned();
-    let ws = json!({"result": {"workspaces": [
-        {"workspace_id": "wX", "worktree": {"checkout_path": gone}},
-        {"workspace_id": "wY", "worktree": {"checkout_path": d.to_string_lossy()}},
-    ]}});
     let all: Vec<&String> = removable.iter().chain([&fresh, &live, &dirty]).collect();
     let git = |f: Fake| {
         let f = all
             .iter()
             .fold(f, |f, w| f.reply(&format!("git -C {w} rev-list"), "0\n"));
-        f.reply("git -C", "").reply("herdr workspace close", "{}")
+        f.reply("git -C", "")
     };
     sh.lane("impl-21", "idle", &live);
     let r = git(Fake::default()
-        .reply("herdr workspace list", &ws.to_string())
         .once(&format!("git -C {dirty} status"), 0, "?? notes.md\n")
         .once_err(&format!("git -C {dirty} add -A"), 1, "add failed"));
     let (code, out) = run(&c, &r, &["clean", "--scheduled"]);
@@ -406,10 +400,6 @@ fn scheduled_clean_keeps_its_age_cap_and_live_dirty_rules_and_closes_orphan_work
     );
     assert!(out.contains(&format!("keep {live}: live agent")), "{out}");
     assert!(out.contains(&format!("keep {dirty}: wip save failed")), "{out}");
-    assert!(
-        r.called("herdr workspace close wX") && !r.called("herdr workspace close wY"),
-        "{out}"
-    );
     for w in &cleaned {
         assert!(
             r.called(&format!("git -C /tmp/does-not-matter/sendmeter worktree remove {w}")),
@@ -424,22 +414,19 @@ fn scheduled_clean_keeps_its_age_cap_and_live_dirty_rules_and_closes_orphan_work
     cleaned.iter().for_each(|w| std::fs::remove_dir_all(w).unwrap());
 
     sh.remove("impl-21");
-    let r = || {
-        git(Fake::default().reply("herdr workspace list", &ws.to_string()).once_err(
-            "herdr workspace close wX",
-            1,
-            "server gone",
-        ))
-    };
+    let r = || git(Fake::default());
     let (code, out) = run(&c, &r(), &["clean", "--scheduled"]);
-    assert_eq!(code, 1, "{out}");
+    assert_eq!(code, 0, "{out}");
     assert_eq!(kinds(&c, "clean").len(), 14, "{out}");
     assert!(!kinds(&c, "clean").iter().any(|e| e.str("worktree") == Some(&fresh)));
+    drop(sh);
+    let (code, out) = run(&c, &r(), &["clean", "--scheduled"]);
+    assert_eq!(code, 1, "{out}");
     assert_eq!(run(&c, &r(), &["clean", "--scheduled"]).0, 1);
     let failed = kinds(&c, "clean-failed");
     assert_eq!(failed.len(), 1);
     assert!(
-        failed[0].str("reason").unwrap().contains("close workspace wX"),
+        failed[0].str("reason").unwrap().contains("refusing to clean blind"),
         "{failed:?}"
     );
 }

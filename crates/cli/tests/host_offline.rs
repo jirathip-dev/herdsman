@@ -202,21 +202,9 @@ fn kill_and_close_take_a_host_when_names_collide() {
 }
 
 #[test]
-fn another_hosts_agent_list_is_cut_off_at_its_limit() {
-    use drover::runner::{argv, limit, Real};
+fn a_call_is_killed_at_its_limit() {
+    use drover::runner::{argv, Real};
     use std::time::{Duration, Instant};
-    let list = argv(&["--machine", "air", "agent", "list"]);
-    assert_eq!(limit("herdr", &list), Duration::from_secs(20));
-    assert_eq!(
-        limit("herdr", &argv(&["agent", "list"])),
-        Duration::from_mins(1),
-        "#713: this host's own herdr gets the default"
-    );
-    assert_eq!(
-        limit("herdr", &argv(&["--machine", "air", "agent", "start"])),
-        Duration::from_mins(1),
-        "only a read is cut short"
-    );
     let t = Instant::now();
     let o = Real
         .within("sh", &argv(&["-c", "sleep 30"]), b"", Duration::from_millis(300))

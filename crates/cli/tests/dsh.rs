@@ -1,9 +1,13 @@
 mod common;
 use common::*;
 use drover::events::read;
+use drover::runner::{Out, Runner};
+use drover::shed::{Shed, Wire};
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Mutex;
 
 fn dsh_config() -> String {
     CONFIG.replace(
@@ -12,54 +16,125 @@ fn dsh_config() -> String {
     )
 }
 
-fn pane(agent: &str, status: &str) -> String {
-    let agent = if agent.is_empty() { Value::Null } else { agent.into() };
-    serde_json::json!({"result": {"pane": {"pane_id": "w9:p1", "agent": agent, "agent_status": status}}}).to_string()
+const LANE: &str = "sendmeter-rev-12-r1";
+
+struct Lane<'a> {
+    f: &'a Fake,
+    b: &'a FakeShed,
+    states: Mutex<VecDeque<String>>,
+    screen: String,
+    seen: Mutex<Vec<(String, String)>>,
 }
 
-fn spawn_rev(name: &str, states: &[(&str, &str)]) -> (drover::Ctx, Fake, i32, String) {
-    spawn_rev_with(name, states, "  ⌸ ❯\n")
+impl Lane<'_> {
+    fn polls(&self) -> usize {
+        self.seen.lock().unwrap().iter().filter(|s| s.0 == "poll").count()
+    }
+    fn at(&self, method: &str, text: &str) -> Option<usize> {
+        let seen = self.seen.lock().unwrap();
+        seen.iter().position(|s| s.0 == method && s.1.starts_with(text))
+    }
+    fn count(&self, method: &str, text: &str) -> usize {
+        let seen = self.seen.lock().unwrap();
+        seen.iter().filter(|s| s.0 == method && s.1.starts_with(text)).count()
+    }
 }
 
-fn spawn_rev_with(name: &str, states: &[(&str, &str)], screen: &str) -> (drover::Ctx, Fake, i32, String) {
+impl Runner for Lane<'_> {
+    fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<Out> {
+        self.f.run(prog, args)
+    }
+    fn run_in(&self, prog: &str, args: &[String], input: &str) -> anyhow::Result<Out> {
+        if prog != "shed" {
+            return self.f.run_in(prog, args, input);
+        }
+        let q: Value = serde_json::from_str(input.lines().last().unwrap_or_default()).unwrap();
+        let (m, name) = (q["method"].as_str().unwrap_or_default(), q["params"]["name"].as_str());
+        let mut lines: Vec<Value> = (self.b.connect(input).lines())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let res = &mut lines.last_mut().unwrap()["result"];
+        let mut seen = self.seen.lock().unwrap();
+        let acp_check = seen.last().is_some_and(|l| l.0 == "poll") && matches!(m, "send" | "keys");
+        if acp_check {
+            let (_, state) = seen.pop().unwrap();
+            let mut states = self.states.lock().unwrap();
+            if !state.is_empty() || !states.is_empty() {
+                states.push_front(state);
+            }
+            drop(states);
+        }
+        let started = seen.iter().any(|l| l.0 == "run");
+        match (m, name) {
+            ("run", Some(LANE)) => seen.push(("run".into(), String::new())),
+            ("get", Some(LANE)) if started => {
+                let state = self.states.lock().unwrap().pop_front().unwrap_or_default();
+                res["reported"] = if state.is_empty() {
+                    Value::Null
+                } else {
+                    json!({"state": state})
+                };
+                seen.push(("poll".into(), state));
+            }
+            ("read", Some(LANE)) => {
+                res["text"] = json!(self.screen);
+                seen.push(("read".into(), String::new()));
+            }
+            ("send", Some(LANE)) => seen.push(("send".into(), q["params"]["text"].as_str().unwrap().into())),
+            ("keys", Some(LANE)) => seen.push(("keys".into(), q["params"]["keys"][0].as_str().unwrap().into())),
+            _ => {}
+        }
+        let stdout = lines.iter().map(|l| format!("{l}\n")).collect();
+        Ok(Out {
+            stdout,
+            ..Out::default()
+        })
+    }
+    fn sleep(&self, secs: u64) {
+        self.f.sleep(secs);
+    }
+    fn shed(&self) -> Option<Shed> {
+        let wire = Wire::Connect;
+        Some(Shed { wire, ..self.b.shed() })
+    }
+}
+
+fn spawn_rev(name: &str, states: &[&str], f: impl FnOnce(&drover::Ctx, &Lane)) -> i32 {
+    spawn_rev_with(name, states, "  ⌸ ❯\n", f)
+}
+
+fn spawn_rev_with(name: &str, states: &[&str], screen: &str, f: impl FnOnce(&drover::Ctx, &Lane)) -> i32 {
     let d = tmpdir(name);
     let c = ctx(&d, &dsh_config());
+    let b = FakeShed::attached(&c);
     let wt = c.worktrees.join("sendmeter/rev-12-r1");
     let gd = d.join("gitdir");
     std::fs::create_dir_all(&wt).unwrap();
     assert_eq!(run(&c, &Fake::default(), &["profiles", "sync"]).0, 0);
-    let mut r = Fake::default()
+    let r = Fake::default()
         .reply(
             "dsh-tui version",
             "@deepseek-harness-tui/dsh-tui 0.17.0 (launcher)\nprofile: 0.17.0  /x\n",
         )
-        .reply("herdr agent list", NO_AGENTS)
+        .reply("which shed", "/opt/shed/bin/shed\n")
         .reply(&format!("git -C {} rev-list", wt.display()), "0\n")
         .reply(
             &format!("git -C {} rev-parse --absolute-git-dir", wt.display()),
             &format!("{}\n", gd.display()),
         )
         .reply("gh issue view 12", r#"{"title":"t","body":"b"}"#)
-        .reply("git -C", "")
-        .reply(
-            "herdr worktree open",
-            r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#,
-        )
-        .reply(
-            "herdr pane list",
-            r#"{"result":{"panes":[{"pane_id":"w9:p1","agent":null}]}}"#,
-        )
-        .reply("herdr pane run", "{}")
-        .reply("herdr pane read w9:p1 --source visible", screen)
-        .reply("herdr pane send-keys w9:p1 esc", "{}")
-        .reply("herdr agent rename w9:p1 sendmeter-rev-12-r1", "{}")
-        .reply("herdr pane send-text w9:p1 Read ", "{}")
-        .reply("herdr pane send-keys w9:p1 enter", "{}");
-    for (a, s) in states {
-        r = r.once("herdr pane get w9:p1", 0, &pane(a, s));
-    }
-    let (code, out) = run(&c, &r, &["spawn", "sendmeter", "12", "rev"]);
-    (c, r, code, out)
+        .reply("git -C", "");
+    let lane = Lane {
+        f: &r,
+        b: &b,
+        states: Mutex::new(states.iter().map(|s| s.to_string()).collect()),
+        screen: screen.into(),
+        seen: Mutex::default(),
+    };
+    let (code, out) = run(&c, &lane, &["spawn", "sendmeter", "12", "rev"]);
+    assert!(code == 0 || code == 4, "{out}");
+    f(&c, &lane);
+    code
 }
 
 #[test]
@@ -93,17 +168,13 @@ fn dry_run_launches_pinned_dsh_tui_with_role_patch() {
     assert_eq!(cmd(5), at("get", json!({"name": lane})));
     assert_eq!(cmd(6), at("read", json!({"name": lane, "history": false})));
     assert_eq!(cmd(7), at("keys", json!({"name": lane, "keys": ["esc"]})));
-    assert_eq!(
-        cmd(8),
-        at("get", json!({"name": lane})),
-        "the rename: shed names it already"
-    );
-    let (m, kick) = cmd(9);
+    let (m, kick) = cmd(8);
     assert!(
         m == "send" && kick["text"].as_str().unwrap().starts_with("Read "),
         "{kick}"
     );
-    assert_eq!(cmd(11), at("keys", json!({"name": lane, "keys": ["enter"]})));
+    assert_eq!(cmd(9), at("get", json!({"name": lane})));
+    assert_eq!(cmd(10), at("keys", json!({"name": lane, "keys": ["enter"]})));
     assert!(sh.methods().is_empty(), "a dry run calls nothing");
 }
 
@@ -125,109 +196,80 @@ fn sync_writes_per_role_dsh_patch() {
 
 #[test]
 fn spawn_waits_for_dsh_tui_idle_then_kicks_and_confirms_working() {
-    let (c, r, code, out) = spawn_rev(
-        "dsh-working",
-        &[("", "unknown"), ("dsh-tui", "idle"), ("dsh-tui", "working")],
-    );
-    assert_eq!(code, 0, "{out} {:?}", r.calls.borrow());
-    assert_eq!(r.count("herdr pane get w9:p1"), 3, "shell, idle, then working");
-    let calls = r.calls.borrow();
-    let start = r.index("herdr pane run w9:p1 dsh-tui --patch").unwrap();
-    let idle = calls
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| c.starts_with("herdr pane get"))
-        .nth(1)
-        .unwrap()
-        .0;
-    let (rename, prompt) = (
-        r.index("herdr agent rename").unwrap(),
-        r.index("herdr pane send-text").unwrap(),
-    );
-    assert!(start < idle && idle < rename && rename < prompt, "{calls:?}");
-    assert!(calls[start - 1].starts_with("herdr pane run w9:p1 export DROVER_LANE='sendmeter:12:rev'"));
-    let wt_cfg = calls
-        .iter()
-        .position(|c| c.contains("config --worktree core.hooksPath"))
-        .unwrap();
-    assert!(wt_cfg < start);
-    let root = c.state.parent().unwrap().parent().unwrap();
-    let hook = std::fs::read_to_string(root.join("gitdir/fleet-hooks/pre-push")).unwrap();
-    assert_eq!(
-        hook,
-        "#!/bin/sh\nexec '/opt/drover/bin/drover' hook --role rev --git-pre-push\n"
-    );
-    let ev = read(&c.state).unwrap();
-    let last = ev.last().unwrap();
-    assert_eq!(
-        (last.kind.as_str(), last.val("harness"), last.val("confirmed")),
-        ("spawn", &"dsh".into(), &true.into())
-    );
+    let code = spawn_rev("dsh-working", &["", "idle", "working"], |c, l| {
+        assert_eq!(l.polls(), 3, "shell, idle, then working: {:?}", l.seen.lock().unwrap());
+        let start = l.at("send", "exec dsh-tui --patch").unwrap();
+        let prompt = l.at("send", "Read ").unwrap();
+        let seen = l.seen.lock().unwrap();
+        let idle = seen.iter().position(|s| s.0 == "poll" && s.1 == "idle").unwrap();
+        assert!(start < idle && idle < prompt, "{seen:?}");
+        assert!(
+            seen[start - 1].1.starts_with("export DROVER_LANE='sendmeter:12:rev'"),
+            "{seen:?}"
+        );
+        assert_eq!(seen[start - 2].0, "run", "{seen:?}");
+        let calls = l.f.calls.borrow();
+        assert!(calls.iter().any(|c| c.contains("config --worktree core.hooksPath")));
+        let root = c.state.parent().unwrap().parent().unwrap();
+        let hook = std::fs::read_to_string(root.join("gitdir/fleet-hooks/pre-push")).unwrap();
+        assert_eq!(
+            hook,
+            "#!/bin/sh\nexec '/opt/drover/bin/drover' hook --role rev --git-pre-push\n"
+        );
+        let ev = read(&c.state).unwrap();
+        let last = ev.last().unwrap();
+        assert_eq!(
+            (last.kind.as_str(), last.val("harness"), last.val("confirmed")),
+            ("spawn", &"dsh".into(), &true.into())
+        );
+    });
+    assert_eq!(code, 0);
 }
 
 #[test]
 fn quick_turn_that_lands_on_done_confirms() {
-    let (_, r, code, out) = spawn_rev(
-        "dsh-done",
-        &[("dsh-tui", "idle"), ("dsh-tui", "idle"), ("dsh-tui", "done")],
-    );
-    assert_eq!(code, 0, "{out} {:?}", r.calls.borrow());
-    assert_eq!(r.count("sleep 1"), 1);
+    let code = spawn_rev("dsh-done", &["idle", "idle", "done"], |_, l| {
+        assert_eq!(l.f.count("sleep 1"), 1, "{:?}", l.seen.lock().unwrap());
+    });
+    assert_eq!(code, 0);
 }
 
 #[test]
 fn never_idle_sends_no_prompt_and_exits_4() {
-    let (c, r, code, _) = spawn_rev("dsh-never", &[]);
+    let code = spawn_rev("dsh-never", &[], |c, l| {
+        assert_eq!(l.count("send", "Read "), 0);
+        assert_eq!(l.polls(), 90);
+        assert_eq!(*read(&c.state).unwrap().last().unwrap().val("confirmed"), false);
+    });
     assert_eq!(code, 4);
-    assert!(!r.called("herdr pane send-text"));
-    assert_eq!(r.count("herdr pane get w9:p1"), 90);
-    assert_eq!(read(&c.state).unwrap().last().unwrap().val("confirmed"), false);
 }
 
 #[test]
 fn first_run_wizard_is_skipped_before_the_prompt() {
     let wizard =
         "  Welcome to dsh-TUI  Step 1 of 4\n    ←/→ step · Enter act on this step / go next · Esc skip the guide\n";
-    let (_, r, code, out) = spawn_rev_with(
-        "dsh-wizard",
-        &[("dsh-tui", "idle"), ("dsh-tui", "idle"), ("dsh-tui", "working")],
-        wizard,
-    );
-    assert_eq!(code, 0, "{out} {:?}", r.calls.borrow());
-    let esc = r.index("herdr pane send-keys w9:p1 esc").expect("esc sent");
-    assert!(esc < r.index("herdr pane send-text").unwrap());
-    let (_, r, code, _) = spawn_rev("dsh-no-wizard", &[("dsh-tui", "idle"), ("dsh-tui", "working")]);
+    let code = spawn_rev_with("dsh-wizard", &["idle", "idle", "working"], wizard, |_, l| {
+        let esc = l.at("keys", "esc").expect("esc sent");
+        assert!(esc < l.at("send", "Read ").unwrap(), "{:?}", l.seen.lock().unwrap());
+    });
     assert_eq!(code, 0);
-    assert!(!r.called("herdr pane send-keys w9:p1 esc"), "no wizard, no Esc");
+    let code = spawn_rev("dsh-no-wizard", &["idle", "working"], |_, l| {
+        assert_eq!(l.at("keys", "esc"), None, "no wizard, no Esc");
+    });
+    assert_eq!(code, 0);
 }
 
 #[test]
 fn unconfirmed_prompt_is_retried_and_a_typed_kick_gets_enter() {
-    let mut states = vec![("dsh-tui", "idle")];
-    states.extend(std::iter::repeat_n(("dsh-tui", "idle"), 10));
-    states.push(("dsh-tui", "working"));
+    let mut states = vec!["idle"; 11];
+    states.push("working");
     let typed = format!("  ⌸ ❯ Read {}/fleet-test-dsh-retry\n", std::env::temp_dir().display());
-    let (_, r, code, out) = spawn_rev_with("dsh-retry", &states, &typed);
-    assert_eq!(code, 0, "{out} {:?}", r.calls.borrow());
-    assert_eq!(r.count("herdr pane send-text w9:p1"), 1, "typed kick is not sent twice");
-    assert_eq!(
-        r.count("herdr pane send-keys w9:p1 enter"),
-        2,
-        "Enter after the kick, then once more"
-    );
-    assert_eq!(r.count("sleep 5"), 1);
-}
-
-#[test]
-fn check_finds_unnamed_dsh_lane_by_its_pane() {
-    let (c, _, code, _) = spawn_rev("dsh-check", &[("dsh-tui", "idle"), ("dsh-tui", "working")]);
+    let code = spawn_rev_with("dsh-retry", &states, &typed, |_, l| {
+        assert_eq!(l.count("send", "Read "), 1, "typed kick is not sent twice");
+        assert_eq!(l.count("keys", "enter"), 2, "Enter after the kick, then once more");
+        assert_eq!(l.f.count("sleep 5"), 1);
+    });
     assert_eq!(code, 0);
-    let unnamed = r#"{"result":{"agents":[{"agent":"dsh-tui","agent_status":"working","pane_id":"w9:p1"}]}}"#;
-    let (code, out) = run(&c, &Fake::default().reply("herdr agent list", unnamed), &["check"]);
-    assert_eq!(code, 0);
-    assert!(!out.contains("lane-dead"), "{out}");
-    let (_, out) = run(&c, &Fake::default().reply("herdr agent list", NO_AGENTS), &["check"]);
-    assert!(out.contains("lane-dead"), "a vanished pane is still dead: {out}");
 }
 
 #[test]

@@ -180,7 +180,6 @@ pub struct NeedIssue {
     pub shots_at: Option<String>,
 }
 
-/// #269: API v1's `lanes`, the Lanes tab as this device sees it: state sections, repo groups inside (`error`: no fleet.toml, `failed`: herdr unread). `rw`, `live`, `paired`, `pair` as `NeedsTab`'s.
 #[allow(clippy::struct_excessive_bools)]
 pub struct LanesTab {
     pub now: u64,
@@ -238,7 +237,6 @@ pub struct LaneRepo {
     pub lanes: Vec<LaneRow>,
 }
 
-/// A Lanes row: its avatar (`avatar`, herdr's `state` with `act`, #423 `grow`, `atone` and `coat`), name, `state` in `tone` for `ago`, the `why` line (`why_tone`), the activity (`activity`, or the `now` parts), `gone` (no pane), the conductor `thread` it opens; the hidden card: `head`, `shown`, `facts`, the PR line (`issue` and `pr`, `repo` none when its fleet is not configured), `dead` and the blocked card.
 pub struct LaneRow {
     pub name: String,
     pub role: String,
@@ -510,7 +508,7 @@ pub struct State {
     pub hosts: Vec<Row>,
     pub services: Vec<Row>,
     pub alerts: Vec<Row>,
-    /// #859: when the background last read each source the lanes come from (herdr, shed, remote, host).
+    /// #859: when the background last read each source the lanes come from (shed, remote, host).
     pub sources: BTreeMap<String, u64>,
 }
 
@@ -541,7 +539,7 @@ pub struct PendingStart {
     pub reason: Option<String>,
 }
 
-/// `state` is herdr's (or `dead`, `parked`); `shown` and `tone` (g, a, r, m) are the Lanes row's words.
+/// `state` is the runtime's (or `dead`, `parked`); `shown` and `tone` (g, a, r, m) are the Lanes row's words.
 pub struct Lane {
     pub name: String,
     pub fleet: Option<String>,
@@ -775,7 +773,6 @@ pub struct DriveAct {
     pub code: String,
 }
 
-/// A Queue row: `#issue` in its shown `state` (`tone`) for `age`, counting from `t`; its row sprite's `act`, #423 `grow` (the growth stage) and `coat`; `queued` (with `check`: from the backlog), its serial `groups`, `blocked_by`; titles; the open card: the pipeline `stage`, the current `lane` (`live`: herdr lists it), the PR line, `dead`, red `notes` (a land note, an answer not delivered), the decision taken by default (and its ask to change it), #517 its `open` ask (answerable here), [▲]/[▼] (`up`, `down`: the rows to move before or after) and the lanes list.
 #[allow(clippy::struct_excessive_bools)]
 pub struct QueueRow {
     pub issue: u64,
@@ -830,7 +827,6 @@ pub struct PrLine {
     pub form: Option<String>,
 }
 
-/// #205: a lane the issue had, newest first: herdr's `state` (`gone`) in `tone`, its spawn's age; `link`: `live` opens its Lanes sheet, `gone` its stored transcript, empty none.
 pub struct QueueLane {
     pub name: String,
     pub state: String,

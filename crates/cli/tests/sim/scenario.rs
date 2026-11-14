@@ -22,6 +22,9 @@ profile = "fleet-impl"
 harness = "claude"
 profile = "fleet-rev"
 
+[runtime]
+kind = "shed"
+
 [limits]
 review_rounds = {rounds}
 stall_minutes = 30
@@ -176,7 +179,8 @@ fn lane(sim: &Arc<Sim>, w: &mut World, id: &str, step: u8) {
             pr.head = sha.clone();
             w.model.version += 1;
             let ci = w.model.ci_start(&sha, now, &mut w.rng);
-            w.model.produced.push(id.into());
+            let made = w.model.incarnation(i);
+            w.model.produced.push(made);
             w.model.at(ci, Ev::Ci { sha, green });
             stop(sim, w, i, n);
         }
@@ -192,7 +196,8 @@ fn lane(sim: &Arc<Sim>, w: &mut World, id: &str, step: u8) {
                 ),
             };
             if pass || fixed {
-                w.model.produced.push(id.into());
+                let made = w.model.incarnation(i);
+                w.model.produced.push(made);
             }
             let f = Path::new(&cwd).join("verdict.md");
             std::fs::write(&f, body).unwrap();

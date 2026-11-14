@@ -5,34 +5,10 @@
       "sendmeter-impl-12": [
         "shed-acp",
         "mini",
-        "mini · shed"
-      ],
-      "sendmeter-rev-9": [
-        "herdr",
-        "air",
-        "air · herdr"
-      ]
-    },
-    {
-      "sendmeter-impl-12": [
-        "shed-acp",
-        "mini",
-        "shed"
-      ],
-      "sendmeter-rev-9": [
-        "herdr",
-        "air",
-        "herdr"
-      ]
-    },
-    {
-      "sendmeter-impl-12": [
-        "shed-acp",
-        "mini",
         "mini"
       ],
       "sendmeter-rev-9": [
-        "herdr",
+        "shed",
         "air",
         "air"
       ]
@@ -44,7 +20,31 @@
         ""
       ],
       "sendmeter-rev-9": [
-        "herdr",
+        "shed",
+        "air",
+        ""
+      ]
+    },
+    {
+      "sendmeter-impl-12": [
+        "shed-acp",
+        "mini",
+        "mini"
+      ],
+      "sendmeter-rev-9": [
+        "shed",
+        "air",
+        "air"
+      ]
+    },
+    {
+      "sendmeter-impl-12": [
+        "shed-acp",
+        "mini",
+        ""
+      ],
+      "sendmeter-rev-9": [
+        "shed",
         "air",
         ""
       ]

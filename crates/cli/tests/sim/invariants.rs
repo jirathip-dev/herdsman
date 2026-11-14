@@ -245,7 +245,7 @@ pub fn on_exit(w: &mut World, me: usize, pid: u32) {
 
 /// `Sabotage::DoubleLane`: a copy of the pane whose agent just started comes up beside it.
 pub fn double(w: &mut World, pane: &str) {
-    if let Some(p) = w.model.panes.iter().find(|p| p.id == pane).cloned() {
+    if let Some(p) = w.model.panes.iter().rfind(|p| p.id == pane && !p.closed).cloned() {
         w.model.panes.push(crate::model::Pane {
             id: format!("{}x", p.id),
             ..p

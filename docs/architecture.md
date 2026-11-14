@@ -103,8 +103,8 @@ The split is a pure move by what compiles today, so core still holds I/O modules
 `devices`, `webpush`): their cycles (`gate` → `spawn`/`drive`/`check`, `config` → `harness`/`devices`,
 `events` → `webpush`, `serve` → `drive` → `cli`) run through them. #265–#269 move them out step by step.
 
-Every module under `crates/*/src/`, one job each. External tools go through one seam: `runner` (any program), `herdr` (every
-herdr argv) and `gh` (cached GitHub reads).
+Every module under `crates/*/src/`, one job each. External tools go through one seam: `runner` (any program), `term` (every
+lane terminal call, on shed) and `gh` (cached GitHub reads).
 
 | Module | Job |
 |---|---|
@@ -126,7 +126,7 @@ herdr argv) and `gh` (cached GitHub reads).
 | `overlap` | conflict preview between open branches, `cap-check` |
 | `serve`, `lanes`, `devices`, `webpush` | the phone page, its Lanes tab, paired devices, web push |
 | `doctor`, `protection` | read-only host and branch-protection checks |
-| `runner`, `herdr`, `gh` | the seams to external programs |
+| `runner`, `term`, `gh` | the seams to external programs |
 
 ## API types
 
@@ -161,5 +161,5 @@ TS: it imports them from `assets/types/api.d.ts`.
 History: one file per change in `docs/cap-history/<date>-<issue>.md`, so no two PRs edit the same line.
 - **Drive over time (#856):** a fix for a bug that shows only as drive runs pass after pass (a stuck tick, a lane
   never replaced, a hold that never lifts) adds its scenario to `crates/cli/tests/drive_sim.rs`: a fake clock,
-  GitHub, herdr panes, hosts and processes, `tick` every 5 minutes and `drive --fast` every minute, asserted on the
+  GitHub, shed terminals, hosts and processes, `tick` every 5 minutes and `drive --fast` every minute, asserted on the
   event log. It must fail with the fix turned off.

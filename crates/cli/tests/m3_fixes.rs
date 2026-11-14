@@ -1,7 +1,7 @@
 mod common;
 use common::*;
 use drover::events::{append, fold, read, Event};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::process::Command;
 
 fn merged_13(c: &drover::Ctx) {
@@ -110,9 +110,9 @@ fn clean_reaches_adopted_lanes_of_merged_issues() {
         p.to_string_lossy().into_owned()
     };
     let (w13, w14) = (wt("issue-13"), wt("issue-14"));
-    let lane = |n: u64, ws: &str, w: &str| {
+    let lane = |n: u64, pane: &str, w: &str| {
         json!({"role": "impl", "agent": format!("sendmeter-impl-{n}"), "branch": format!("issue-{n}"),
-            "worktree": w, "pane": format!("{ws}:p1"), "workspace": ws, "adopted": true})
+            "worktree": w, "pane": pane, "adopted": true})
     };
     let e = |ts, n, kind: &str, d| append(&c.state, &Event::new(ts, "sendmeter", Some(n), kind, d)).unwrap();
     let mut first = lane(13, "wOld", &w13);
@@ -138,22 +138,26 @@ fn clean_reaches_adopted_lanes_of_merged_issues() {
     for n in [13, 14] {
         assert_eq!(states[&("sendmeter".to_string(), n)].state, "merged", "#{n}");
     }
+    let sh = FakeShed::attached(&c);
     let r = Fake::default()
-        .reply("herdr agent list", NO_AGENTS)
         .reply(&format!("git -C {w13} rev-list"), "0\n")
         .reply(&format!("git -C {w14} rev-list"), "0\n")
-        .reply("git -C", "")
-        .reply("herdr", "{}");
+        .reply("git -C", "");
     let (code, out) = run(&c, &r, &["clean", "--yes"]);
     assert_eq!(code, 0, "{out}");
     assert!(
         out.contains(&format!("removed {w13}")) && out.contains(&format!("removed {w14}")),
         "{out}"
     );
+    let killed: Vec<Value> = sh.all("kill").into_iter().map(|p| p["name"].clone()).collect();
     assert!(
-        r.called("herdr worktree remove --workspace w644") && r.called("herdr pane close w644:p1"),
-        "newest (adopted) pane wins"
+        killed.contains(&json!("w644")),
+        "newest (adopted) pane wins: {killed:?}"
     );
-    assert!(r.called("herdr worktree remove --workspace w7") && r.called("herdr pane close w7:p1"));
-    assert!(!r.called("--workspace wOld"));
+    assert!(
+        killed.contains(&json!("w7")) && !killed.contains(&json!("wOld")),
+        "{killed:?}"
+    );
+    let removed = |w: &str| r.called(&format!("git -C /tmp/does-not-matter/sendmeter worktree remove {w}"));
+    assert!(removed(&w13) && removed(&w14), "{:?}", r.calls.borrow());
 }

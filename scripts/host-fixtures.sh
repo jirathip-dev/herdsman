@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # #141 gate 2: the Host tab's two fixtures, exported beside the demo as <site>/busy and <site>/healthy for
 # scripts/ui-audit.sh. Each is a copy of demo/ with a webpush device and 42 GB free; busy: load/cpu 4.24 over 2.5,
-# herdr half updated, docs' drive refused SERIAL_BUSY; healthy: load/cpu 1.84, docs' drive started #10; hosts (#157): healthy
+# docs' drive refused SERIAL_BUSY; healthy: load/cpu 1.84, docs' drive started #10; hosts (#157): healthy
 # with two `[hosts]`, mini (every lane on it) and bazzite (offline, last seen 33m), and 24 h of host history (#234).
 # Usage: scripts/host-fixtures.sh [site-dir] [drover-binary]
 set -euo pipefail
@@ -20,9 +20,6 @@ if fx == "healthy":  # #237: both own jobs loaded (their files below), the fast 
     r["launchctl print"] = r["systemctl --user is-active"] = ""
     ts = max(json.loads(l)["ts"] for l in open(f"{d}/events.jsonl") if l.strip())
     open(f"{d}/drive-fast.at", "w").write(f"{ts + 20} 2.1\n")
-if busy:  # the server is the second `version:` line
-    head, tail = r["herdr status"].rsplit("version: 0.9.5", 1)
-    r["herdr status"] = head + "version: 0.9.0" + tail
 json.dump(r, open(f"{d}/runner.json", "w"))
 ts = max(json.loads(l)["ts"] for l in open(f"{d}/events.jsonl") if l.strip())
 if busy:
@@ -78,7 +75,7 @@ EOF
   rm -rf "${d:?}"
 done
 # #367 gate 2: <site>/queue, the Queue tab's fixture: 3 repos (acme-core: 2 running, 1 needing you, 40 queued with a 6-step
-# chain at #3; acme-api 3 queued and a 100-issue backlog; docs 1), every row titled; herdr lists the 2 running lanes alone.
+# chain at #3; acme-api 3 queued and a 100-issue backlog; docs 1), every row titled; shed lists the 2 running lanes alone.
 d=$(mktemp -d)
 cp -R demo/. "$d"
 python3 - "$d" <<'EOF'
@@ -100,8 +97,8 @@ evs += [ev(6420, "acme-core", "spawn", 400, role="impl", agent="acme-core-impl-4
         ev(3600, "acme-core", "needs-human", 402, code="ROUND_LIMIT", reason="review rounds ran out (4/3)")]
 open(f"{d}/events.jsonl", "w").write("".join(json.dumps(e) + "\n" for e in evs))
 r = json.load(open(f"{d}/runner.json"))
-r["herdr agent list"] = json.dumps({"result": {"agents": [{"name": a, "agent_status": "working", "pane_id": f"w1:p{i}", "agent": "claude",
-    "cwd": f"/srv/acme/worktrees/{a}"} for i, a in enumerate(["acme-core-impl-400", "acme-core-rev-401"], 2)]}})
+r["shed ls"] = json.dumps([{"name": a, "labels": {"fleet": "acme-core", "harness": "claude"}, "cwd": f"/srv/acme/worktrees/{a}", "cmd": ["sh"],
+    "keep": True, "state": "running", "exit": None, "pid": 7, "reported": {"state": "working"}} for a in ["acme-core-impl-400", "acme-core-rev-401"]])
 json.dump(r, open(f"{d}/runner.json", "w"))
 for f, ns in fleets.items():
     for n in ns + ([400, 401, 402] if f == "acme-core" else []):

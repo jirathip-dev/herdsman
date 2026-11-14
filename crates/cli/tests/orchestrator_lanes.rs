@@ -60,19 +60,11 @@ fn setup(name: &str) -> (drover::Ctx, FakeShed) {
 #[test]
 fn orchestrators_are_lanes_of_their_repo_first_in_its_group_and_asleep_once_closed() {
     let (c, b) = setup("orchestrator-lanes");
-    let agents = drover::herdr::agents(&b.on(&Fake::default())).unwrap();
+    let agents = drover::term::agents(&b.on(&Fake::default())).unwrap();
     let cfg = drover::config::Config::load(&c.config).unwrap();
     let events = read(&c.state).unwrap();
     let st = drover::events::fold(&events);
-    let lanes = drover::lanes::join(
-        &cfg,
-        &Fake::default(),
-        &c.worktrees,
-        &events,
-        &st,
-        &agents,
-        &Default::default(),
-    );
+    let lanes = drover::lanes::join(&cfg, &Fake::default(), &c.worktrees, &events, &st, &agents);
     let row = |l: &drover::lanes::Lane| {
         let s = |v: &Option<String>| v.clone().unwrap_or_default();
         (

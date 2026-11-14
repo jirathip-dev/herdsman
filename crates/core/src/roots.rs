@@ -4,7 +4,7 @@ use crate::hosts::{under, On};
 use crate::runner::{ok, Runner};
 use crate::Ctx;
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -170,7 +170,6 @@ fn inside(e: &Event, root: &Path) -> bool {
         .map_or(wt.is_some_and(|w| w.starts_with(root)), |r| Path::new(r) == root)
 }
 
-/// `drover hosts eject <host> [<root>]` (default: its first root): no new lane goes there; each lane there is saved and restarted on the next root; then `safe to unplug <root>` once no herdr agent works there (exit 0), else 1.
 pub fn eject(
     ctx: &Ctx,
     cfg: &Config,
@@ -295,7 +294,7 @@ fn restart(
             );
             let git = |a: &[&str]| ok(&on, "git", &[&["-C", wt][..], a].concat());
             if hung {
-                let _ = crate::herdr::close(&on, e.str("pane").unwrap_or_default());
+                let _ = crate::term::close(&on, e.str("pane").unwrap_or_default());
                 forget(Path::new(&local), Path::new(wt), e.str("branch").unwrap_or_default())?;
                 writeln!(out, "not saved {wt}: root hung, unsaved work stays on the disk")?;
                 lost.push(format!("{agent}: not saved, root hung"));
@@ -313,7 +312,7 @@ fn restart(
                 lost.push(format!("{agent}: uncommitted work, {} commit(s) not pushed", n.trim()));
                 continue;
             }
-            let _ = crate::herdr::close(&on, e.str("pane").unwrap_or_default());
+            let _ = crate::term::close(&on, e.str("pane").unwrap_or_default());
             let ahead = git(&["rev-list", "--count", "HEAD", "--not", "--remotes"])?;
             if crate::spawn::changes(&git(&["status", "--porcelain"])?) > 0 || ahead.trim() != "0" {
                 let w = crate::check::wip_branch(ctx, &on, agent);
@@ -359,36 +358,6 @@ fn forget(local: &Path, wt: &Path, branch: &str) -> Result<()> {
         if Path::new(read("gitdir").trim()).starts_with(wt) || !branch.is_empty() && read("HEAD").trim() == head {
             std::fs::remove_dir_all(d.path())?;
         }
-    }
-    Ok(())
-}
-
-/// `drover migrate`: each worktree under `~/.herdr/worktrees` moves to `<root>/<repo>/<lane>` (`git worktree move`), a live lane's after it ends; once all have, the old build caches (`~/.cache/drover/target`) go.
-pub fn migrate(ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write) -> Result<()> {
-    let old = ctx.home.join(".herdr/worktrees");
-    let ls = |p: &Path| std::fs::read_dir(p).into_iter().flatten().flatten().map(|e| e.path());
-    let wts: Vec<PathBuf> = ls(&old)
-        .flat_map(|d| ls(&d))
-        .filter(|w| w.join(".git").is_file())
-        .collect();
-    let agents = crate::host::agents(r).ok();
-    let mut left = 0;
-    for wt in &wts {
-        let to = ctx.worktrees.join(wt.strip_prefix(&old)?);
-        let cwd = |a: &Value| a["cwd"].as_str().is_some_and(|c| Path::new(c).starts_with(wt));
-        let live = agents.as_ref().is_none_or(|a| a.iter().any(cwd));
-        let w = wt.to_string_lossy();
-        let moved = !live && std::fs::create_dir_all(to.parent().unwrap_or(&to)).is_ok() && {
-            ok(r, "git", &["-C", &w, "worktree", "move", &w, &to.to_string_lossy()]).is_ok()
-        };
-        left += usize::from(!moved);
-        let how = ["could not move", "live, left for later:", "moved"][usize::from(live) + 2 * usize::from(moved)];
-        writeln!(out, "{how} {w} -> {}", to.display())?;
-    }
-    let cache = ctx.home.join(".cache/drover/target");
-    if left == 0 && cache.is_dir() {
-        std::fs::remove_dir_all(&cache)?;
-        writeln!(out, "dropped the old build caches {}", cache.display())?;
     }
     Ok(())
 }

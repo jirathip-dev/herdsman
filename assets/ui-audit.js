@@ -592,7 +592,7 @@
     },
     sheet: async () => { // the longest agent name (not a conductor row, #422: it opens a thread), then kill refused, kill's dry run, clean refused, a send error
       tab('lanes');
-      open([...$$('.lane:not([data-thread])')].sort((a, b) => b.dataset.agent.length - a.dataset.agent.length)[0]);
+      open([...$$('.lane[data-agent]:not([data-thread])')].sort((a, b) => b.dataset.agent.length - a.dataset.agent.length)[0]);
       await wait();
       await canned(400, LONG.kill, () => run('kill'));
       mid('kill refused');
@@ -607,7 +607,7 @@
     // #260: the same sheet with [full conversation] on (every tool run); `sheet` itself is the default view.
     'sheet-full': async () => {
       tab('lanes');
-      open([...$$('.lane:not([data-thread])')].sort((a, b) => b.dataset.agent.length - a.dataset.agent.length)[0]);
+      open([...$$('.lane[data-agent]:not([data-thread])')].sort((a, b) => b.dataset.agent.length - a.dataset.agent.length)[0]);
       await wait();
       $('.fv').click();
       await wait();

@@ -90,7 +90,7 @@ fn the_service_runs_a_lanes_command_with_its_token_and_refuses_any_other() {
     sh.attach(&c);
     let r: &'static Lane = Box::leak(Box::new(Lane(Fake::default(), c.clone())));
     let sc = c.clone();
-    std::thread::spawn(move || drover_service::run(sc, r, || NOW, api, None));
+    std::thread::spawn(move || drover_service::run(sc, r, || NOW, api));
     let mut pid = None;
     for _ in 0..100 {
         pid = drover::service::up(&c);

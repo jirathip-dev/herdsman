@@ -116,26 +116,62 @@ fn act_stops_a_lane_dry_runs_a_kill_and_refuses_unknowns() {
     assert_eq!(kinds(&c, "act").len(), 1);
 }
 
+struct Bazzite(OnShed, FakeShed);
+
+impl drover::runner::Runner for Bazzite {
+    fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<drover::runner::Out> {
+        self.0.run(prog, args)
+    }
+    fn run_in(&self, prog: &str, args: &[String], input: &str) -> anyhow::Result<drover::runner::Out> {
+        if prog == "ssh" && args.join(" ").contains("bazzite -- 'shed' 'connect'") {
+            let stdout = self.1.connect(input);
+            return Ok(drover::runner::Out {
+                stdout,
+                ..Default::default()
+            });
+        }
+        self.0.run_in(prog, args, input)
+    }
+    fn sleep(&self, secs: u64) {
+        self.0.sleep(secs);
+    }
+    fn shed(&self) -> Option<drover::shed::Shed> {
+        self.0.shed()
+    }
+}
+
 #[test]
 fn setup_starts_a_configured_terminal_and_reads_its_screen() {
-    let (c, r) = v1_board_on("v1-setup", herdr_setup(Fake::default()));
+    let (c, r) = v1_board_on("v1-setup", Fake::default());
+    let r = Bazzite(r, FakeShed::new());
     let s = Server::new(&c, &r, Some(ADDR.into()));
     let start = json!({"host": "bazzite", "name": "claude B"});
+    let pane = "drover-setup-claude-B";
+    let screen_of = format!("/api/v1/setup/{pane}");
     assert_eq!(post(&s, "setup", start.clone(), "").1, "UNPAIRED");
-    assert_eq!(req(&s, "GET", "/api/v1/setup/w9:p1", "", "").1["code"], "UNPAIRED");
-    assert!(!r.called("herdr --machine"));
+    assert_eq!(req(&s, "GET", &screen_of, "", "").1["code"], "UNPAIRED");
+    assert!(r.1.methods().is_empty(), "nothing started unpaired");
     let ck = pair(&s, &c, "Mozilla/5.0 (iPhone)", T);
     let (_, code, _) = post(&s, "setup", json!({"host": "bazzite", "name": "rm -rf ~"}), &ck);
     assert_eq!(code, "NO_SUCH_SETUP");
-    assert_eq!(post(&s, "setup", start, &ck), (200, "OK".into(), "w9:p1".into()));
-    let (status, screen) = req(&s, "GET", "/api/v1/setup/w9:p1", "", &ck);
+    assert_eq!(post(&s, "setup", start, &ck), (200, "OK".into(), pane.into()));
+    assert!(
+        r.1.called("run", pane) && r.0 .1.all("run").is_empty(),
+        "on bazzite, never here"
+    );
+    r.1.screen(pane, "Paste code here >\n");
+    let (status, screen) = req(&s, "GET", &screen_of, "", &ck);
     assert_eq!(
         (status.as_str(), &screen["lines"][0]),
         ("200 OK", &json!("Paste code here >"))
     );
-    let typed = json!({"setup": "w9:p1", "text": "sk-SECRET-4242"});
+    let typed = json!({"setup": pane, "text": "sk-SECRET-4242"});
     assert_eq!(post(&s, "send", typed, &ck).1, "OK");
-    assert!(r.called("herdr --machine bazzite pane send-text w9:p1 sk-SECRET-4242"));
+    assert!(
+        r.1.sent(pane).iter().any(|t| t == "sk-SECRET-4242"),
+        "{:?}",
+        r.1.sent(pane)
+    );
     assert!(!drover::events::jsonl(&c.state).unwrap().contains("SECRET"));
 }
 

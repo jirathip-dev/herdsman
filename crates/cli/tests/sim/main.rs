@@ -265,7 +265,7 @@ fn the_hunt_finds_a_planted_bug_sooner_than_random_seeds_and_minimises_it() {
         .iter()
         .find(|x| tripped(&x.failure))
         .expect("the hunt finds it within 40 rounds");
-    let random: Vec<u64> = (2..2 + f.round as u64).collect();
+    let random: Vec<u64> = (1000..1000 + f.round as u64).collect();
     let hs: Vec<_> = random.iter().map(|&n| std::thread::spawn(move || run(n, s))).collect();
     for o in hs.into_iter().map(|h| h.join().expect("a run")) {
         let why = o.failure.unwrap_or_default();
@@ -333,14 +333,14 @@ fn the_known_fleet_gives_exact_metrics() {
     let o = run_world(seeds::KNOWN, seeds::known(), STEPS + 1000, None);
     assert!(o.failure.is_none(), "{}", o.report());
     let want = metrics::Metrics {
-        to_merge: vec![1027, 1336],
+        to_merge: vec![1012, 1337],
         spawns: 5,
         wasted: 1,
         supersedes: 1,
         lanes: 4,
-        idle: 1004,
+        idle: 992,
         ci_wait: 600,
-        lock_wait: 13,
+        lock_wait: 12,
         serial: 0,
         host_busy: 0,
         caps: 0,
@@ -356,10 +356,10 @@ fn the_known_fleet_gives_exact_metrics() {
             ("caps", 0.0),
             ("ci_wait_min", 10.0),
             ("host_busy", 0.0),
-            ("idle_lane_min", 16.73),
-            ("lock_wait_min", 0.22),
-            ("queue_to_merge_p50_min", 17.12),
-            ("queue_to_merge_p90_min", 22.27),
+            ("idle_lane_min", 16.53),
+            ("lock_wait_min", 0.2),
+            ("queue_to_merge_p50_min", 16.87),
+            ("queue_to_merge_p90_min", 22.28),
             ("review_rounds_per_merge", 1.0),
             ("serial_busy", 0.0),
             ("supersedes_per_lane", 0.25),

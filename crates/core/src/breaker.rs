@@ -86,10 +86,7 @@ pub fn probe(ctx: &Ctx, cfg: &Config, r: &dyn Runner, out: &mut dyn Write) -> Re
     for e in ev.iter().filter(open) {
         let h = e.str("host").unwrap_or_default();
         let on = On::new(r, cfg.hosts.get(h).and_then(|c| c.machine.as_deref()));
-        let ok = match crate::runner::Runner::shed(&on) {
-            Some(b) => crate::herdr::Shed(b).canary(&on),
-            None => crate::herdr::in_pane(&on, "/", CANARY, CANARY_OUT).is_some_and(|t| t.contains(CANARY_OUT)),
-        };
+        let ok = crate::runner::Runner::shed(&on).is_some_and(|b| crate::term::Shed(b).canary(&on));
         if !ok {
             writeln!(out, "runtime down on {h}: canary failed")?;
             continue;

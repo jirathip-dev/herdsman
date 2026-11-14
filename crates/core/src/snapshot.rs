@@ -4,7 +4,7 @@ use crate::hosts::{quote, On};
 use crate::lanes::{self, Lane};
 use crate::runner::{argv, Out, Runner};
 use crate::waiting::Waiting;
-use crate::{herdr, Ctx};
+use crate::{term, Ctx};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -21,15 +21,18 @@ pub struct Snapshot {
     pub key: String,
 }
 
-const HERDR: &str = "PATH=\"$HOME/.local/bin:$PATH\"";
-
 pub fn key(prog: &str, args: &[String]) -> String {
     format!("{prog} {}", args.join(" "))
 }
 
-/// A read through another host (ssh, `herdr --machine`).
-pub fn remote(prog: &str, args: &[String]) -> bool {
-    prog == "ssh" || prog == herdr::BIN && args.first().is_some_and(|a| a == "--machine")
+/// A remote read with stdin (`shed connect`) by its command line and its requests.
+pub fn key_in(prog: &str, args: &[String], input: &str) -> String {
+    format!("{}\n{input}", key(prog, args))
+}
+
+/// A read through another host (ssh).
+pub fn remote(prog: &str) -> bool {
+    prog == "ssh"
 }
 
 /// #344: the `board` row of the database's snapshots.
@@ -104,16 +107,7 @@ impl<'a> Snap<'a> {
             let mut parts = text.split('\x1e');
             for (k, _) in cmds {
                 let (o, code) = (parts.next(), parts.next());
-                let mut o = o.filter(|_| code == Some("0")).map(String::from);
-                if o.is_none() && k.ends_with(" agent list") && k.starts_with(herdr::BIN) {
-                    let a = argv(&["--machine", &m, "agent", "list"]);
-                    o = self
-                        .r
-                        .run(herdr::BIN, &a)
-                        .ok()
-                        .filter(|o| o.code == 0)
-                        .map(|o| o.stdout);
-                }
+                let o = o.filter(|_| code == Some("0")).map(String::from);
                 lock(&self.reads).insert(k, o);
             }
         }
@@ -125,7 +119,6 @@ impl Runner for Snap<'_> {
         let k = key(prog, args);
         let there = match args {
             [.., m, _, line] if prog == "ssh" => Some((m.clone(), line.clone())),
-            [_, m, rest @ ..] if remote(prog, args) => Some((m.clone(), format!("{HERDR} {}", quote(prog, rest)))),
             _ => None,
         };
         if let Some(t) = there.filter(|_| self.miss == Miss::Collect) {
@@ -135,7 +128,7 @@ impl Runner for Snap<'_> {
         if let Some(v) = lock(&self.reads).get(&k) {
             return Ok(out(v.clone()));
         }
-        if self.miss == Miss::Local && remote(prog, args) {
+        if self.miss == Miss::Local && remote(prog) {
             return Ok(out(None));
         }
         let o = self.r.run(prog, args)?;
@@ -151,28 +144,36 @@ impl Runner for Snap<'_> {
         if input.is_empty() {
             return self.run(prog, args);
         }
+        if !remote(prog) {
+            return self.r.run_in(prog, args, input);
+        }
+        let k = key_in(prog, args, input);
+        if let ([.., m, _, line], Miss::Collect) = (args, self.miss) {
+            let words: Vec<String> = std::iter::once("%s\\n".into())
+                .chain(input.lines().map(String::from))
+                .collect();
+            let piped = format!("({} | {line})", quote("printf", &words));
+            lock(&self.want).insert(k.clone(), (m.clone(), piped));
+            return Ok(out(self.prev.get(&k).cloned().flatten()));
+        }
+        if let Some(v) = lock(&self.reads).get(&k) {
+            return Ok(out(v.clone()));
+        }
+        if self.miss == Miss::Local {
+            return Ok(out(None));
+        }
         self.r.run_in(prog, args, input)
     }
     fn shed(&self) -> Option<crate::shed::Shed> {
         self.r.shed()
     }
-    fn local(&self) -> bool {
-        self.r.local()
-    }
 }
 
-/// The board's lanes: herdr's agents (`list`, every remote host's added) joined with the log.
+/// The board's lanes: the live agents (`list`, every remote host's added) joined with the log.
 pub fn lanes(cfg: &Config, r: &dyn Runner, ctx: &Ctx, (events, st): (&[Event], &States), list: &Value) -> Vec<Lane> {
     let mut agents = list["result"]["agents"].as_array().cloned().unwrap_or_default();
     agents.extend(crate::hosts::remote_agents(cfg, r));
-    let wsl = herdr::list(r, "workspace").unwrap_or_default();
-    let ws: BTreeMap<String, String> = wsl["result"]["workspaces"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|w| Some((w["workspace_id"].as_str()?.into(), w["label"].as_str()?.into())))
-        .collect();
-    lanes::join(cfg, r, &ctx.worktrees, events, st, &agents, &ws)
+    lanes::join(cfg, r, &ctx.worktrees, events, st, &agents)
 }
 
 /// #447: what waits are worked out from: the log's length and last row, and each lane's state.
@@ -209,11 +210,11 @@ pub fn waits(ctx: &Ctx, cfg: &Config, r: &dyn Runner, events: &[Event], all: &[L
 pub fn take<'a>(ctx: &Ctx, cfg: &Config, r: &'a dyn Runner) -> Snap<'a> {
     let s = Snap::new(r, Miss::Collect, load(ctx).map(|s| s.reads), Some(ctx.now));
     let events = crate::events::working(&ctx.state).unwrap_or_default();
-    if let Ok(list) = herdr::list(&s, "agent") {
+    if let Ok(list) = term::list(&s) {
         let all = lanes(cfg, &s, ctx, (&events, &crate::events::fold(&events)), &list);
         waits(ctx, cfg, &s, &events, &all);
         for l in &all {
-            l.pane.as_ref().map(|p| herdr::read(&l.on(&s), p));
+            l.pane.as_ref().map(|p| term::read(&l.on(&s), p));
         }
     }
     crate::timer::services(ctx, cfg, &s, Some(String::new()));
@@ -222,7 +223,7 @@ pub fn take<'a>(ctx: &Ctx, cfg: &Config, r: &'a dyn Runner) -> Snap<'a> {
     s.fetch();
     let s = Snap { miss: Miss::Live, ..s };
     let (mut key, mut ws) = (String::new(), vec![]);
-    if let Ok(list) = herdr::list(&s, "agent") {
+    if let Ok(list) = term::list(&s) {
         let all = lanes(cfg, &s, ctx, (&events, &crate::events::fold(&events)), &list);
         (key, ws) = (wait_key(&events, &all), waits(ctx, cfg, &s, &events, &all));
     }

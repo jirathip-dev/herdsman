@@ -3,7 +3,7 @@
 The board stays fast by never re-sending everything (#337, #351): the step takes one look and saves it, a request
 replays it, the live stream sends changes, and history opens bounded. Each budget below is asserted by a test; a miss
 fails CI. The timings run through the real server, `serve_on` on a socket with its sampler and watcher threads, on a
-fixture runner that answers like herdr, git and ssh do (30 lanes on 2 hosts, +300 ms per remote call); a call-count
+fixture runner that answers like shed, git and ssh do (30 lanes on 2 hosts, +300 ms per remote call); a call-count
 probe on that runner proves the server, not a hand-built page, produced them.
 
 | Budget | Path it covers | Test |
@@ -18,7 +18,7 @@ probe on that runner proves the server, not a hand-built page, produced them.
 | 100 board requests on a 30,000-event store (20 lanes, a new event every 10th) < 2 s of CPU in release: a request reads only the events appended since the last (`events::shared`), the watcher renders only for a listening audience | `serve_on`'s socket | `perf.rs` `a_hundred_board_requests_on_a_30k_event_store_stay_under_the_cpu_budget` |
 | a fast pass (`drive --fast`) over a 100,000-event log < 10 s with at most one full-log read: every read of the log after the first takes only the rows appended since (`events::shared`); a pass longer than `[limits] pass_max_secs` (default 120) logs `pass-slow` naming its slowest step (#825) | `drive --fast` | `pass_budget.rs` `a_fast_pass_over_a_100k_event_log_reads_it_once_and_stays_under_its_bound` |
 | `/api/v1/state` on a 150,000-event log (5 fleets, asks, threads, lanes) < 300 ms, median of 5, in release; no read builds an ask index from a copy of the log (`events::REBUILDS`); an answered ask is gone from the next read (#859) | `serve_on`'s socket | `perf.rs` `the_state_read_stays_under_300ms_on_a_150k_event_log` |
-| no board GET starts a process: herdr, shed, ssh and the rest are read by serve's background threads, each source on its own `[limits]` interval (`serve_herdr_secs` 2, `serve_shed_secs` 5, `serve_remote_secs` 10, `serve_host_secs` 10); `/api/v1/state` and `/api/v1/health` carry each one's `refreshed_at` in `sources` (#859) | `serve_on`'s socket, a runner that panics on a call during a request | `perf.rs` `no_board_request_starts_a_process` |
+| no board GET starts a process: shed, ssh and the rest are read by serve's background threads, each source on its own `[limits]` interval (`serve_shed_secs` 5, `serve_remote_secs` 10, `serve_host_secs` 10); `/api/v1/state` and `/api/v1/health` carry each one's `refreshed_at` in `sources` (#859) | `serve_on`'s socket, a runner that panics on a call during a request | `perf.rs` `no_board_request_starts_a_process` |
 | `/api/v1` p95 over `[limits] slo_api_p95_ms` (1000) for `slo_api_minutes` (10): one `slo-api` push and Drover card naming the slowest route; `/api/v1/health`'s `routes` lists each route's p50/p95/count (#859) | `Server::slo` | `board_fresh.rs` `a_slow_api_for_10_minutes_alerts_once_and_never_after_it_recovers` |
 
 The numbers go to the CI job summary (`$GITHUB_STEP_SUMMARY`). How each path works: [serve.md](serve.md).

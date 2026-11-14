@@ -135,9 +135,34 @@ fn call(s: &Server, c: &drover::Ctx, (method, path): (&str, &str), body: &str, c
     serde_json::from_str(&body).unwrap_or_else(|e| panic!("{method} {path}: {e}: {res}"))
 }
 
+struct Bazzite(OnShed, FakeShed);
+
+impl drover::runner::Runner for Bazzite {
+    fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<drover::runner::Out> {
+        self.0.run(prog, args)
+    }
+    fn run_in(&self, prog: &str, args: &[String], input: &str) -> anyhow::Result<drover::runner::Out> {
+        if prog == "ssh" && args.join(" ").contains("bazzite -- 'shed' 'connect'") {
+            let stdout = self.1.connect(input);
+            return Ok(drover::runner::Out {
+                stdout,
+                ..Default::default()
+            });
+        }
+        self.0.run_in(prog, args, input)
+    }
+    fn sleep(&self, secs: u64) {
+        self.0.sleep(secs);
+    }
+    fn shed(&self) -> Option<drover::shed::Shed> {
+        self.0.shed()
+    }
+}
+
 #[test]
 fn every_route_keeps_its_fixtures_shape() {
-    let (c, r) = v1_board_on("v1-contract", herdr_setup(Fake::default().reply("gh", "")));
+    let (c, r) = v1_board_on("v1-contract", Fake::default().reply("gh", ""));
+    let r = Bazzite(r, FakeShed::new());
     let s = Server::new(&c, &r, Some(ADDR.into()));
     let ck = pair(&s, &c, "Mozilla/5.0 (iPhone)", T);
     let post = |op: &str, v: Value| call(&s, &c, ("POST", &format!("/api/v1/{op}")), &v.to_string(), &ck);
@@ -145,6 +170,7 @@ fn every_route_keeps_its_fixtures_shape() {
     let ev = drover::events::read(&c.state).unwrap();
     let t = ev.iter().rev().find_map(|e| e.str("thread")).unwrap().to_string();
     post("setup", json!({"host": "bazzite", "name": "claude B"}));
+    r.1.screen("drover-setup-claude-B", "Paste code here >\n");
     let mut fails = vec![];
     let get = |p: &str| call(&s, &c, ("GET", p), "", &ck);
     macro_rules! gets {
@@ -173,7 +199,7 @@ fn every_route_keeps_its_fixtures_shape() {
         ("lane/<agent>", format!("/api/v1/lane/{IMPL}"), LaneChat),
         ("herd", "/api/v1/herd", Herd),
         ("roles", "/api/v1/roles?fleet=sendmeter", Roles),
-        ("setup/<pane>", "/api/v1/setup/w9:p1", SetupScreen),
+        ("setup/<pane>", "/api/v1/setup/drover-setup-claude-B", SetupScreen),
         ("issue/<fleet>/<n>", "/api/v1/issue/sendmeter/12", IssueView),
         ("lessons", "/api/v1/lessons", Lessons),
         (

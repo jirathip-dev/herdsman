@@ -341,6 +341,7 @@ fn lane_port_is_stable_per_fleet_and_branch() {
     );
     assert!((5000..=5009).contains(&lane_port(Some("5000-5009"), "a/b", &[])));
     let c = ctx(&tmpdir("spawn-port"), CONFIG);
+    let _sh = on_shed(&c);
     assert_eq!(plan(&c, &shed_fake(), "impl")["port"], p);
 }
 
@@ -360,6 +361,7 @@ fn lane_port_collision_takes_the_next_free_one() {
         "port_range = \"7000-7001\"\n\n[fleet.sendmeter.role.impl]",
     );
     let c = ctx(&tmpdir("spawn-port-taken"), &cfg);
+    let _sh = on_shed(&c);
     let mine = plan(&c, &shed_fake(), "impl")["port"].as_u64().unwrap();
     let spawn = |n: u64, branch: &str| {
         let d = json!({"role": "impl", "agent": format!("sendmeter-impl-{n}"), "branch": branch, "port": mine});
@@ -657,42 +659,6 @@ fn real_claude_spawn_writes_brief_and_logs_event() {
         .unwrap();
     assert_eq!(ev.val("port"), lane_port(None, "sendmeter/issue-12", &[]));
     assert_eq!(ev.val("confirmed"), true);
-}
-
-#[test]
-fn herdr_reopened_workspace_keeps_the_lane_name() {
-    let d = tmpdir("spawn-real-herdr");
-    let c = ctx(&d, &CONFIG.replace("harness  =  \"hermes\"", "harness = \"claude\""));
-    let wt = c.worktrees.join("sendmeter/issue-12");
-    std::fs::create_dir_all(&wt).unwrap();
-    assert_eq!(run(&c, &Fake::default(), &["profiles", "sync"]).0, 0);
-    let r = Fake::default()
-        .reply("herdr agent list", NO_AGENTS)
-        .reply(&format!("git -C {} rev-list", wt.display()), "0\n")
-        .reply("gh issue view 12", r#"{"title":"Fix the meter","body":"AC: it works"}"#)
-        .reply("git -C", "")
-        .reply(
-            "herdr worktree open",
-            r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#,
-        )
-        .reply(
-            "herdr pane list --workspace w9",
-            r#"{"result":{"panes":[{"pane_id":"w9:p1","agent":null}]}}"#,
-        )
-        .reply("herdr pane run w9:p1 export DROVER_LANE='sendmeter:12:impl'", "{}")
-        .reply("herdr agent start sendmeter-impl-12 --kind claude --pane w9:p1", "{}")
-        .reply("herdr agent wait sendmeter-impl-12", "{}");
-    let (code, out) = run(&c, &r, &["spawn", "sendmeter", "12", "impl"]);
-    assert_eq!(code, 0, "{out} {:?}", r.calls.borrow());
-    let open = r
-        .calls
-        .borrow()
-        .iter()
-        .find(|c| c.starts_with("herdr worktree open"))
-        .cloned()
-        .unwrap();
-    assert!(open.ends_with("--label sendmeter-impl-12"), "{open}");
-    assert!(r.called("herdr workspace rename w9 sendmeter-impl-12"));
 }
 
 #[test]

@@ -107,7 +107,7 @@ Other lengths are sums of tokens (`calc(var(--hit) + var(--s2))`); radii, border
    `sheet-parked` (#83) opens the demo's parked lane (no pane, its work on an open PR) and fails unless the card
    has its `parked · work on PR #n` line, `[clean]` is disabled with its reason in `p.st`, `[stop]` and `[kill]`
    are hidden, the chat says there is no pane, and nothing in the sheet is in the red (danger) colour.
-   `sheet-other` (#95) opens the demo's Others agent (a herdr agent that is no lane) and fails unless only
+   `sheet-other` (#95) opens the demo's Others agent (a shed agent that is no lane) and fails unless only
    `[close pane]` shows (no `[stop]`, `[kill]`, `[clean]`), `p.st` reads `not a drover lane: drover can only
    close its pane`, and nothing in the sheet is in the red (danger) colour.
    `sheet-acp` (#750) opens a lane whose transcript is an ACP session's (`> prompt`, `[tool] title (status)`, the

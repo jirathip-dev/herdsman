@@ -35,6 +35,7 @@ pub fn of(w: &World) -> Metrics {
     let mut queued: BTreeMap<u64, u64> = BTreeMap::new();
     let mut lanes = BTreeSet::new();
     let mut merged = BTreeSet::new();
+    let mut seen = std::collections::BTreeMap::new();
     for x in &w.wrote {
         let e = &x.ev;
         let n = e.issue.unwrap_or(0);
@@ -48,7 +49,9 @@ pub fn of(w: &World) -> Metrics {
                 m.spawns += 1;
                 lanes.insert(e.str("agent").unwrap_or_default().to_string());
                 let pane = e.str("pane").unwrap_or_default();
-                if !w.model.produced.iter().any(|p| p == pane) {
+                let k = seen.entry(pane).or_insert(0);
+                *k += 1;
+                if !w.model.produced.contains(&format!("{pane}#{k}")) {
                     m.wasted += 1;
                 }
             }

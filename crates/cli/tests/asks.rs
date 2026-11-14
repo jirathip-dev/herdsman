@@ -261,7 +261,8 @@ fn answer_to_a_gone_agent_records_the_decision_and_exits_0() {
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("recorded; asking agent gone, not prompted"), "{out}");
     assert_eq!(kinds(&c, "decision").len(), 1);
-    assert!(sh.called("get", LANE) && sh.sent(LANE).is_empty(), "{:?}", sh.methods());
+    assert!(sh.called("get", LANE) && !sh.has(LANE), "{:?}", sh.methods());
+    assert!(kinds(&c, "answer-delivered").is_empty());
 }
 
 fn closed_by(then: Event) -> (usize, String) {

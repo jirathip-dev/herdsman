@@ -50,18 +50,11 @@ pub fn main(ctx: &Ctx, api: &str, board: Option<&str>) -> Result<()> {
         });
     }
     let api = std::net::TcpListener::bind(api)?;
-    let herdr = std::env::var_os("HERDR_SOCKET_PATH").map_or(ctx.home.join(".config/herdr/herdr.sock"), Into::into);
-    run(ctx.clone(), &Real, drover_core::now, api, Some(herdr))
+    run(ctx.clone(), &Real, drover_core::now, api)
 }
 
-/// The service on `api` and the state dir's socket, until the process ends; #529: lane state from herdr's socket `herdr` (and shed's, by the config).
-pub fn run(
-    ctx: Ctx,
-    r: &'static dyn Runner,
-    clock: fn() -> u64,
-    api: std::net::TcpListener,
-    herdr: Option<std::path::PathBuf>,
-) -> Result<()> {
+/// The service on `api` and the state dir's socket, until the process ends; #529: lane state from shed's stream.
+pub fn run(ctx: Ctx, r: &'static dyn Runner, clock: fn() -> u64, api: std::net::TcpListener) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     rt.block_on(async move {
         api.set_nonblocking(true)?;
@@ -87,10 +80,7 @@ pub fn run(
         tokio::spawn(s.clone().watch_log());
         tokio::spawn(s.clone().poll());
         tokio::spawn(s.clone().local(local));
-        if let Some(h) = herdr {
-            tokio::spawn(s.clone().herdr(h));
-        }
-        if let Some(w) = Config::load(&s.ctx.config).ok().and_then(|c| c.runtime.shed()) {
+        if let Some(w) = Config::load(&s.ctx.config).ok().and_then(|c| c.shed()) {
             let me = s.clone();
             std::thread::spawn(move || me.shed(&w.wire));
         }

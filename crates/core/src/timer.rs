@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::events::{age, emit, working, Event};
 use crate::runner::{ok, Runner};
-use crate::{drive, herdr, host, Ctx};
+use crate::{drive, host, Ctx};
 use anyhow::Result;
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
@@ -14,8 +14,7 @@ pub const FAST: &str = "dev.drover.fast";
 pub const SERVICE: &str = "dev.drover.service";
 pub const JOBS: [(&str, &[&str]); 2] = [(TICK, &["tick"]), (FAST, &["drive", "--fast"])];
 /// #845: the tick's steps in order (`tick.step` names the running one) and the `[limits]` keys that time them.
-pub const TICK_STEPS: [(&str, &[&str]); 7] = [
-    ("herdr status", &[]),
+pub const TICK_STEPS: [(&str, &[&str]); 6] = [
     (
         "check",
         &[
@@ -48,7 +47,6 @@ pub const DAILY: u64 = 86_400;
 const MAC: bool = cfg!(target_os = "macos");
 const FIX: &str = "drover timer install";
 const ABANDON: &str = "<key>AbandonProcessGroup</key><true/>";
-const HANDOFF: &str = "restart herdr to finish the update: `herdr update --handoff`";
 /// One Services row: (item, tone `g|a|r`, detail, the fix shown on red).
 pub type Row = (String, &'static str, String, String);
 
@@ -159,7 +157,7 @@ fn path(ctx: &Ctx, cfg: &Config, r: &dyn Runner) -> String {
     let roles = cfg.fleet.values().flat_map(|f| f.role.values());
     let found = roles
         .map(|role| role.harness.as_str())
-        .chain(["gh", herdr::BIN, "shed", "cargo"])
+        .chain(["gh", "shed", "cargo"])
         .filter_map(|b| ok(r, "which", &[b]).ok());
     let dir = |p: String| Some(Path::new(p.trim()).parent()?.to_string_lossy().into_owned());
     let mut dirs: Vec<String> = found.chain([ctx.exe.clone()]).filter_map(dir).collect();
@@ -263,7 +261,6 @@ fn alert(ctx: &Ctx, cfg: &Config, events: &[Event], kind: &str, item: &str, reas
     emit(&ctx.state, cfg, Event::new(ctx.now, "drover", None, kind, d))
 }
 
-/// `drover tick`: `check`, then `drive` (under #92's lock), the hourly clean, remote build trims, then an hourly alert per red Services row. A refusal exits 0; a real error (config, herdr) logs `tick-failed`, alerted at most hourly, and exits 1. #561: one probe per remote host, 15 s per remote call; `tick.step` names the step for `tick-stuck`.
 pub fn tick(ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write) -> Result<i32> {
     let log = ctx.state.with_file_name("tick.log");
     if log.metadata().is_ok_and(|m| m.len() > 1 << 20) {
@@ -299,8 +296,6 @@ pub fn tick(ctx: &Ctx, r: &dyn Runner, out: &mut dyn Write) -> Result<i32> {
     let mut pass = crate::hosts::Pass::new(r, Some((mark.clone(), ctx.now))).sparing(off, log);
     pass.until = std::time::Instant::now().checked_add(std::time::Duration::from_secs(budget));
     let res = loaded.as_ref().map_err(|e| anyhow::anyhow!("{e:#}")).and_then(|cfg| {
-        pass.step("herdr status");
-        herdr::status(&pass).map_err(|e| anyhow::anyhow!("herdr: {e:#}"))?;
         pass.step("check");
         crate::check::check(ctx, cfg, &pass, out)?;
         pass.step("drive");
@@ -498,21 +493,6 @@ pub fn phone(ctx: &Ctx, cfg: Option<&Config>, events: &[Event]) -> (&'static str
     }
 }
 
-/// herdr's (client, server) versions, and whether the server is older (`herdr status`).
-pub fn herdr_versions(r: &dyn Runner) -> Option<(String, String, bool)> {
-    versions(&herdr::status(r).ok()?)
-}
-
-/// `herdr status` text's (client, server) versions, and whether the server is older.
-pub fn versions(status: &str) -> Option<(String, String, bool)> {
-    let version = |l: &str| l.trim().strip_prefix("version: ").map(String::from);
-    let mut v = status.lines().filter_map(version);
-    let (client, server) = (v.next()?, v.next()?);
-    let parse = |v: &str| v.split('.').map(|n| n.parse().unwrap_or(0)).collect::<Vec<u32>>();
-    let older = parse(&server) < parse(&client);
-    Some((client, server, older))
-}
-
 fn tone(now: u64, t: Option<u64>) -> &'static str {
     let since = t.map_or(u64::MAX, |t| now.saturating_sub(t));
     ["g", "a", "r"][usize::from(since > 600) + usize::from(since > 900)]
@@ -533,7 +513,6 @@ fn tick_row(ctx: &Ctx, events: &[Event]) -> (&'static str, String) {
     }
 }
 
-/// The Host tab's Services rows from the event log, `herdr`, the host and the stamps; `board`: the serving page's own detail, else the board is up when its address listens.
 pub fn services(ctx: &Ctx, cfg: &Config, r: &dyn Runner, board: Option<String>) -> Vec<Row> {
     let events = crate::events::working(&ctx.state).unwrap_or_default();
     let row = |item: &str, t, d: String, fix: &str| (item.to_string(), t, d, fix.to_string());
@@ -578,7 +557,7 @@ pub fn services(ctx: &Ctx, cfg: &Config, r: &dyn Runner, board: Option<String>) 
     let why = k.map(|e| format!(" ({} #{})", e.str("why").unwrap_or("?"), e.issue.unwrap_or(0)));
     let d = format!("last kick {}{}", ago(ctx.now, k.map(|e| e.ts)), why.unwrap_or_default());
     rows.push(row("kick", "m", d, ""));
-    for rt in [herdr::BIN, "shed"].iter().filter(|_| service.is_some()) {
+    for rt in ["shed"].iter().filter(|_| service.is_some()) {
         let last = events
             .iter()
             .rfind(|e| e.kind == "lane-stream" && e.str("runtime") == Some(rt));
@@ -591,11 +570,6 @@ pub fn services(ctx: &Ctx, cfg: &Config, r: &dyn Runner, board: Option<String>) 
     }
     let (t, d) = phone(ctx, Some(cfg), &events);
     rows.push(row("phone alerts", t, d, "drover push test"));
-    let v = herdr_versions(r);
-    let shown = |(c, s, _): &(String, String, bool)| format!("client {c}, server {s}");
-    let d = v.as_ref().map_or("not on PATH, or no server".into(), shown);
-    let t = v.map_or("r", |v| ["g", "a"][usize::from(v.2)]);
-    rows.push(row(herdr::BIN, t, d, [herdr::BIN, HANDOFF][usize::from(t == "a")]));
     if let Some(gb) = host::free_gb(r) {
         let (min, n) = (cfg.limits.min_free_gb, usize::from);
         let t = ["g", "a", "r"][n(gb <= min * 1.25) + n(gb < min)];

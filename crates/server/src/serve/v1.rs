@@ -364,7 +364,7 @@ impl Server<'_> {
             let (on, pane) = (l.on(&self.r), l.pane.as_deref()?);
             let n = num("n").or_else(|| num("lines")).unwrap_or(200).min(200);
             let seq = q.get("before").and_then(|v| v.parse::<u64>().ok()).filter(|&s| s > 0);
-            let ev = crate::herdr::Shed(crate::runner::Runner::shed(&on)?).transcript(&on, pane, seq, n);
+            let ev = crate::term::Shed(crate::runner::Runner::shed(&on)?).transcript(&on, pane, seq, n);
             ev.ok().flatten()
         };
         let Some(ev) = self.export.is_none().then(acp).flatten() else {

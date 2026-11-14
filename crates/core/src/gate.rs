@@ -3,7 +3,7 @@ use crate::events::{emit, fold, working, Event, IssueState};
 use crate::overlap::git;
 use crate::runner::{argv, json, ok, Runner};
 use crate::Ctx;
-use crate::{check, gh, herdr};
+use crate::{check, gh, term};
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::io::Write;
@@ -214,7 +214,7 @@ pub fn verdict(
     if let Some(b) = events.iter().rfind(is_impl) {
         let wt = Path::new(b.str("worktree").unwrap_or_default());
         let working = |a: &serde_json::Value| a["name"].as_str() == b.str("agent") && a["agent_status"] == "working";
-        if wt.is_dir() && herdr::agents(r).is_ok_and(|a| !a.iter().any(working)) {
+        if wt.is_dir() && term::agents(r).is_ok_and(|a| !a.iter().any(working)) {
             check::purge(r, cfg, fleet, out, wt, false)?;
         }
     }
@@ -226,7 +226,7 @@ pub fn verdict(
         return Ok(());
     };
     let (agent, pane) = (e.str("agent"), e.str("pane").unwrap_or_default());
-    let busy = herdr::agents(r).map_or(true, |a| {
+    let busy = term::agents(r).map_or(true, |a| {
         a.iter()
             .any(|a| a["name"].as_str() == agent && a["agent_status"] == "working")
     });
@@ -234,12 +234,11 @@ pub fn verdict(
         return Ok(());
     }
     check::purge(r, cfg, fleet, out, Path::new(wt), false)?;
-    let ws = e.str("workspace").unwrap_or_default();
     let gone = match crate::spawn::dirty(r, Path::new(wt)) {
         Some(why) => Err(anyhow::anyhow!(why)),
         None => check::reap(ctx, cfg, r, (fleet, Some(issue)), wt)
-            .and_then(|_| check::remove(r, cfg, fleet, wt, ws, false))
-            .and_then(|()| herdr::close(r, pane).map(drop)),
+            .and_then(|_| check::remove(r, cfg, fleet, wt, false))
+            .and_then(|()| term::close(r, pane).map(drop)),
     };
     let kind = if gone.is_ok() { "lane-closed" } else { "lane-kept" };
     let reason = gone.map_or_else(|why| format!("{wt}: {why:#}"), |()| "verdict recorded".into());
@@ -1095,7 +1094,7 @@ pub fn park(
         e.data.insert("why".into(), json!(w));
     }
     crate::events::append(&ctx.state, &e)?;
-    if let Ok(a) = herdr::agents(r) {
+    if let Ok(a) = term::agents(r) {
         check::leftovers(ctx, cfg, r, &a, true)?;
     }
     Ok(writeln!(out, "#{n}: park")?)

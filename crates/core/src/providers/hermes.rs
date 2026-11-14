@@ -1,6 +1,6 @@
 use super::{attempts, hook_command, Credential, Dialect, Home, Provider, Row};
 use crate::config::Config;
-use crate::herdr;
+use crate::term;
 use crate::runner::{argv, Runner};
 use crate::spawn::Plan;
 use crate::Ctx;
@@ -127,29 +127,29 @@ impl Provider for Hermes {
         if let Some(e) = &p.effort {
             a.extend(["--reasoning".into(), e.clone()]);
         }
-        herdr::start_argv(&p.agent, "hermes", pane, a)
+        term::start_argv("hermes", pane, &a)
     }
 
     fn kick_cmds(&self, p: &Plan, pane: &str) -> Vec<Vec<String>> {
         vec![
-            herdr::wait_output_argv(pane, "❯", "60000"),
-            herdr::prompt_argv(&p.agent, &p.kick),
-            herdr::keys_argv(pane, "Enter"),
-            herdr::wait_working_argv(&p.agent, "10000"),
-            herdr::read_argv(pane),
+            term::wait_output_argv(pane, "❯", "60000"),
+            term::prompt_argv(&p.agent, &p.kick),
+            term::keys_argv(pane, "Enter"),
+            term::wait_working_argv(&p.agent, "10000"),
+            term::read_argv(pane),
         ]
     }
 
     fn kick(&self, r: &dyn Runner, p: &Plan, pane: &str) -> Result<bool> {
         let c = self.kick_cmds(p, pane);
-        herdr::exec(r, &c[0])?;
+        term::exec(r, &c[0])?;
         for _ in attempts(r, 3, 10) {
-            herdr::exec(r, &c[1])?;
-            herdr::exec(r, &c[2])?;
-            if herdr::exec(r, &c[3])?.code == 0 {
+            term::exec(r, &c[1])?;
+            term::exec(r, &c[2])?;
+            if term::exec(r, &c[3])?.code == 0 {
                 return Ok(true);
             }
-            let screen = herdr::exec(r, &c[4])?;
+            let screen = term::exec(r, &c[4])?;
             if screen.code == 0 && screen.stdout.contains("ctx ") && !screen.stdout.contains("ctx --") {
                 return Ok(true);
             }

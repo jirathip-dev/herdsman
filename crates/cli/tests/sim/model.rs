@@ -39,7 +39,6 @@ pub enum Ev {
 #[derive(Clone, Debug)]
 pub struct Pane {
     pub id: String,
-    pub ws: String,
     pub cwd: String,
     pub agent: Option<String>,
     pub status: String,
@@ -70,7 +69,6 @@ pub struct Merge {
 #[derive(Default)]
 pub struct Model {
     pub panes: Vec<Pane>,
-    ws: u32,
     pub prs: BTreeMap<String, Pr>,
     /// Each head's CI: `None` pending, else green.
     pub ci: BTreeMap<String, Option<bool>>,
@@ -117,20 +115,20 @@ impl Model {
         self.shas += 1;
         format!("{:040x}", 0xc0ffee_u64 * 1_000_003 + self.shas)
     }
+    pub fn incarnation(&self, i: usize) -> String {
+        let id = &self.panes[i].id;
+        format!("{id}#{}", self.panes[..=i].iter().filter(|p| p.id == *id).count())
+    }
     pub fn live(&self) -> impl Iterator<Item = &Pane> {
         self.panes.iter().filter(|p| !p.closed && p.agent.is_some())
     }
     fn pane(&mut self, id: &str) -> Option<&mut Pane> {
         self.panes.iter_mut().find(|p| p.id == id && !p.closed)
     }
-    fn by_agent(&mut self, name: &str) -> Option<&mut Pane> {
-        self.panes
-            .iter_mut()
-            .find(|p| !p.closed && p.agent.as_deref() == Some(name))
-    }
-    fn agent_json(p: &Pane) -> Value {
-        json!({"name": p.agent, "agent_status": p.status, "cwd": p.cwd, "pane_id": p.id, "agent": "claude",
-            "workspace_id": p.ws})
+    fn terminal(p: &Pane) -> Value {
+        let reported = p.agent.as_ref().map(|_| json!({"state": p.status}));
+        json!({"name": p.id, "labels": {"fleet": FLEET, "harness": "claude"}, "cwd": p.cwd, "cmd": ["sh"],
+            "keep": true, "state": "running", "exit": null, "pid": 7, "reported": reported})
     }
     fn pr_json(&self, branch: &str, p: &Pr) -> Value {
         let ci = self.ci.get(&p.head).copied().flatten();
@@ -164,27 +162,26 @@ fn err(code: i32, stderr: &str) -> Out {
     }
 }
 
-fn flag<'a>(a: &'a [&str], f: &str) -> Option<&'a str> {
-    a.iter().position(|x| *x == f).and_then(|i| a.get(i + 1).copied())
-}
-
 /// Process `me`'s call `prog args`, answered from (and applied to) the world.
-pub fn answer(sim: &Arc<Sim>, w: &mut World, me: usize, prog: &str, args: &[String]) -> Out {
+pub fn answer(_sim: &Arc<Sim>, w: &mut World, me: usize, prog: &str, args: &[String]) -> Out {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
     let o = match prog {
-        "herdr" => {
-            let o = herdr(sim, w, &a);
-            if let (["agent", "start", _, _, _, _, pane, ..], 0) = (&a[..], o.code) {
-                w.procs[me].starting = Some((*pane).into());
-                let agent = Some(a[2].to_string());
+        "shed" => {
+            let o = shed(w, &a);
+            let exec = a.get(1).is_some_and(|p| p.contains("\"text\":\"exec "));
+            if let (["send", _], true, 0) = (&a[..], exec, o.code) {
+                let pane = serde_json::from_str::<Value>(a[1]).unwrap_or_default()["name"].as_str().unwrap_or_default().to_string();
+                w.procs[me].starting = Some(pane.clone());
+                let agent = Some(pane.clone());
                 let starts = w.model.panes.iter().filter(|p| p.agent == agent).count();
                 let planted = w.model.sabotage == Some(crate::invariants::Sabotage::Planted) && starts >= 3;
                 if planted || w.model.sabotage == Some(crate::invariants::Sabotage::DoubleLane) {
-                    crate::invariants::double(w, pane);
+                    crate::invariants::double(w, &pane);
                 }
             }
             o
         }
+        "which" => ok(format!("/usr/local/bin/{}\n", a.first().copied().unwrap_or_default())),
         "gh" => gh(w, &a),
         "git" => git(w, &a),
         "kill" => {
@@ -235,31 +232,30 @@ fn unmodelled() -> Out {
     err(127, "unmodelled")
 }
 
-fn herdr(sim: &Arc<Sim>, w: &mut World, a: &[&str]) -> Out {
+fn shed(w: &mut World, a: &[&str]) -> Out {
     let now = w.now;
-    let m = &mut w.model;
-    match a {
-        ["agent", "list"] => {
-            let list: Vec<Value> = m.live().map(Model::agent_json).collect();
-            ok(json!({"result": {"agents": list}}).to_string())
-        }
-        ["worktree", "create" | "open", ..] => {
-            let path = flag(a, "--path").unwrap_or_default().to_string();
-            let _ = std::fs::create_dir_all(&path);
-            std::fs::create_dir_all(std::path::Path::new(&path).join(".git")).ok();
-            m.ws += 1;
-            let ws = format!("w{}", m.ws);
-            let base = flag(a, "--base").map(|b| b.trim_start_matches("origin/").to_string());
-            let head = base
-                .and_then(|b| m.origin.get(&b).cloned())
-                .or_else(|| flag(a, "--branch").and_then(|b| m.origin.get(b).cloned()));
-            if let Some(h) = head {
-                m.heads.entry(path.clone()).or_insert(h);
+    let [m, p] = a else { return unmodelled() };
+    let p: Value = serde_json::from_str(p).unwrap_or_default();
+    let name = p["name"].as_str().unwrap_or_default().to_string();
+    let gone = || err(1, "NO_SUCH_TERMINAL");
+    match *m {
+        "ls" => ok(Value::from(
+            w.model
+                .panes
+                .iter()
+                .filter(|p| !p.closed)
+                .map(Model::terminal)
+                .collect::<Vec<_>>(),
+        )
+        .to_string()),
+        "run" => {
+            if w.model.pane(&name).is_some() {
+                return err(1, "NAME_TAKEN");
             }
-            m.panes.push(Pane {
-                id: format!("{ws}:p1"),
-                ws: ws.clone(),
-                cwd: path,
+            let cwd = p["cwd"].as_str().unwrap_or_default().to_string();
+            w.model.panes.push(Pane {
+                id: name,
+                cwd,
                 agent: None,
                 status: "idle".into(),
                 screen: String::new(),
@@ -268,110 +264,76 @@ fn herdr(sim: &Arc<Sim>, w: &mut World, a: &[&str]) -> Out {
                 script: None,
                 told: vec![],
             });
-            ok(
-                json!({"result": {"workspace": {"workspace_id": ws}, "root_pane": {"pane_id": format!("{ws}:p1")}}})
-                    .to_string(),
-            )
+            ok(Model::terminal(w.model.panes.last().unwrap()).to_string())
         }
-        ["workspace", "rename", ..] | ["agent", "rename", ..] => ok("{}"),
-        ["workspace", "close", ws] => {
-            for p in m.panes.iter_mut().filter(|p| p.ws == *ws) {
+        "get" => w
+            .model
+            .pane(&name)
+            .map_or_else(gone, |p| ok(Model::terminal(p).to_string())),
+        "read" => w
+            .model
+            .pane(&name)
+            .map_or_else(gone, |p| ok(json!({"text": p.screen}).to_string())),
+        "keys" => w.model.pane(&name).map_or_else(gone, |_| ok("{}")),
+        "kill" => match w.model.pane(&name) {
+            Some(p) => {
                 p.closed = true;
+                ok("{}")
             }
-            ok("{}")
-        }
-        ["worktree", "remove", "--workspace", ws] => {
-            for p in m.panes.iter_mut().filter(|p| p.ws == *ws) {
-                p.closed = true;
-                let _ = std::fs::remove_dir_all(&p.cwd);
-                m.heads.remove(&p.cwd);
-            }
-            ok("{}")
-        }
-        ["pane", "list", "--workspace", ws] => {
-            let list: Vec<Value> = (m.panes.iter())
-                .filter(|p| p.ws == *ws && !p.closed)
-                .map(|p| json!({"pane_id": p.id, "agent": p.agent.as_ref().map(|_| "claude"), "cwd": p.cwd}))
-                .collect();
-            if list.is_empty() {
-                return err(1, "workspace_not_found");
-            }
-            ok(json!({"result": {"panes": list}}).to_string())
-        }
-        ["pane", "run", pane, ..] => match m.pane(pane) {
-            Some(_) => ok("{}"),
-            None => err(1, "pane_not_found"),
+            None => gone(),
         },
-        ["agent", "start", agent, "--kind", _, "--pane", pane, ..] => {
-            let role = agent.split('-').nth(1).unwrap_or("impl").to_string();
-            let queued = m.scripts.get_mut(&role).filter(|v| !v.is_empty()).map(|v| v.remove(0));
-            let script = queued.unwrap_or_else(|| crate::scenario::default_script(&mut w.rng, &role));
-            w.log(format!("model: {agent} runs {script:?}"));
+        "rm" => ok("{}"),
+        "wait" => match w.model.pane(&name) {
+            Some(t) => {
+                let until: Vec<&str> = p["until"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .collect();
+                let hit = match p["output"].as_str() {
+                    Some(o) => t.screen.contains(o),
+                    None => t.agent.is_some() && until.contains(&t.status.as_str()),
+                };
+                ok(json!({"outcome": if hit { "matched" } else { "timeout" }}).to_string())
+            }
+            None => gone(),
+        },
+        "send" => {
+            let text = p["text"].as_str().unwrap_or_default().to_string();
+            if w.model.pane(&name).is_none() {
+                return gone();
+            }
+            if text.starts_with("exec ") {
+                let role = name.split('-').nth(1).unwrap_or("impl").to_string();
+                let queued = w
+                    .model
+                    .scripts
+                    .get_mut(&role)
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.remove(0));
+                let script = queued.unwrap_or_else(|| crate::scenario::default_script(&mut w.rng, &role));
+                w.log(format!("model: {name} runs {script:?}"));
+                let m = &mut w.model;
+                let Some(p) = m.pane(&name) else { return gone() };
+                if p.agent.is_some() {
+                    return err(1, "agent_pane_busy");
+                }
+                (p.agent, p.status, p.script, p.born) = (Some(name.clone()), "working".into(), Some(script), now);
+                p.screen = "⏺ reading the brief\n".into();
+                m.at(now + 1, Ev::Lane { pane: name, step: 0 });
+                return ok("{}");
+            }
             let m = &mut w.model;
-            let Some(p) = m.pane(pane) else {
-                return err(1, "pane_not_found");
-            };
+            let Some(p) = m.pane(&name) else { return gone() };
             if p.agent.is_some() {
-                return err(1, "agent_pane_busy");
-            }
-            (p.agent, p.status, p.script, p.born) = (Some((*agent).into()), "working".into(), Some(script), now);
-            p.screen = "⏺ reading the brief\n".into();
-            let id = p.id.clone();
-            m.at(now + 1, Ev::Lane { pane: id, step: 0 });
-            ok(json!({"result": {"agent": {"name": agent, "pane_id": pane}}}).to_string())
-        }
-        ["agent", "wait", agent, ..] => match m.by_agent(agent) {
-            Some(p) if p.status == "working" || p.status == "blocked" => ok("{}"),
-            Some(_) => err(1, "timeout"),
-            None => err(1, "agent_not_found"),
-        },
-        ["pane", "get", pane] => match m.pane(pane) {
-            Some(p) => ok(
-                json!({"result": {"pane": {"pane_id": p.id, "agent": p.agent.as_ref().map(|_| "claude"),
-                "agent_status": p.status, "terminal_title": p.agent, "cwd": p.cwd}}})
-                .to_string(),
-            ),
-            None => err(1, "pane_not_found"),
-        },
-        ["pane", "read", pane, ..] => match m.pane(pane) {
-            Some(p) => ok(p.screen.clone()),
-            None => err(1, "pane_not_found"),
-        },
-        ["pane", "close", pane] => match m.pane(pane) {
-            Some(p) => {
-                p.closed = true;
-                ok("{}")
-            }
-            None => err(1, "pane_not_found"),
-        },
-        ["agent", "prompt", agent, text] => match m.by_agent(agent) {
-            Some(p) => {
-                p.told.push((*text).into());
+                p.told.push(text.clone());
                 p.screen += &format!("❯ {text}\n");
-                let id = p.id.clone();
-                crate::scenario::told(m, &id, now);
-                ok("{}")
+                crate::scenario::told(m, &name, now);
             }
-            None => err(1, "agent_not_found"),
-        },
-        ["pane", "send-text", pane, text] => match m.pane(pane) {
-            Some(p) => {
-                p.told.push((*text).into());
-                p.screen += &format!("❯ {text}\n");
-                ok("{}")
-            }
-            None => err(1, "pane_not_found"),
-        },
-        ["pane", "send-keys", pane, _] => match m.pane(pane) {
-            Some(_) => ok("{}"),
-            None => err(1, "pane_not_found"),
-        },
-        ["status"] => ok("herdr 0.5.0\nserver 0.5.0 running\n"),
-        ["workspace", "list"] => ok(json!({"result": {"workspaces": []}}).to_string()),
-        _ => {
-            let _ = sim;
-            unmodelled()
+            ok("{}")
         }
+        _ => unmodelled(),
     }
 }
 
@@ -514,12 +476,13 @@ fn git(w: &mut World, a: &[&str]) -> Out {
         ["add", ..] | ["reset", "-q", ..] | ["ls-tree", ..] | ["commit", ..] | ["push", ..] | ["stash", ..] => ok(""),
         ["merge-tree", ..] => ok(format!("{:040x}\n", 7)),
         ["show", _] => err(128, "fatal: path does not exist"),
-        ["worktree", "add", .., path, sha] => {
-            let _ = std::fs::create_dir_all(path);
-            m.heads.insert((*path).into(), (*sha).into());
+        ["worktree", "add", .., path, rev] => {
+            let _ = std::fs::create_dir_all(std::path::Path::new(path).join(".git"));
+            let head = m.origin.get(rev.trim_start_matches("origin/")).cloned();
+            m.heads.insert((*path).into(), head.unwrap_or_else(|| (*rev).into()));
             ok("")
         }
-        ["worktree", "remove", "--force", path] => {
+        ["worktree", "remove", "--force", path] | ["worktree", "remove", path] => {
             let _ = std::fs::remove_dir_all(path);
             m.heads.remove(*path);
             ok("")

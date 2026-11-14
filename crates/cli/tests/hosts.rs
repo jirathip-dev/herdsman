@@ -46,11 +46,6 @@ fn fake(mini: f64, remote: f64) -> Fake {
         )
 }
 
-fn herdr_lists(f: Fake) -> Fake {
-    f.reply("herdr agent list", NO_AGENTS)
-        .reply("herdr --machine bazzite agent list", NO_AGENTS)
-}
-
 fn two<'a>(f: &'a Fake, bazzite: &'a FakeShed) -> OverSsh<'a> {
     OverSsh {
         f,
@@ -69,17 +64,9 @@ fn shed_call_at(r: &Fake, method: &str) -> Option<usize> {
 
 const IMPL: &str = "sendmeter-impl-12";
 
-const HERDR_STATUS: &str = "Client:\n  version: 0.9.5\n\nserver:\n  version: 0.9.5\n";
-
 fn healthy(f: Fake) -> Fake {
-    f.reply(&format!("{SSH}'sh' '-c' 'PATH="), HERDR_STATUS)
-        .reply(&format!("{SSH}'sh' '-c' 'p=$(pgrep"), "")
-        .reply(&format!("{SSH}'git' 'ls-remote'"), "abc\tHEAD\n")
-        .reply(
-            "herdr --machine bazzite workspace create",
-            r#"{"result":{"root_pane":{"pane_id":"w5:p1"}}}"#,
-        )
-        .reply("herdr --machine bazzite pane read w5:p1", "gh:0\nclaude:0\nhs:done\n")
+    f.reply(&format!("{SSH}'git' 'ls-remote'"), "abc\tHEAD\n")
+        .reply(&format!("{SSH}'sh' '-lc'"), "")
         .reply(
             &format!("{SSH}'/opt/drover/bin/drover' '--version'"),
             &format!("drover {}\n", drover::VERSION),
@@ -92,12 +79,6 @@ fn ev(c: &drover::Ctx, ts: u64, issue: u64, kind: &str, d: serde_json::Value) {
 
 fn remote_spawn(c: &drover::Ctx, ts: u64) {
     let d = json!({"role": "impl", "agent": IMPL, "harness": "claude", "pane": IMPL, "workspace": "",
-                   "worktree": WT, "branch": "issue-12", "host": "bazzite", "machine": "bazzite"});
-    ev(c, ts, 12, "spawn", d);
-}
-
-fn herdr_remote_spawn(c: &drover::Ctx, ts: u64) {
-    let d = json!({"role": "impl", "agent": IMPL, "harness": "claude", "pane": "w9:p1", "workspace": "w9",
                    "worktree": WT, "branch": "issue-12", "host": "bazzite", "machine": "bazzite"});
     ev(c, ts, 12, "spawn", d);
 }
@@ -244,19 +225,6 @@ fn remote_fake() -> Fake {
         .reply(&format!("{SSH}'sh' '-c' 'mkdir"), "")
         .reply(&format!("{SSH}'sh' '-c' 'umask 077"), "")
         .reply(&format!("{SSH}'rm' '-f'"), "")
-}
-
-fn herdr_remote_fake() -> Fake {
-    let ws = r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#;
-    herdr_lists(remote_fake())
-        .reply("herdr --machine bazzite worktree create", ws)
-        .reply(
-            "herdr --machine bazzite pane list --workspace w9",
-            r#"{"result":{"panes":[{"pane_id":"w9:p1","agent":null}]}}"#,
-        )
-        .reply("herdr --machine bazzite pane run w9:p1 export", "{}")
-        .reply("herdr --machine bazzite agent start sendmeter-impl-12", "{}")
-        .reply("herdr --machine bazzite agent wait sendmeter-impl-12", "{}")
 }
 
 #[test]
@@ -618,11 +586,16 @@ fn lane_cards_and_the_herd_name_the_host() {
     assert!(herd.contains("\"host\":\"bazzite\""), "{herd}");
 }
 
-fn health_with(c: &drover::Ctx, bad: &str) -> Vec<String> {
+fn health_of(c: &drover::Ctx, f: &Fake, tags: &[String]) -> Vec<String> {
     let cfg = Config::load(&c.config).unwrap();
-    let r = healthy(fake(0.1, 0.1)).once(bad, 1, "Client:\n  version: 0.9.5\n\nserver:\n  version: 0.9.0\n");
-    let on = drover::hosts::On::new(&r, Some("bazzite"));
-    drover::hosts::health(c, &cfg, &on, &["docker".into()], "/home/me")
+    let (here, there) = (FakeShed::new(), FakeShed::new());
+    let over = two(f, &there);
+    let r = here.on(&over);
+    drover::hosts::health(c, &cfg, &drover::hosts::On::new(&r, Some("bazzite")), tags, "/home/me")
+}
+
+fn health_with(c: &drover::Ctx, bad: &str) -> Vec<String> {
+    health_of(c, &healthy(fake(0.1, 0.1)).once(bad, 1, ""), &["docker".into()])
 }
 
 #[test]
@@ -630,44 +603,40 @@ fn each_health_check_says_what_failed_and_how_to_fix_it() {
     let c = setup("hosts-health", "", true, 0);
     assert!(health_with(&c, "nothing").is_empty(), "all ✓");
     let cases = [
-        (format!("{SSH}'sh' '-c' 'PATH="), "✗ herdr — server none, client ? → herdr update on the host"),
-        (format!("{SSH}'sh' '-c' 'p=$(pgrep"), "✗ herdr session — the server runs outside the login session (keychain locked) → restart the herdr server from its launchd job: `launchctl kickstart -k gui/<uid>/<label>`"),
         (format!("{SSH}'git' 'ls-remote'"), "✗ git sendmeter — can't reach jirathip-dev/sendmeter: no stderr → add the host's SSH key to GitHub and set `git config --global url.git@github.com:.insteadOf https://github.com/`"),
-        ("herdr --machine bazzite workspace create".into(), "✗ gh — logged out in a herdr pane → ssh bazzite gh auth login"),
+        (format!("{SSH}'sh' '-lc' 'gh auth status'"), "✗ gh — logged out → ssh bazzite gh auth login"),
         (format!("{SSH}'/opt/drover/bin/drover'"), "! drover — missing there, drover 0.1.0"),
     ];
     for (bad, want) in cases {
         let rows = health_with(&c, &bad);
         assert!(rows[0].starts_with(want), "{bad}: {rows:?}");
     }
-    let r = healthy(fake(0.1, 0.1)).once(
-        &format!("{SSH}'sh' '-c' 'PATH="),
-        0,
-        "Client:\n  version: 0.9.5\n\nserver:\n  version: 0.9.0\n",
-    );
+    let r = healthy(fake(0.1, 0.1)).once(&format!("{SSH}'sh' '-lc' 'claude auth status'"), 1, "");
+    let rows = health_of(&c, &r, &[]);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(rows[0].starts_with("✗ claude — logged out → claude auth login"));
     let cfg = Config::load(&c.config).unwrap();
-    let rows = drover::hosts::health(&c, &cfg, &drover::hosts::On::new(&r, Some("bazzite")), &[], "/h");
-    assert!(rows[0].starts_with("✗ herdr — server 0.9.0, client 0.9.5"), "{rows:?}");
-    let r = healthy(fake(0.1, 0.1)).once("herdr --machine bazzite pane read", 0, "gh:0\nclaude:1\nhs:done\n");
+    let (here, f) = (FakeShed::new(), healthy(fake(0.1, 0.1)));
+    let r = here.on(&f);
     let rows = drover::hosts::health(&c, &cfg, &drover::hosts::On::new(&r, Some("bazzite")), &[], "/h");
     assert_eq!(rows.len(), 1, "{rows:?}");
-    assert!(rows[0].starts_with("✗ claude — logged out in a herdr pane → claude auth login"));
     assert!(
-        r.called("herdr --machine bazzite workspace close w5"),
-        "the throwaway workspace is closed"
+        rows[0].starts_with("! shed: "),
+        "a shed that does not answer only warns: {rows:?}"
     );
-    let r = healthy(herdr_lists(fake(0.1, 0.1)))
+    let (_sh, bazzite) = (FakeShed::attached(&c), FakeShed::new());
+    let r = healthy(fake(0.1, 0.1))
         .reply(&format!("{SSH}'sh' '-c' 'uname"), "Linux\nx86_64\n/home/me\ndocker\n")
         .once(&format!("{SSH}'git' 'ls-remote'"), 128, "");
-    let (code, out) = run(&c, &r, &["doctor"]);
+    let (code, out) = run(&c, &two(&r, &bazzite), &["doctor"]);
     assert_eq!(code, 1, "{out}");
     assert!(
         out.contains("\n✗ host bazzite git sendmeter — can't reach jirathip-dev/sendmeter"),
         "{out}"
     );
-    let (_, out) = run(&c, &healthy(r), &["doctor"]);
+    let (_, out) = run(&c, &two(&healthy(r), &bazzite), &["doctor"]);
     assert!(
-        out.contains("\n✓ host bazzite — herdr, session, git, gh, claude, drover 0.1.0 ("),
+        out.contains("\n✓ host bazzite — git, gh, claude, drover 0.1.0 ("),
         "{out}"
     );
 }
@@ -675,13 +644,13 @@ fn each_health_check_says_what_failed_and_how_to_fix_it() {
 #[test]
 fn doctor_flags_a_stale_remote_fleet_toml_and_leaves_it() {
     let c = setup("hosts-stale-conf", "", true, 0);
-    let r = healthy(herdr_lists(fake(0.1, 0.1)))
-        .reply(&format!("{SSH}'sh' '-c' 'uname"), "Linux\nx86_64\n/home/me\ndocker\n");
-    let (_, out) = run(&c, &r, &["doctor"]);
+    let (_sh, bazzite) = (FakeShed::attached(&c), FakeShed::new());
+    let r = healthy(fake(0.1, 0.1)).reply(&format!("{SSH}'sh' '-c' 'uname"), "Linux\nx86_64\n/home/me\ndocker\n");
+    let (_, out) = run(&c, &two(&r, &bazzite), &["doctor"]);
     assert!(!out.contains("stale fleet.toml"), "{out}");
     let conf = c.config.display().to_string();
     let r = r.reply(&format!("{SSH}'sh' '-c' 'test -e \"$1\"' 'sh' '{conf}'"), "");
-    let (_, out) = run(&c, &r, &["doctor"]);
+    let (_, out) = run(&c, &two(&r, &bazzite), &["doctor"]);
     assert!(out.contains("\n! stale fleet.toml on bazzite: no longer read"), "{out}");
     assert!(!r.calls.borrow().iter().any(|l| l.contains("'rm'") && l.contains(&conf)));
 }
@@ -689,24 +658,17 @@ fn doctor_flags_a_stale_remote_fleet_toml_and_leaves_it() {
 #[test]
 fn doctor_names_the_failed_host_check_and_says_unreachable_only_for_ssh() {
     let c = setup("hosts-doctor-why", "", true, 0);
-    let mut r = healthy(herdr_lists(fake(0.1, 0.1)))
-        .reply(&format!("{SSH}'sh' '-c' 'uname"), "Linux\nx86_64\n/home/me\ndocker\n");
-    let list = "herdr --machine bazzite agent list";
-    r.replies.retain(|p| p.0 != list);
-    let no = drover::runner::Out {
-        code: 1,
-        stderr: "herdr: no server on bazzite".into(),
-        ..Default::default()
-    };
-    r.replies.insert(0, (list.into(), no));
-    let (code, out) = run(&c, &r, &["doctor"]);
-    assert_eq!(code, 1, "{out}");
+    let _sh = FakeShed::attached(&c);
+    let r = healthy(fake(0.1, 0.1))
+        .reply(&format!("{SSH}'sh' '-c' 'uname"), "Linux\nx86_64\n/home/me\ndocker\n")
+        .once_err(&format!("{SSH}'shed' 'connect'"), 1, "shed: no server on bazzite");
+    let (_, out) = run(&c, &r, &["doctor"]);
     assert!(
-        out.contains("\n✗ host bazzite — herdr agent list: ") && out.contains("no server on bazzite"),
+        out.contains("\n! host bazzite shed: ") && out.contains("no server on bazzite"),
         "{out}"
     );
     assert!(!out.contains("unreachable"), "{out}");
-    let mut r = herdr_lists(fake(0.1, 0.1));
+    let mut r = fake(0.1, 0.1);
     r.replies.retain(|p| !p.0.starts_with(SSH));
     let (_, out) = run(&c, &r, &["doctor"]);
     assert!(out.contains("\n✗ host bazzite — unreachable (ssh: "), "{out}");
@@ -716,8 +678,7 @@ fn doctor_names_the_failed_host_check_and_says_unreachable_only_for_ssh() {
 fn an_unhealthy_host_takes_no_lanes_and_shows_red() {
     let c = setup("hosts-sick", "", true, 0);
     let mut all = cached(&c);
-    all.get_mut("bazzite").unwrap().health =
-        vec!["✗ gh — logged out in a herdr pane → ssh bazzite gh auth login".into()];
+    all.get_mut("bazzite").unwrap().health = vec!["✗ gh — logged out → ssh bazzite gh auth login".into()];
     std::fs::write(
         c.state.with_file_name("hosts.json"),
         serde_json::to_string(&all).unwrap(),
@@ -733,30 +694,26 @@ fn an_unhealthy_host_takes_no_lanes_and_shows_red() {
     let e = placed(&c, &r, 12, "impl", None).unwrap_err();
     assert_eq!(
         e,
-        "NO_HOST: bazzite: unhealthy: ✗ gh — logged out in a herdr pane → ssh bazzite gh auth login"
+        "NO_HOST: bazzite: unhealthy: ✗ gh — logged out → ssh bazzite gh auth login"
     );
     let cfg = Config::load(&c.config).unwrap();
     let s = &cached(&c)["bazzite"];
     let (tone, words) = drover::hosts::shown(cfg.hosts["bazzite"].enabled, s, 0, NOW);
     assert_eq!(
         (tone, words.as_str()),
-        (
-            "r",
-            "unhealthy · gh — logged out in a herdr pane → ssh bazzite gh auth login"
-        )
+        ("r", "unhealthy · gh — logged out → ssh bazzite gh auth login")
     );
 }
 
 #[test]
 fn a_host_that_cannot_reach_a_repo_is_skipped_for_that_fleet_only() {
     let c = setup("hosts-reach", "", true, 0);
-    let cfg = Config::load(&c.config).unwrap();
     let r = healthy(fake(0.1, 0.1)).once_err(
         &format!("{SSH}'git' 'ls-remote'"),
         128,
         "remote: Repository not found.\nfatal: repository not found\n",
     );
-    let rows = drover::hosts::health(&c, &cfg, &drover::hosts::On::new(&r, Some("bazzite")), &[], "/h");
+    let rows = health_of(&c, &r, &[]);
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert!(
         rows[0].starts_with("✗ git sendmeter — can't reach jirathip-dev/sendmeter: remote: Repository not found. →"),
@@ -865,7 +822,7 @@ fn a_failed_install_is_logged_alerted_once_and_retried_each_tick() {
     let sha = env!("DROVER_SHA");
     let failed = format!("drover 0.1.0 (0ld)\ndone 101 {sha} drover 0.1.0 (0ld)\n");
     for _ in 0..2 {
-        let r = herdr_lists(synced(&failed));
+        let r = synced(&failed);
         run(&c, &two(&r, &bazzite), &["check"]);
         assert_eq!(r.count(&format!("{SSH}{START}")), 1, "retried");
     }
@@ -1011,19 +968,6 @@ fn design_runs_on_the_main_host_only_and_a_role_pin_holds() {
 }
 
 #[test]
-fn a_failed_remote_start_closes_its_workspace() {
-    let c = setup("hosts-fail", "", true, 0);
-    with_account(&c);
-    let r = herdr_remote_fake()
-        .once_err("herdr --machine bazzite agent start", 1, r#"{"error":{"code":"boom"}}"#)
-        .reply("herdr --machine bazzite workspace close w9", "{}");
-    let (code, out) = run(&c, &r, &["spawn", "sendmeter", "12", "impl", "--host", "bazzite"]);
-    assert_eq!(code, 1, "{out}");
-    assert!(r.called("herdr --machine bazzite workspace close w9"));
-    assert!(!r.called("herdr --machine bazzite pane close"));
-}
-
-#[test]
 fn a_remote_review_is_read_over_ssh_and_recorded() {
     let c = setup("hosts-verdict", "", true, 0);
     remote_spawn(&c, NOW - 900);
@@ -1161,41 +1105,6 @@ fn a_remote_lane_gets_the_service_url_and_its_own_token() {
 }
 
 #[test]
-fn a_lost_agent_name_retries_once_without_a_double_start() {
-    let lost =
-        r#"{"error":{"code":"agent_name_not_found","message":"named agent no longer owns the target terminal"}}"#;
-    let start = "herdr --machine bazzite agent start";
-    for up in [false, true] {
-        let c = setup("hosts-lost", "", true, 0);
-        with_account(&c);
-        let pane =
-            json!({"result": {"pane": {"pane_id": "w9:p1", "agent": "claude", "terminal_title": "✳ Claude Code"}}});
-        let mut r = herdr_remote_fake()
-            .once_err(start, 1, lost)
-            .reply(
-                "herdr --machine bazzite pane split w9:p1",
-                r#"{"result":{"pane":{"pane_id":"w9:p2"}}}"#,
-            )
-            .reply("herdr --machine bazzite pane run w9:p2 export", "{}")
-            .reply("herdr --machine bazzite agent rename w9:p1 sendmeter-impl-12", "{}");
-        if up {
-            r = r.reply("herdr --machine bazzite pane get w9:p1", &pane.to_string());
-        }
-        let (code, out) = run(&c, &r, &["spawn", "sendmeter", "12", "impl", "--host", "bazzite"]);
-        assert_eq!(code, 0, "{out} {:?}", r.calls.borrow());
-        assert_eq!(r.count(start), if up { 1 } else { 2 });
-        assert_eq!(r.called("herdr --machine bazzite agent rename"), up);
-        assert_eq!(r.called("herdr --machine bazzite pane close w9:p1"), !up);
-        assert!(!r.called("herdr --machine bazzite workspace close"));
-        let calls = r.calls.borrow();
-        assert!(calls
-            .iter()
-            .filter(|c| c.starts_with("herdr "))
-            .all(|c| c.starts_with("herdr --machine bazzite ")));
-    }
-}
-
-#[test]
 fn asks_stranded_on_a_remote_host_are_imported_once() {
     let c = setup("hosts-import", "", true, 0);
     remote_spawn(&c, NOW - 900);
@@ -1242,52 +1151,6 @@ fn asks_stranded_on_a_remote_host_are_imported_once() {
     assert!(out.contains("q2 #12") && out.contains("Which way?"), "{out}");
 }
 
-#[test]
-fn a_lost_agent_name_on_the_main_host_retries_or_keeps_the_harness() {
-    let lost = r#"{"error":{"code":"agent_name_not_found"}}"#;
-    let ws = r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#;
-    for up in [false, true] {
-        let c = setup("hosts-lost-main", "", true, 0);
-        with_account(&c);
-        let pane = json!({"result": {"pane": {"pane_id": "w9:p1", "agent": "claude", "agent_status": "idle"}}});
-        let mut r = herdr_lists(fake(0.1, 0.1))
-            .reply("gh issue view 12", r#"{"title":"Fix the meter","body":"AC: it works"}"#)
-            .reply("git -C", "")
-            .reply("herdr worktree create", ws)
-            .reply(
-                "herdr pane list --workspace w9",
-                r#"{"result":{"panes":[{"pane_id":"w9:p1","agent":null}]}}"#,
-            )
-            .reply("herdr pane run w9:p1 export", "{}")
-            .reply("herdr pane run w9:p2 export", "{}")
-            .reply("herdr pane split w9:p1", r#"{"result":{"pane":{"pane_id":"w9:p2"}}}"#)
-            .reply("herdr pane close w9:p1", "{}")
-            .once_err("herdr agent start", 1, lost)
-            .reply("herdr agent start sendmeter-impl-12", "{}")
-            .reply("herdr agent wait sendmeter-impl-12", "{}")
-            .reply("herdr agent rename w9:p1 sendmeter-impl-12", "{}");
-        if up {
-            r = r.reply("herdr pane get w9:p1", &pane.to_string());
-        }
-        let (code, out) = run(&c, &r, &["spawn", "sendmeter", "12", "impl", "--host", "mini"]);
-        assert_eq!(code, 0, "{out} {:?}", r.calls.borrow());
-        assert_eq!(r.count("herdr agent start"), if up { 1 } else { 2 });
-        assert_eq!(r.called("herdr agent rename"), up);
-        assert_eq!(r.called("herdr pane close w9:p1"), !up);
-        assert!(!r.called("herdr --machine"));
-        let spawned = read(&c.state)
-            .unwrap()
-            .to_vec()
-            .into_iter()
-            .rfind(|e| e.kind == "spawn")
-            .unwrap();
-        assert_eq!(
-            (spawned.str("host"), spawned.str("pane")),
-            (Some("mini"), Some(if up { "w9:p1" } else { "w9:p2" }))
-        );
-    }
-}
-
 fn live_fake() -> Fake {
     Fake::default()
         .reply("which shed", "/opt/shed/bin/shed\n")
@@ -1309,52 +1172,39 @@ fn live_on() -> FakeShed {
 }
 
 #[test]
-fn a_remote_supersede_stays_on_its_host_and_outlives_a_gone_workspace() {
+fn a_remote_supersede_stays_on_its_host() {
     let c = setup("hosts-supersede", "", true, 0);
     assert_eq!(run(&c, &Fake::default(), &["profiles", "sync"]).0, 0);
-    herdr_remote_spawn(&c, NOW - 900);
-    let ws = |w: &str| format!(r#"{{"result":{{"workspace":{{"workspace_id":"{w}"}}}}}}"#);
-    let gone = r#"{"error":{"code":"workspace_not_found","message":"workspace w9 not found"}}"#;
-    let r = live_fake()
-        .reply("herdr agent list", NO_AGENTS)
-        .reply(
-            "herdr --machine bazzite agent list",
-            &agents(&[("sendmeter-impl-12", "idle", WT, "w9:p1")]),
-        )
+    remote_spawn(&c, NOW - 900);
+    let (sh, bazzite) = (FakeShed::attached(&c), live_on());
+    let f = live_fake()
         .reply(&format!("{SSH}'sh' '-c' 'test -e"), "")
         .reply(&format!("{SSH}'git' '-C'"), "")
-        .reply(&format!("{SSH}'sh' '-c' 'mkdir"), "")
-        .reply("herdr --machine bazzite pane close w9:p1", "{}")
-        .once("herdr --machine bazzite worktree open", 0, &ws("w9"))
-        .reply("herdr --machine bazzite worktree open", &ws("wA"))
-        .once_err("herdr --machine bazzite pane list --workspace w9", 1, gone)
-        .reply(
-            "herdr --machine bazzite pane list --workspace wA",
-            r#"{"result":{"panes":[{"pane_id":"wA:p1","agent":null}]}}"#,
-        )
-        .reply("herdr --machine bazzite pane run wA:p1 export", "{}")
-        .reply("herdr --machine bazzite agent start sendmeter-impl-12", "{}")
-        .reply("herdr --machine bazzite agent wait sendmeter-impl-12", "{}");
-    let (code, out) = run(&c, &r, &["spawn", "sendmeter", "12", "impl", "--supersede"]);
-    let calls = r.calls.borrow().clone();
-    assert_eq!(code, 0, "{out} {calls:?}");
-    let herdr: Vec<_> = calls
-        .iter()
-        .filter(|c| c.starts_with("herdr ") && !c.starts_with("herdr agent list"))
-        .collect();
-    assert!(
-        herdr.iter().all(|c| c.starts_with("herdr --machine bazzite ")),
-        "{herdr:?}"
+        .reply(&format!("{SSH}'sh' '-c' 'mkdir"), "");
+    let (code, out) = run(
+        &c,
+        &two(&f, &bazzite),
+        &["spawn", "sendmeter", "12", "impl", "--supersede"],
     );
-    assert!(r.called("herdr --machine bazzite pane close w9:p1"), "{calls:?}");
-    assert_eq!(r.count("herdr --machine bazzite worktree open"), 2, "{calls:?}");
+    assert_eq!(code, 0, "{out} {:?}", f.calls.borrow());
+    assert!(bazzite.called("kill", IMPL), "{:?}", bazzite.methods());
+    assert!(
+        bazzite.called("run", IMPL),
+        "the new lane runs there: {:?}",
+        bazzite.methods()
+    );
+    assert!(
+        sh.methods().iter().all(|m| m == "ls"),
+        "nothing but listing here: {:?}",
+        sh.methods()
+    );
     let e = read(&c.state)
         .unwrap()
         .to_vec()
         .into_iter()
         .rfind(|e| e.kind == "spawn")
         .unwrap();
-    assert_eq!((e.str("workspace"), e.str("pane")), (Some("wA"), Some("wA:p1")));
+    assert_eq!((e.str("host"), e.str("pane")), (Some("bazzite"), Some(IMPL)));
 }
 
 #[test]
@@ -1551,7 +1401,10 @@ fn a_symlinked_drover_updates_and_reads_back_its_real_install_root() {
             &format!("drover {}\n", drover::VERSION),
         )
         .reply(&format!("{SSH}'{real}' '--version'"), "drover 0.1.0 (0ld)\n");
-    let (on, home) = (drover::hosts::On::new(&r, Some("bazzite")), drover::config::home());
+    let (here, there) = (FakeShed::new(), FakeShed::new());
+    let over = two(&r, &there);
+    let base = here.on(&over);
+    let (on, home) = (drover::hosts::On::new(&base, Some("bazzite")), drover::config::home());
     let home = home.to_str().unwrap();
     let rows = drover::hosts::health(&c, &cfg, &on, &[], home);
     assert_eq!(rows.len(), 1, "{rows:?}");

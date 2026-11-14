@@ -82,23 +82,17 @@ fn acp(adapter: &[&str]) -> Fake {
         .reply("shed send", "")
 }
 
-fn herdr(agents: &str) -> Fake {
-    Fake::default()
-        .reply("herdr agent list", agents)
-        .reply(
-            "herdr workspace create",
-            r#"{"result":{"root_pane":{"pane_id":"w9:p1"}}}"#,
-        )
-        .reply("herdr workspace close", "")
-        .reply("herdr pane run", "")
-        .reply("herdr pane send-keys", "")
-        .reply("herdr agent start", "")
-        .reply("herdr agent wait", "")
-        .reply("herdr agent prompt", "")
+fn shed_setup(name: &str, role_extra: &str, extra: &str) -> (drover::Ctx, FakeShed) {
+    let c = setup(name, role_extra, extra);
+    let b = FakeShed::attached(&c);
+    (c, b)
 }
 
-fn live() -> String {
-    agents(&[("orchestrator-t1", "idle", "/x", "w9:p1")])
+fn exported(line: &str, var: &str) -> String {
+    let mut sh = std::process::Command::new("sh");
+    sh.env_remove("CLAUDE_CODE_OAUTH_TOKEN").env_remove("CLAUDE_CONFIG_DIR");
+    let line = format!("{}; printf %s \"${var}\"", line.trim_end_matches('\r'));
+    String::from_utf8(sh.arg("-c").arg(line).output().unwrap().stdout).unwrap()
 }
 
 #[test]
@@ -208,44 +202,42 @@ fn a_config_proposal_is_applied_only_by_the_owners_tap_with_a_backup_and_a_docto
 #[test]
 fn a_usage_limit_resumes_the_orchestrator_on_the_next_account_with_the_same_session() {
     let accounts = "[accounts]\nA = \"CLAUDE_CODE_OAUTH_TOKEN_A\"\nB = \"CLAUDE_CODE_OAUTH_TOKEN_B\"\n";
-    let c = setup("cards-switch", "fallback = [\"claude:A\", \"claude:B\"]", accounts);
-    assert_eq!(run(&c, &herdr(NO_AGENTS), &["thread", "say", "t1", "scope #12"]).0, 0);
+    let (c, b) = shed_setup("cards-switch", "fallback = [\"claude:A\", \"claude:B\"]", accounts);
+    assert_eq!(run(&c, &Fake::default(), &["thread", "say", "t1", "scope #12"]).0, 0);
     run(&c, &Fake::default(), &["thread", "reply", "t1", "Small or full?"]);
     let first = kinds(&c, "orchestrator-start")[0].clone();
     assert_eq!(first.str("account"), Some("A"));
     let session = first.str("session").unwrap().to_string();
 
-    let banner = "You've hit your limit · resets 6:40pm";
-    let r = herdr(&live()).reply("herdr pane read w9:p1", banner);
-    let sh = Shell(&r, "CLAUDE_CONFIG_DIR|$CLAUDE_CODE_OAUTH_TOKEN", Shared::default());
+    b.screen("orchestrator-t1", "You've hit your limit · resets 6:40pm");
+    let before = b.sent("orchestrator-t1").len();
     let (code, out) = run(
         &drover::Ctx {
             now: T + 60,
             ..c.clone()
         },
-        &sh,
+        &Fake::default(),
         &["check"],
     );
     assert_eq!(code, 0, "{out}");
     assert_eq!(kinds(&c, "account-capped")[0].str("account"), Some("A"));
-    assert!(r.called("herdr workspace close w9"));
+    assert!(b.called("kill", "orchestrator-t1"), "{:?}", b.methods());
     let next = &kinds(&c, "orchestrator-start")[1];
     assert_eq!(
         (next.str("account"), next.str("session")),
         (Some("B"), Some(session.as_str()))
     );
     assert_eq!(*next.val("resumed"), json!(true));
-    let calls = r.calls.borrow();
-    let start = calls
-        .iter()
-        .find(|c| c.starts_with("herdr agent start orchestrator-t1"))
-        .unwrap();
+    let sent = b.sent("orchestrator-t1")[before..].to_vec();
+    let start = sent.iter().find(|l| l.starts_with("exec 'claude' ")).unwrap();
     assert!(
-        start.contains(&format!("--resume {session}")) && !start.contains("--session-id"),
+        start.contains(&format!("'--resume' '{session}'")) && !start.contains("--session-id"),
         "{start}"
     );
-    let b = drover::config::home().join(".config/drover/accounts/B");
-    assert_eq!(*sh.2.borrow(), [format!("{}|", b.display())], "on B: {calls:?}");
+    let home = drover::config::home().join(".config/drover/accounts/B");
+    let export = sent.iter().find(|l| l.starts_with("export ")).unwrap();
+    let got = exported(export, "CLAUDE_CONFIG_DIR|$CLAUDE_CODE_OAUTH_TOKEN");
+    assert_eq!(got, format!("{}|", home.display()), "on B: {sent:?}");
     let (_, show) = run(&c, &Fake::default(), &["thread", "show", "t1"]);
     assert!(
         show.contains(
@@ -314,19 +306,19 @@ fn a_usage_limit_restarts_the_orchestrator_on_the_next_account() {
 fn a_signed_out_orchestrator_with_no_account_gets_a_sign_in_card_for_the_harness_login() {
     let signed_out = "Invalid API key · Please run /login";
     let page = |c: &drover::Ctx| {
-        let r = herdr(NO_AGENTS);
+        let r = Fake::default();
         let s = Server::new(c, &r, Some(ADDR.into()));
         chat(&s, &pair(&s, c, "Mozilla/5.0 (iPhone)", T), T + 120)
     };
-    let c = setup("cards-signin-plain", "", "");
-    assert_eq!(run(&c, &herdr(NO_AGENTS), &["thread", "say", "t1", "scope #12"]).0, 0);
+    let (c, b) = shed_setup("cards-signin-plain", "", "");
+    assert_eq!(run(&c, &Fake::default(), &["thread", "say", "t1", "scope #12"]).0, 0);
     let later = drover::Ctx {
         now: T + 60,
         ..c.clone()
     };
-    let r = herdr(&live()).reply("herdr pane read w9:p1", signed_out);
-    assert_eq!(run(&later, &r, &["check"]).0, 0);
-    assert!(r.called("herdr workspace close w9"));
+    b.screen("orchestrator-t1", signed_out);
+    assert_eq!(run(&later, &Fake::default(), &["check"]).0, 0);
+    assert!(b.called("kill", "orchestrator-t1"), "{:?}", b.methods());
     assert_eq!(kinds(&c, "orchestrator-start").len(), 1, "no account to resume on");
     assert!(kinds(&c, "agent-unavailable").is_empty(), "the harness is not rested");
     let lines: Vec<_> = kinds(&c, "thread-msg")
@@ -336,11 +328,9 @@ fn a_signed_out_orchestrator_with_no_account_gets_a_sign_in_card_for_the_harness
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0].str("signin"), Some("claude"));
     assert!(page(&c).contains("claude is signed out: sign in <button type=button data-su=\"claude\""));
-    run(
-        &later,
-        &herdr(&live()).reply("herdr pane read w9:p1", signed_out),
-        &["check"],
-    );
+    b.add("orchestrator-t1", json!({"fleet": "sendmeter", "harness": "claude"}));
+    b.screen("orchestrator-t1", signed_out);
+    run(&later, &Fake::default(), &["check"]);
     assert_eq!(
         kinds(&c, "thread-msg")
             .iter()

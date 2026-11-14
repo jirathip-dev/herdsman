@@ -41,7 +41,7 @@ drover thread ls [FLEET] [--json]           # per repo: title, last message, unr
   `drover config propose`) and the chip offers it. A send on a pick no longer offered is refused `BAD_VALUE` with a
   system line naming the model and the list (the message stays); a model the CLI rejects at start is one system line
   with its error, not retried.
-- **No worktree:** it runs in `<state dir>/orchestrator/<thread>/` (or `<[orchestrator] dir>/<thread>/`) in its own herdr workspace, as agent
+- **No worktree:** it runs in `<state dir>/orchestrator/<thread>/` (or `<[orchestrator] dir>/<thread>/`) in its own shed terminal (an ACP session on a `shed-acp` fleet), as agent
   `orchestrator-<thread>`, with `DROVER_LANE=<fleet>:-:orchestrator` (so the lane hook guards it) and
   `DROVER_THREAD=<thread>`.
 - **Its brief** (`.brief.md` there, rewritten at each start) is `roles/orchestrator.md`, the thread and repo, then the

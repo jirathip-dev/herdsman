@@ -14,14 +14,13 @@ profile = "lane-rev"
   layer: reviewers get the `workspace-write` sandbox, other roles `danger-full-access`;
   approvals are `never` (an unattended lane cannot answer them).
 - `drover spawn` refuses unless `dsh-tui version` reports profile `0.17.0`
-  (`providers::DSH_TUI_VERSION`). It types `dsh-tui --patch <file>` into the lane shell
-  (herdr has no `dsh` agent kind), waits until herdr shows the pane as agent `dsh-tui`
-  with state `idle` (dsh-TUI reports its own state to herdr), presses Esc if the
-  first-run wizard is up, names the agent, types the kick with `herdr pane send-text` +
-  Enter (`herdr agent prompt` refuses agents herdr did not start) and confirms by
+  (`providers::DSH_TUI_VERSION`). It types `dsh-tui --patch <file>` into the lane shell,
+  waits until the pane shows agent `dsh-tui` with state `idle` (dsh-TUI reports its own
+  state), presses Esc if the first-run wizard is up, types the kick with `pane send-text` +
+  Enter and confirms by
   `working`, `blocked` or `done`, retrying up to 3 times.
-- dsh-TUI's own state reports can drop the herdr agent name (seen once in the pilot;
-  the final pilot lane kept it), so `herdr agent list` may show the lane as an unnamed
+- dsh-TUI's own state reports can drop the agent name (seen once in the pilot;
+  the final pilot lane kept it), so the agent list may show the lane as an unnamed
   `dsh-tui` agent; `drover check` then matches it by the lane's spawn pane.
 - Before launch, spawn installs a git `pre-push` hook for an issue lane's worktree only
   (`extensions.worktreeConfig` + `core.hooksPath` in the worktree's config) that runs

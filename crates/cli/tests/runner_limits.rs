@@ -59,8 +59,6 @@ fn the_limits_table() {
     assert_eq!(secs("gh", &["pr", "view", "issue-9"]), 60);
     assert_eq!(secs("security", &["find-generic-password", "-s", "x"]), 10);
     assert_eq!(secs("/usr/bin/codesign", &["-v", "x"]), 10);
-    assert_eq!(secs("herdr", &["--machine", "air", "agent", "list"]), 20);
-    assert_eq!(secs("herdr", &["agent", "start", "a", "--timeout", "90000", "--"]), 120);
     assert_eq!(secs("git", &["-C", "/r", "fetch", "origin"]), 600);
     assert_eq!(secs("git", &["-C", "/r", "status"]), 60);
     assert_eq!(secs("cp", &["-cR", "a", "b"]), 600);

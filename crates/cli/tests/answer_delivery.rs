@@ -141,8 +141,9 @@ fn drive_retries_an_undelivered_answer_until_it_lands_or_the_lane_is_gone() {
     assert!(typed(&sh, LANE, "DECISION q1: yes"), "{:?}", sh.methods());
     assert_eq!(kinds(&c, "answer-delivered")[0].str("agent"), Some(LANE));
     assert!(!page(&Fake::default()).contains("not delivered"));
+    let tries = sh.sent(LANE).len();
     run(&c, &Fake::default(), &["drive", "--fast"]);
-    assert_eq!(sh.sent(LANE).len(), 1, "typed once: {:?}", sh.sent(LANE));
+    assert_eq!(sh.sent(LANE).len(), tries, "typed once: {:?}", sh.sent(LANE));
 
     let c = ctx(&tmpdir("deliver-gone"), CONFIG);
     let sh = FakeShed::new();
@@ -153,8 +154,9 @@ fn drive_retries_an_undelivered_answer_until_it_lands_or_the_lane_is_gone() {
     let closed = Event::new(NOW, "sendmeter", Some(36), "lane-closed", json!({"agent": LANE}));
     append(&c.state, &closed).unwrap();
     sh.lane(LANE, "idle", "/x");
+    let tries = sh.sent(LANE).len();
     run(&c, &Fake::default(), &["drive", "--fast"]);
-    assert!(sh.sent(LANE).is_empty(), "{:?}", sh.methods());
+    assert_eq!(sh.sent(LANE).len(), tries, "{:?}", sh.methods());
 }
 
 #[test]

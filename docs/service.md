@@ -24,15 +24,11 @@ dependency, `tokio`, in its own crate (`crates/service`); every other crate stay
     it is logged; this host or a paired device's cookie only.
   - `POST /api/v1/cmd` `{"token", "args", "files"}`: a remote lane's command (below).
 - **The board** runs in the same process with `--board` (the `serve` job's address); it is not grown here.
-- **Lane state** (#529) comes from the runtimes' event streams, not from polling: the service subscribes to herdr's
-  socket API (`HERDR_SOCKET_PATH`, else `~/.config/herdr/herdr.sock`: the pane events, and each listed pane's agent
-  status) and, with `[runtime] kind = "shed"`, follows shed's `events` (keeping `shed.seq`, so drive's intake finds
-  nothing left). Each lane's change is logged as a passive `lane-state` (`working`, `idle`, `done`, `blocked`;
-  `gone` once its process exits or its agent leaves the pane) as it happens. While herdr's stream is up its agent
-  list, read again only when a pane is created, updated, closed or exits or its agent comes or goes, is the one every
-  pass and the board in the service's process read. A dropped stream logs `lane-stream` (`state: down`, `why`), the
-  passes poll `herdr agent list` again, the Host tab's `herdr lane events` (or `shed lane events`) row turns amber
-  ("down …: why · polling"), and the service reconnects every 5 s.
+- **Lane state** (#529) comes from shed's `events` stream, not from polling: the service follows it (keeping
+  `shed.seq`, so drive's intake finds nothing left). Each lane's change is logged as a passive `lane-state`
+  (`working`, `idle`, `done`, `blocked`; `gone` once its process exits) as it happens. A dropped stream logs
+  `lane-stream` (`state: down`, `why`), the Host tab's `shed lane events` row turns amber ("down …: why · polling"),
+  and the service reconnects every 5 s.
 
 ## Remote lanes over HTTP
 
@@ -90,7 +86,7 @@ The service's budget is the planned +3,000, inside the 31,500 cap the owner set 
 The owner decided in #345's q409 (2026-11-06): "Defer (a)-(e) to a follow-up issue; list them in docs/service.md as
 deferred with this decision; merge #519 as the service base." Not built here:
 
-- (a) lane state from herdr (or berth) event streams: built in #529 (see Lane state above);
+- (a) lane state from the runtime's event stream: built in #529 (see Lane state above);
 - (b) batched GraphQL polling of GitHub with ETags: built in #530 (see GitHub above);
 - (c) one kept-open SSH connection per host and one GitHub client;
 - (d) the board served from memory with one live stream to each phone; the board still polls, and the future cooee

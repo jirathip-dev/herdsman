@@ -181,7 +181,6 @@ spawn_pending_max_secs = 300   # a spawn marker or kick lock older than this (or
 # respawn_max = 3   # #779: spawn refuses `RESPAWN_LOOP` (one owner ask: try again / park) after this many failed starts
 # respawn_window_minutes = 60   # of an issue's role (lane died, killed, prompt never landed) within this window
 # promise_passes = { next-pass = 2, merging = 2, spawn-pending = 2, waiting-on = 2 }   # #854: drive passes a waiting line may stay true before `promise-missed`
-# serve_herdr_secs = 2   # #859: serve re-reads herdr's agents this often in the background (a request never runs it)
 # serve_shed_secs = 5    # shed's sessions
 # serve_remote_secs = 10   # the remote hosts' agents (ssh)
 # serve_host_secs = 10   # the host sample
@@ -203,7 +202,7 @@ on = ["stall", "lane-dead", "ready-unmerged", "blocked", "merged", "needs-human"
 # cmd = "claude /login"
 # env = { CLAUDE_CONFIG_DIR = "~/accounts/B" }
 
-# #298, #455: the terminal runtime new lanes start in: herdr (default) or shed (docs/runtimes.md).
+# #298, #455, #721: the shed runtime new lanes start in (required): shed or shed-acp (docs/runtimes.md).
 # [runtime]
 # kind = "shed"   # "berth", its old name, still works for one release (with a warning)
 # acp = "claude-acp"   # optional ACP mode (docs/runtimes.md)

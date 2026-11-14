@@ -264,11 +264,52 @@ pub struct OverSsh<'a> {
     pub hosts: Vec<(&'a str, &'a FakeShed)>,
 }
 
+impl OverSsh<'_> {
+    fn batch(&self, prog: &str, args: &[String]) -> Option<anyhow::Result<Out>> {
+        let script = args.last()?.strip_prefix("'sh' '-c' '")?.strip_suffix('\'')?;
+        let host = self.hosts.iter().find(|(h, _)| args.iter().any(|a| a == h))?;
+        let script = script.replace("'\\''", "'");
+        if prog != "ssh" || !script.contains("'shed' 'connect'") {
+            return None;
+        }
+        self.f.calls.borrow_mut().push(format!("{prog} {}", args.join(" ")));
+        let mut out = String::new();
+        for l in script.lines() {
+            let l = l.trim_end_matches(super::BATCH);
+            let words = l
+                .strip_prefix("('printf' '%s\\n' '")
+                .and_then(|w| w.strip_suffix("' | 'shed' 'connect' '--autostart')"));
+            let o = match words {
+                Some(w) => {
+                    let input: String = w.split("' '").map(|x| format!("{x}\n")).collect();
+                    self.f.inputs.borrow_mut().push((l.into(), input.clone()));
+                    Out {
+                        stdout: host.1.connect(&input),
+                        ..Out::default()
+                    }
+                }
+                None => match self.f.run(prog, &[&args[..args.len() - 1], &[l.to_string()]].concat()) {
+                    Ok(o) => o,
+                    Err(e) => return Some(Err(e)),
+                },
+            };
+            out += &format!("{}\x1e{}\x1e", o.stdout, o.code);
+        }
+        Some(Ok(Out {
+            stdout: out,
+            ..Out::default()
+        }))
+    }
+}
+
 impl Runner for OverSsh<'_> {
     fn run(&self, prog: &str, args: &[String]) -> anyhow::Result<Out> {
-        self.f.run(prog, args)
+        self.batch(prog, args).unwrap_or_else(|| self.f.run(prog, args))
     }
     fn run_in(&self, prog: &str, args: &[String], input: &str) -> anyhow::Result<Out> {
+        if let Some(o) = self.batch(prog, args).filter(|_| input.is_empty()) {
+            return o;
+        }
         let line = format!("{prog} {}", args.join(" "));
         let host = self
             .hosts

@@ -134,47 +134,6 @@ fn a_signed_out_lane_rests_and_its_successor_gets_the_carry_over() {
 }
 
 #[test]
-fn a_harness_that_wont_start_twice_rests() {
-    let d = tmpdir("fb-start");
-    let c = ctx(&d, &config(&d, CHAIN));
-    assert_eq!(run(&c, &Fake::default(), &["profiles", "sync"]).0, 0);
-    let wt = c.worktrees.join("sendmeter/issue-12");
-    std::fs::create_dir_all(&wt).unwrap();
-    for _ in 0..2 {
-        let r = Fake::default()
-            .reply("herdr agent list", NO_AGENTS)
-            .reply(&format!("git -C {} rev-list", wt.display()), "0\n")
-            .reply("gh issue view 12", r#"{"title":"t","body":"b"}"#)
-            .reply("git -C", "")
-            .reply(
-                "herdr worktree open",
-                r#"{"result":{"workspace":{"workspace_id":"w9"}}}"#,
-            )
-            .reply(
-                "herdr pane list --workspace w9",
-                r#"{"result":{"panes":[{"pane_id":"w9:p12","agent":null}]}}"#,
-            )
-            .reply("herdr pane run w9:p12 export", "{}")
-            .reply("herdr agent wait", "{}")
-            .once_err("herdr agent start", 1, "claude: command not found");
-        assert_eq!(run(&c, &r, &["spawn", "sendmeter", "12", "impl"]).0, 1);
-    }
-    let ev: Vec<_> = read(&c.state)
-        .unwrap()
-        .to_vec()
-        .into_iter()
-        .filter(|e| !["spawn-started", "intent", "failed"].contains(&e.kind.as_str()))
-        .collect();
-    let kinds: Vec<_> = ev.iter().map(|e| e.kind.as_str()).collect();
-    assert_eq!(kinds, ["spawn-failed", "agent-unavailable"]);
-    assert_eq!(
-        (ev[1].str("account"), ev[1].str("reason")),
-        (Some("A"), Some("won't start"))
-    );
-    assert_eq!(dry(&c, 12), (json!("claude"), json!("B")));
-}
-
-#[test]
 fn default_config_is_unchanged() {
     let (c, sh) = on_shed("fb-default", "accounts = [\"A\", \"B\"]");
     assert_eq!(run(&c, &Fake::default(), &["profiles", "sync"]).0, 0);
